@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/03-pdfium-backend committed (PR pending); next:
-`01-v0.1/04-backend-parity-hardening`.
+Current position: 01-v0.1/04-backend-parity-hardening committed; next:
+`01-v0.1/05-benchmarks-both-backends`.
 
 ## Status
 
@@ -13,8 +13,8 @@ Current position: 01-v0.1/03-pdfium-backend committed (PR pending); next:
 | 00-foundations | 03-benchmark-harness | merged | bench harness (std-only bench binary + run.sh); committed fixture is dummy-encrypted only (real books local-only per repo policy); runtime-generated fixtures, corpus manifest, bench CI job |
 | 01-v0.1 | 01-candi-pdf-trait | merged | pinned trait block verbatim (8-kind Error, Document/Backend, PagePositions); factory + features declared (empty deps); StubBackend + 23 tests; both feature modes green; permissive matrix entry activated |
 | 01-v0.1 | 02-mupdf-backend | merged | `mupdf-backend` feature (mupdf 0.8.0 base14-fonts); MupdfBackend + fz_context ownership; error mapping by `fz_error_code`; zero-page open → `Malformed`; fixture tests (attention paper, truncated, encrypted); fix commit proves blank-first-page vs zero-pages |
-| 01-v0.1 | 03-pdfium-backend | committed | 9892010 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; PR pending |
-| 01-v0.1 | 04-backend-parity-hardening | planned | |
+| 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
+| 01-v0.1 | 04-backend-parity-hardening | committed | bf24caa — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); committed image-only fixture |
 | 01-v0.1 | 05-benchmarks-both-backends | planned | |
 | 01-v0.1 | 06-candi-core-navigation | planned | |
 | 01-v0.1 | 07-reading-position-sidecar | planned | |
@@ -37,6 +37,7 @@ Current position: 01-v0.1/03-pdfium-backend committed (PR pending); next:
 | 2026-08-20 | slice/00-03-benchmark-harness → dev | e7c5461 | APPROVE — methodology verified vs spike probe, error paths live-tested; 2 nits non-blocking (run.sh:26 message cosmetics; bench glob noted for 01/05) |
 | 2026-08-20 | slice/01-01-candi-pdf-trait → dev | 5b0d1c1 | APPROVE — verbatim conformance exact, 2 feature modes 23/23 tests; nit: trailing-newline pattern (3rd) tracked for prevention |
 | 2026-08-20 | slice/01-02-mupdf-backend → dev | ad83c7b | APPROVE — mupdf-backend feature (mupdf 0.8.0); fz_error_code mapping; zero-page → Malformed guard with fixtures; independent reviewer sign-off |
+| 2026-08-20 | slice/01-03-pdfium-backend → dev | b9902d0 | APPROVE — pdfium-render 0.8.37 (chromium/7543); FPDF error mapping + zero-page catalog sniff; CI libpdfium pin + PDFIUM_LIB; permissive matrix green |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
 
