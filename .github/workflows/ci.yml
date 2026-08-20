@@ -53,6 +53,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      # Fixtures-only: CI has no corpus-local.toml, so real books and fixture
+      # generation are skipped loudly; the committed fixture must still run.
+      - run: cargo build --release --benches
+      - run: ./bench/run.sh --fixtures-only
+
   docs-links:
     runs-on: ubuntu-latest
     steps:
