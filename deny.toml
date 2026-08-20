@@ -9,4 +9,6 @@ allow = [
     "ISC",
     "MPL-2.0",
     "Unlicense",
+    "Zlib",
 ]
+
