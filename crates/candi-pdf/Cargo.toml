@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# dep mappings (dep:mupdf, dep:pdfium-render) join with the engines in slices 01/02/01/03.
+default = ["mupdf-backend", "pdfium-backend"]
+mupdf-backend = []
+pdfium-backend = []
+
 # Standalone measurement binary driven by bench/run.sh. harness=false so the
 # built binary runs our main() instead of the libtest harness (which would
 # otherwise run zero tests and exit 0 without measuring anything).
