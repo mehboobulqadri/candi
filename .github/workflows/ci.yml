@@ -9,16 +9,22 @@ on:
     branches: [main, dev]
 
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Validates all workflow files so a syntax error fails loudly with the
+      # actual error instead of silently scheduling zero jobs.
+      - uses: raven-actions/actionlint@v2
+
   fmt:
     runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
     steps:
       - uses: actions/checkout@v4
       - run: cargo fmt --check
 
   clippy:
     runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
     steps:
       - uses: actions/checkout@v4
       # Feature-mode matrix (--no-default-features --features pdfium-backend)
@@ -27,7 +33,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
     steps:
       - uses: actions/checkout@v4
       - run: cargo test --all-targets
