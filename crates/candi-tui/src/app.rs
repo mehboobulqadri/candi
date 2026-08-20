@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-use candi_core::{SearchSession, ViewState};
+use candi_core::{SearchSession, ViewState, normalize_reader_text};
 use candi_pdf::{Document, Error};
 
 use crate::keymap::Action;
@@ -97,22 +97,25 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
             return Ok(());
         }
 
-        let page = self.view.page().min(page_count - 1);
-        match self.document.page_text(page) {
-            Ok(text) => {
-                self.page_text = text;
-                self.recompute_wrap();
-                self.view = self
-                    .view
-                    .scroll_down(0, self.max_scroll)
-                    .scroll_up(0, self.max_scroll);
-                Ok(())
-            }
+        let start = self.view.page().min(page_count - 1);
+        let (page, text) = match self.first_non_empty_from(start, page_count) {
+            Ok(found) => found,
             Err(err) => {
                 self.enter_error(err);
-                Ok(())
+                return Ok(());
             }
+        };
+
+        if page != self.view.page() {
+            self.view = self.view.goto_page(page, page_count);
         }
+        self.page_text = normalize_reader_text(&text);
+        self.recompute_wrap();
+        self.view = self
+            .view
+            .scroll_down(0, self.max_scroll)
+            .scroll_up(0, self.max_scroll);
+        Ok(())
     }
 
     pub fn apply_action(&mut self, action: Action) -> Result<(), Error> {
@@ -131,12 +134,8 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
                     draft: String::new(),
                 };
             }
-            Action::ScrollDown => {
-                self.view = self.view.scroll_down(1, self.max_scroll);
-            }
-            Action::ScrollUp => {
-                self.view = self.view.scroll_up(1, self.max_scroll);
-            }
+            Action::ScrollDown => self.scroll_down()?,
+            Action::ScrollUp => self.scroll_up()?,
             Action::NextPage => {
                 self.view = self.view.next_page(self.document.page_count());
                 self.reload_page()?;
@@ -163,6 +162,42 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
                     self.search_prev()?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn scroll_down(&mut self) -> Result<(), Error> {
+        if !matches!(self.mode, Mode::Reading) {
+            return Ok(());
+        }
+        let page_count = self.document.page_count();
+        if page_count == 0 {
+            return Ok(());
+        }
+        let last = page_count - 1;
+        if self.view.scroll_offset() >= self.max_scroll && self.view.page() < last {
+            self.view = self.view.next_page(page_count);
+            self.reload_page()?;
+        } else {
+            self.view = self.view.scroll_down(1, self.max_scroll);
+        }
+        Ok(())
+    }
+
+    pub fn scroll_up(&mut self) -> Result<(), Error> {
+        if !matches!(self.mode, Mode::Reading) {
+            return Ok(());
+        }
+        let page_count = self.document.page_count();
+        if page_count == 0 {
+            return Ok(());
+        }
+        if self.view.scroll_offset() == 0 && self.view.page() > 0 {
+            self.view = self.view.prev_page(page_count);
+            self.reload_page()?;
+            self.view = self.view.scroll_down(self.max_scroll, self.max_scroll);
+        } else {
+            self.view = self.view.scroll_up(1, self.max_scroll);
         }
         Ok(())
     }
@@ -222,6 +257,25 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
         self.reload_page()
     }
 
+    fn first_non_empty_from(
+        &self,
+        start: usize,
+        page_count: usize,
+    ) -> Result<(usize, String), Error> {
+        let start = start.min(page_count - 1);
+        for offset in 0..page_count {
+            let page = start.saturating_add(offset);
+            if page >= page_count {
+                break;
+            }
+            let text = self.document.page_text(page)?;
+            if !text.trim().is_empty() {
+                return Ok((page, text));
+            }
+        }
+        Ok((start, self.document.page_text(start)?))
+    }
+
     fn enter_error(&mut self, err: Error) {
         self.mode = Mode::Error {
             message: err.to_string(),
@@ -229,13 +283,21 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
     }
 
     fn recompute_wrap(&mut self) {
-        let wrap_width = usize::from(self.width.max(1));
+        let wrap_width = reader_column_width(self.width);
         self.wrapped_lines = wrap_lines(&self.page_text, wrap_width);
         self.max_scroll = self
             .wrapped_lines
             .len()
             .saturating_sub(usize::from(self.viewport_rows));
     }
+}
+
+pub(crate) fn reader_column_width(width: u16) -> usize {
+    72.min(usize::from(width.saturating_sub(4))).max(1)
+}
+
+fn char_len(text: &str) -> usize {
+    text.chars().count()
 }
 
 fn wrap_lines(text: &str, width: usize) -> Vec<String> {
@@ -253,7 +315,7 @@ fn wrap_lines(text: &str, width: usize) -> Vec<String> {
 
         let mut current = words[0].to_string();
         for word in &words[1..] {
-            if current.len() + 1 + word.len() <= width {
+            if char_len(&current) + 1 + char_len(word) <= width {
                 current.push(' ');
                 current.push_str(word);
             } else {
@@ -280,7 +342,126 @@ mod tests {
     #[test]
     fn wrap_breaks_long_line() {
         let lines = wrap_lines("one two three four", 8);
-        assert!(lines.iter().all(|line| line.len() <= 8));
+        assert!(lines.iter().all(|line| char_len(line) <= 8));
         assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn skip_blank_first_page() {
+        let doc = BlankFirstPageDoc;
+        let mut app = App::new(&doc, "blank.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        assert_eq!(app.view().page(), 1);
+        assert!(
+            app.wrapped_lines()
+                .iter()
+                .any(|line| line.contains("Page two"))
+        );
+    }
+
+    #[test]
+    fn normalize_ligatures_on_load() {
+        let doc = LigatureDoc;
+        let mut app = App::new(&doc, "lig.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        assert!(app.wrapped_lines().join(" ").contains("finger"));
+    }
+
+    #[test]
+    fn scroll_down_at_page_end_advances() {
+        let long = "word ".repeat(200);
+        let doc = TwoPageDoc {
+            pages: [long, "second page".into()],
+        };
+        let mut app = App::new(&doc, "two.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        assert_eq!(app.view().page(), 0);
+        loop {
+            let page = app.view().page();
+            app.scroll_down().unwrap();
+            if app.view().page() != page {
+                break;
+            }
+        }
+        assert_eq!(app.view().page(), 1);
+        assert_eq!(app.view().scroll_offset(), 0);
+    }
+
+    #[test]
+    fn scroll_up_at_page_top_retreats_to_prev_end() {
+        let long = "word ".repeat(200);
+        let doc = TwoPageDoc {
+            pages: [long, "second page".into()],
+        };
+        let mut app = App::new(&doc, "two.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        app.view = app.view.goto_page(1, doc.page_count());
+        app.reload_page().unwrap();
+        assert_eq!(app.view().page(), 1);
+        assert_eq!(app.view().scroll_offset(), 0);
+        app.scroll_up().unwrap();
+        assert_eq!(app.view().page(), 0);
+        assert!(app.view().scroll_offset() > 0);
+    }
+
+    struct TwoPageDoc {
+        pages: [String; 2],
+    }
+
+    impl Document for TwoPageDoc {
+        fn page_count(&self) -> usize {
+            2
+        }
+
+        fn page_text(&self, page: usize) -> Result<String, Error> {
+            self.pages
+                .get(page)
+                .cloned()
+                .ok_or_else(|| Error::Malformed("bad page".into()))
+        }
+
+        fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
+            Ok(None)
+        }
+    }
+
+    struct BlankFirstPageDoc;
+
+    impl Document for BlankFirstPageDoc {
+        fn page_count(&self) -> usize {
+            2
+        }
+
+        fn page_text(&self, page: usize) -> Result<String, Error> {
+            match page {
+                0 => Ok(String::new()),
+                1 => Ok("Page two text".into()),
+                _ => Err(Error::Malformed("bad page".into())),
+            }
+        }
+
+        fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
+            Ok(None)
+        }
+    }
+
+    struct LigatureDoc;
+
+    impl Document for LigatureDoc {
+        fn page_count(&self) -> usize {
+            1
+        }
+
+        fn page_text(&self, _page: usize) -> Result<String, Error> {
+            Ok(format!("{}nger", '\u{fb01}'))
+        }
+
+        fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
+            Ok(None)
+        }
     }
 }

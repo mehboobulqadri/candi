@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use candi_core::SearchSession;
+use candi_core::{SearchSession, normalize_reader_text};
 use candi_pdf::{Document, Error};
 
 struct FakeDoc {
@@ -199,7 +199,7 @@ fn results_hold_offsets_not_text() {
     session.next().unwrap().unwrap();
     for (page, offset) in session.results() {
         assert!(*page < doc.page_count());
-        let text = doc.page_text(*page).unwrap().to_lowercase();
+        let text = normalize_reader_text(&doc.page_text(*page).unwrap()).to_lowercase();
         assert!(text[*offset..].starts_with("foo"));
     }
 }
@@ -242,6 +242,38 @@ fn start_page_full_scan_does_not_rescan_start_page() {
             .len(),
         expected.len()
     );
+}
+
+#[test]
+fn search_matches_normalized_ligatures() {
+    struct LigatureDoc {
+        page: String,
+    }
+
+    impl Document for LigatureDoc {
+        fn page_count(&self) -> usize {
+            1
+        }
+
+        fn page_text(&self, page: usize) -> Result<String, Error> {
+            if page == 0 {
+                Ok(self.page.clone())
+            } else {
+                Err(Error::Malformed("bad page".into()))
+            }
+        }
+
+        fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
+            Ok(None)
+        }
+    }
+
+    let doc = LigatureDoc {
+        page: format!("{}nger", '\u{fb01}'),
+    };
+    let mut session = SearchSession::new(&doc, "finger", 0);
+    let hit = session.next().unwrap().unwrap();
+    assert_eq!(hit, (0, 0));
 }
 
 #[test]

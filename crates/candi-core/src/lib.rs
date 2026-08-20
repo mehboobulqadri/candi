@@ -9,7 +9,9 @@
 mod navigation;
 mod search;
 mod state;
+mod text;
 
 pub use navigation::ViewState;
 pub use search::SearchSession;
 pub use state::{Error, Load, Position, load, save, sidecar_path};
+pub use text::normalize_reader_text;

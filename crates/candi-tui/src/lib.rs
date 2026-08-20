@@ -17,7 +17,9 @@ use std::time::Duration;
 
 use candi_core::ViewState;
 use candi_pdf::Document;
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, MouseEventKind,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -75,8 +77,9 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
         let mut stdout = io::stdout();
+        let _ = stdout.execute(DisableMouseCapture);
+        let _ = disable_raw_mode();
         let _ = stdout.execute(LeaveAlternateScreen);
         let _ = stdout.execute(crossterm::cursor::Show);
         let _ = stdout.execute(crossterm::terminal::Clear(ClearType::All));
@@ -122,7 +125,8 @@ pub fn run(
     let mut stdout = stdout();
     stdout
         .execute(EnterAlternateScreen)?
-        .execute(crossterm::cursor::Hide)?;
+        .execute(crossterm::cursor::Hide)?
+        .execute(EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(RunError::Io)?;
@@ -159,6 +163,19 @@ fn run_loop(
                 Event::Resize(width, height) => {
                     app.resize(width, height);
                 }
+                Event::Mouse(mouse) if matches!(app.mode(), Mode::Reading) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        if let Err(err) = app.scroll_down() {
+                            app.set_error(err.to_string());
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if let Err(err) = app.scroll_up() {
+                            app.set_error(err.to_string());
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
