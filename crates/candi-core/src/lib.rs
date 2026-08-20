@@ -6,5 +6,7 @@
 //! clamping bounds supplied by the caller — no UI or PDF types.
 
 mod navigation;
+mod state;
 
 pub use navigation::ViewState;
+pub use state::{Error, Load, Position, load, save, sidecar_path};
