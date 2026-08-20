@@ -2,6 +2,8 @@
 
 use candi_pdf::{Document, Error};
 
+use crate::normalize_reader_text;
+
 /// Lazy, page-at-a-time text search over any [`Document`].
 ///
 /// Matching is case-insensitive via `to_lowercase()` on the query and each page
@@ -145,7 +147,7 @@ impl<'a, D: Document + ?Sized> SearchSession<'a, D> {
 
         let page_count = self.document.page_count();
         let text = self.document.page_text(next_page)?;
-        let haystack = text.to_lowercase();
+        let haystack = normalize_reader_text(&text).to_lowercase();
         let needle = &self.query;
         let needle_len = needle.len();
 

@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, reader_column_width};
 
 pub fn draw<D: Document + ?Sized>(frame: &mut Frame, app: &App<'_, D>) {
     match app.mode() {
@@ -25,6 +25,8 @@ fn draw_reading<D: Document + ?Sized>(frame: &mut Frame, app: &App<'_, D>) {
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
+    let text_area = reading_column(chunks[0]);
+
     let visible: Vec<Line> = app
         .wrapped_lines()
         .iter()
@@ -33,7 +35,7 @@ fn draw_reading<D: Document + ?Sized>(frame: &mut Frame, app: &App<'_, D>) {
         .map(|line| Line::from(line.as_str()))
         .collect();
 
-    frame.render_widget(Paragraph::new(visible), chunks[0]);
+    frame.render_widget(Paragraph::new(visible), text_area);
     frame.render_widget(
         Paragraph::new(Line::from(status_text(app))).style(Style::default().reversed()),
         chunks[1],
@@ -85,6 +87,17 @@ fn status_text<D: Document + ?Sized>(app: &App<'_, D>) -> String {
     }
 
     status
+}
+
+fn reading_column(area: Rect) -> Rect {
+    let col_width = reader_column_width(area.width) as u16;
+    let x = area.x + (area.width.saturating_sub(col_width)) / 2;
+    Rect {
+        x,
+        y: area.y,
+        width: col_width.min(area.width),
+        height: area.height,
+    }
 }
 
 fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
