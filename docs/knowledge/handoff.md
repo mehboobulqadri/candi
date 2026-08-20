@@ -5,12 +5,9 @@ Overwritten every session — this file is always current, never stale.
 
 ## Done
 
-- **Slice 01/08 search-abstraction merged to `dev`** (PR #13, https://github.com/mehboobulqadri/candi/pull/13): slice feat `9c7e0f1`, wrap fix `a77a874`, progress `7f6655a`, merge `4af89e8`. `SearchSession`: lazy page-at-a-time, case-insensitive `to_lowercase`, results `(page, offset)` only; `start_page` + wrap; empty query → 0 `page_text` calls; errors propagate. Wrap bug (start_page>0 rescanned start page) fixed in `a77a874` — test asserts `call_count == page_count`. CI run `32404983245`. Independent reviewer APPROVE after REQUEST CHANGES (wrap rescan).
-- **Slice 01/07 reading-position-sidecar merged to `dev`** (PR #12, merge `decce47`). Sidecar `{pdf}.candi.toml`, schema v1; `Load::{Missing,Loaded,Corrupt}`; atomic temp+rename; PDF never written.
-- **Slice 01/06 candi-core-navigation merged to `dev`** (PR #11, merge `994a154`). `ViewState` in `candi-core`.
-- **Slice 01/05 benchmarks-both-backends merged to `dev`** (PR #10, merge `fc5a2af`). Gate **`reader_peak`** only.
-- **Prior slices on `dev`:** 01/01–01/04 (PRs #4–#8); PR #9 identity merged `b3abfe5`.
-- **Cursor harness parity** (sync.sh, orchestration.mdc, remove.sh).
+- **Slice 01/10 candi-cli merged to `dev`** (PR #15, https://github.com/mehboobulqadri/candi/pull/15): slice feat `de1ecce`, fix `5089cc6`, merge `9b86661`, mergedAt 2026-08-20T19:59:31Z. Binary `candi`; clap FILE + `--backend` (default mupdf); `Args::try_parse()` — all parse failures **exit 1** (usage, unknown flags). Open → sidecar load → resume via `ViewState::goto_page`; corrupt sidecar warns; `UnsupportedSchema` fail loud. `CANDI_NO_TUI=1` prints `page=<1-based>`, still saves sidecar. `candi_tui::run(doc, filename, initial) -> Result<ViewState, RunError>`; `TerminalGuard` unchanged. 10 CLI integration tests.
+- **Slice 01/09 candi-tui merged to `dev`** (PR #14, merge `62739c9`). ratatui 0.30.2, crossterm 0.29.0; §6 keys; `TestBackend`; `TerminalGuard` Drop RAII; `TERM=dumb` before raw mode.
+- **Slices 01/01–01/08 on `dev`** (PRs #4–#13). **Cursor harness parity** (sync.sh, orchestration.mdc, remove.sh).
 
 ## In progress
 
@@ -18,17 +15,16 @@ Nothing active.
 
 ## Next
 
-1. **Slice 01/09 — candi-tui** (`docs/implementation/01-v0.1/slices/09-candi-tui/README.md`) — next **code** slice; **do not start** until delegated.
-2. **Slice cadence 09 → 11** sequentially — user override: complete remaining Phase 01 slices in order.
-3. Full slice workflow per slice: one independent commit → 4-stage drill → independent reviewer in separate worktree → update `docs/implementation/progress.md` before merge → merge to `dev`.
-4. **Standing constraint:** Mia approves worker permissions (`full_network`, sandbox `all`, `git_write`, slice merge to `dev`); do not stall for user unless destructive git or 01/11 tag/dogfood/main-merge.
-5. **01/11 dogfood / tag / `main` merge** — needs explicit user authorization.
-6. **Optional (not next-required):** PR #1 still OPEN — user did not authorize merge.
+1. **Slice 01/11 — v01-release** (`docs/implementation/01-v0.1/slices/11-v01-release/README.md`) — next **engineering** slice only; **do not start** until delegated.
+2. **01/11 stop-gates (user authorization required):** dogfood gate (daily use evidence before tag); tag `v0.1`; `dev` → `main` phase merge. Mia must not proceed without explicit user OK.
+3. **01/11 engineering scope:** full benchmark re-run (both backends, `reader_peak` gate); REQUIREMENTS.md acceptance checklist; Windows CI job; version 0.1.0; independent worktree review of release diff; update `progress.md` before merge.
+4. **Standing constraint:** slice workflow — one commit → 4-stage drill → independent reviewer in separate worktree → update `progress.md` before merge → merge to `dev` (01/11 merges to `main`).
+5. **Optional (not next-required):** PR #1 still OPEN — user did not authorize merge.
 
 ## Open questions
 
 - **Unsupported PDF-feature row** in hardening table — deferred in 01/04 (factory gating only).
-- **MuPDF store cap / PDFium-for-full-doc-search** — deferred (not blocking 01/09).
+- **MuPDF store cap / PDFium-for-full-doc-search** — deferred (not blocking 01/11).
 
 ## Nits carried forward
 
@@ -42,15 +38,21 @@ Nothing active.
 | **`ViewState::scroll_down`** | Use `saturating_add` (01/06 nit). |
 | **`ViewState::max_scroll` semantics** | Document inclusive max in API/docs (01/06 nit). |
 | **`ViewState` scroll-reset tests** | Explicit first/last page coverage (01/06 nit). |
+| **`progress.md` test count** | May still say 8 CLI tests — actual count is 10; update only at 01/11 merge close-out. |
 
 ## Hazards (read before coding)
 
 | Hazard | Detail |
 |---|---|
-| **SearchSession wrap** | When `start_page > 0` and wrap enabled, scan must stop at `start_page` — never rescan the start page (01/08 bug class). |
+| **CLI exit codes** | `Args::try_parse()` failures (usage, unknown flags) exit **1** — same as runtime errors; distinct stderr text per kind. |
+| **Headless CLI tests** | `CANDI_NO_TUI=1` skips TUI, prints `page=<1-based>`, still saves sidecar — use in CI integration tests. |
 | **Sidecar semantics** | Missing ≠ corrupt — `Load::Missing` vs `Load::Corrupt`; only schema > 1 is hard error. PDF path never modified. |
+| **TUI terminal RAII** | Always restore terminal via `TerminalGuard` Drop after `enable_raw_mode`; set `TERM=dumb` before raw mode in tests. |
+| **SearchSession wrap** | When `start_page > 0` and wrap enabled, scan must stop at `start_page` — never rescan the start page (01/08 bug class). |
 | **RSS budget** | Gate **`reader_peak`** only; no v0.1 store purge. |
 | **Fontconfig / native sysdeps** | MuPDF on Linux needs `libfontconfig1-dev` + `pkg-config` (PR #6). |
 | **Path-dep feature unification** | CI pdfium-only jobs still compile MuPDF — path deps unify features. |
 | **Prove guards with fixtures** | Unproven guards triggered REQUEST CHANGES on 01/02 and 01/04. |
 | **Bench corpus** | Real books in gitignored `bench/corpus-local.toml` — never commit. |
+| **cargo-deny licenses** | foldhash/hashbrown pulls Zlib — allow in `deny.toml` or deny fails (01/09). |
+| **01/11 dogfood** | v0.1 tag blocked until daily-use evidence — cannot be forced. |

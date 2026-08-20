@@ -13,6 +13,34 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-21 (01/10 close-out)
+
+- **Decision/Issue:** Slice 01/10 candi-cli merged to `dev` via PR #15 (slice feat `de1ecce`, fix `5089cc6`, merge `9b86661f48053ca8b27ff31ed9b32b97536df826`, mergedAt 2026-08-20T19:59:31Z).
+- **Why:** Phase 01 tenth slice — CLI entry wiring factory open, sidecar resume, TUI launch, and explicit error UX.
+- **Changed:** Binary `candi`; clap FILE + `--backend` (default mupdf); `Args::try_parse()` — all parse failures exit 1 (including usage/unknown flags). Open → sidecar load → resume via `ViewState::goto_page`; corrupt sidecar warns; `UnsupportedSchema` fail loud. `CANDI_NO_TUI=1` prints `page=<1-based>`, still saves sidecar. `candi_tui::run(doc, filename, initial) -> Result<ViewState, RunError>`. 10 CLI integration tests. Handoff advances to 01/11 engineering; tag/dogfood/main-merge stop-gates need user.
+
+- **Decision/Issue:** Headless CI for CLI integration tests — TUI startup not suitable for CI matrix.
+- **Why:** TUI requires terminal; TestBackend covers rendering but not full binary spawn path.
+- **Changed:** `CANDI_NO_TUI=1` env hook skips TUI, prints current page, persists sidecar — enables spawn-based integration tests without raw mode.
+
+- **Decision/Issue:** clap parse failures pinned to exit 1 (same as runtime errors).
+- **Why:** v0.1 accepts uniform exit code with distinct stderr text per failure kind — simpler than per-kind code table.
+- **Changed:** `Args::try_parse()` path exits 1 for usage, unknown flags, and missing args; hazard added to handoff.
+
+## 2026-08-20 (01/09 close-out)
+
+- **Decision/Issue:** Slice 01/09 candi-tui merged to `dev` via PR #14 (slice feat `238d410`, TerminalGuard `8ae4cc4`, deny Zlib `6f3c8c8`, merge `62739c99305d041620090e3fb7a1556b2f9c51da`, mergedAt 2026-08-20T19:32:23Z). Independent reviewer APPROVE after REQUEST CHANGES (raw-mode).
+- **Why:** Phase 01 ninth slice — minimal TUI shell over shared core with honest test posture and terminal safety.
+- **Changed:** `candi-tui` crate: ratatui 0.30.2, crossterm 0.29.0; §6 key bindings; `TestBackend`; Spike 2 frankl SKIPPED honest; `TerminalGuard` Drop RAII; `TERM=dumb` before raw mode; `candi-theme` dep dropped from tui. cargo-deny: foldhash Zlib allowed in `deny.toml`. Handoff advances to 01/10.
+
+- **Decision/Issue:** Independent reviewer REQUEST CHANGES on raw-mode / terminal restore — tests could leave terminal in raw mode without RAII guard.
+- **Why:** `enable_raw_mode` without guaranteed restore breaks subsequent test runs and CI honesty.
+- **Changed:** `TerminalGuard` with Drop restore (`8ae4cc4`); `TERM=dumb` before raw mode in tests; hazard added to handoff.
+
+- **Decision/Issue:** cargo-deny failed on foldhash/hashbrown Zlib license.
+- **Why:** Transitive dependency license not in allow list.
+- **Changed:** Zlib allowed in `deny.toml` (`6f3c8c8`); memory lesson on deny.toml maintenance.
+
 ## 2026-08-20 (01/08 close-out)
 
 - **Decision/Issue:** Slice 01/08 search-abstraction merged to `dev` via PR #13 (slice feat `9c7e0f1`, wrap fix `a77a874`, progress `7f6655a`, merge `4af89e8c499da22a622fd20bb275472da51c8a06`, mergedAt 2026-08-20T18:55:41Z). Independent reviewer APPROVE after REQUEST CHANGES (wrap rescan). CI run `32404983245`.
