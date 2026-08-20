@@ -13,6 +13,16 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-21 (01/11 close-out)
+
+- **Decision/Issue:** Slice 01/11 v01-release engineering merged to `dev` via PR #16 (slice feat `d7ce832`, HEAD `74a241e`, merge `638f8bcbf97b7c89e76ff38778ab64e66c724432`, mergedAt 2026-08-20T21:48:06Z). Independent reviewer APPROVE. CI `32420211385` all green including Windows rust-checks.
+- **Why:** Phase 01 final engineering slice — release checklist, Windows CI matrix, version 0.1.0 prep, honest acceptance posture.
+- **Changed:** Windows in rust-checks matrix (ubuntu + windows × default + pdfium-only); pdfium-win-x64 `chromium/7543` (dll sha256 `6b963c2be9cacbaa0c0c7f4bf6d20d2fd16729ebdaa9989978b0f7b119c1c1cb`). MuPDF builds on Windows. Linux-only apt fontconfig + bench (`/proc` RSS). Windows clippy fixes: cfg-split `FPDF_GetLastError`, unix-gated `OpenOptions`, needless_return in parity skip. `acceptance.md` honest: dogfood not met; tag/`main` not done; real-books bench SKIPPED. Phase 01 **code** complete on `dev`. Handoff shifts to user stop-gates only.
+
+- **Decision/Issue:** Windows platform clippy only surfaced after Windows matrix added in 01/11.
+- **Why:** Ubuntu-only CI missed Windows-specific cfg and cast issues (`c_ulong` is u32 on Windows — unnecessary `as u32`).
+- **Changed:** Windows jobs in rust-checks; memory lesson on earlier matrix coverage.
+
 ## 2026-08-21 (01/10 close-out)
 
 - **Decision/Issue:** Slice 01/10 candi-cli merged to `dev` via PR #15 (slice feat `de1ecce`, fix `5089cc6`, merge `9b86661f48053ca8b27ff31ed9b32b97536df826`, mergedAt 2026-08-20T19:59:31Z).
