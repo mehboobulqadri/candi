@@ -221,6 +221,30 @@ fn start_page_clamped_like_view_state() {
 }
 
 #[test]
+fn start_page_full_scan_does_not_rescan_start_page() {
+    let doc = FakeDoc::new(PAGES.to_vec());
+    let mut session = SearchSession::new(&doc, "foo", 2);
+
+    session.next().unwrap().unwrap();
+    session.prev().unwrap().unwrap();
+
+    assert_eq!(doc.page_text_call_count(), doc.page_count());
+    let expected = [(0_usize, 6_usize), (2, 0), (2, 8)];
+    assert_eq!(session.results().len(), expected.len());
+    for hit in expected {
+        assert!(session.results().contains(&hit));
+    }
+    assert_eq!(
+        session
+            .results()
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        expected.len()
+    );
+}
+
+#[test]
 fn prev_finishes_scan_before_wrap_from_first() {
     let doc = FakeDoc::new(PAGES.to_vec());
     let mut session = SearchSession::new(&doc, "foo", 0);

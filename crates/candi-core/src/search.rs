@@ -169,7 +169,11 @@ impl<'a, D: Document + ?Sized> SearchSession<'a, D> {
             return Ok(());
         }
 
-        self.scan = ScanState::Active { next_page, wrapped };
+        if wrapped && next_page >= self.start_page {
+            self.scan = ScanState::Complete;
+        } else {
+            self.scan = ScanState::Active { next_page, wrapped };
+        }
         Ok(())
     }
 }
