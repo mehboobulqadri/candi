@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: slices 00/01 and 00/02 merged; next:
-`00-foundations/03-benchmark-harness`.
+Current position: phase 00 (foundations) complete — slices 00/01, 00/02, 00/03
+merged; next: `01-v0.1/01-candi-pdf-trait`.
 
 ## Status
 
@@ -10,7 +10,7 @@ Current position: slices 00/01 and 00/02 merged; next:
 | base | docs (repo docs + spike results + this plan) | merged | lands as the repo's initial commit |
 | 00-foundations | 01-workspace-bootstrap | merged | workspace skeleton + CI workflow fix (hashFiles job-level guard bug) |
 | 00-foundations | 02-ci-drill-gates | merged | feature-mode matrix (grow-ready, single mode until features land), cargo-deny + deny.toml, target cache keyed on Cargo.lock |
-| 00-foundations | 03-benchmark-harness | planned | |
+| 00-foundations | 03-benchmark-harness | merged | bench harness (std-only bench binary + run.sh); committed fixture is dummy-encrypted only (real books local-only per repo policy); runtime-generated fixtures, corpus manifest, bench CI job |
 | 01-v0.1 | 01-candi-pdf-trait | planned | |
 | 01-v0.1 | 02-mupdf-backend | planned | |
 | 01-v0.1 | 03-pdfium-backend | planned | |
@@ -34,6 +34,9 @@ Current position: slices 00/01 and 00/02 merged; next:
 |---|---|---|---|
 | 2026-08-20 | slice/00-01-workspace-bootstrap → dev | 07ad909 | APPROVE after 2 rounds (round-1 nit fixed: TOML trailing newlines; round-2: CI fix commit 007e7bd) — workspace, toolchain pin 1.97.1, CI hashFiles fix + workflow-lint |
 | 2026-08-20 | slice/00-02-ci-drill-gates → dev | 78ae626 | APPROVE — CI green twice, cache hit proven; 2 nits non-blocking (deny.toml trailing newline; AGPL-3.0 SPDX deprecation tracked for later normalization) |
+| 2026-08-20 | slice/00-03-benchmark-harness → dev | e7c5461 | APPROVE — methodology verified vs spike probe, error paths live-tested; 2 nits non-blocking (run.sh:26 message cosmetics; bench glob noted for 01/05) |
+
+**Phase 00 (foundations) complete** after the 00/03 merge.
 
 ## How to update
 
