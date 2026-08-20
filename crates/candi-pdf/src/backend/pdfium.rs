@@ -28,35 +28,42 @@ impl Backend for PdfiumBackend {
     }
 
     fn open(&self, path: &str, password: Option<&str>) -> Result<Box<dyn Document>, Error> {
-        let _guard = pdfium_lock();
         preflight_path(path)?;
-        let pdfium = shared_engine()?;
-        let bindings = pdfium.bindings();
 
-        let handle = bindings.FPDF_LoadDocument(path, password);
-        if handle.is_null() {
-            return Err(map_load_error(bindings, path, password));
-        }
+        let (pdfium, handle, page_count) = {
+            let _guard = pdfium_lock();
+            let pdfium = shared_engine()?;
+            let bindings = pdfium.bindings();
 
-        let page_count = bindings.FPDF_GetPageCount(handle);
-        if page_count < 0 {
-            bindings.FPDF_CloseDocument(handle);
-            return Err(Error::Other("page count unavailable".into()));
-        }
+            let handle = bindings.FPDF_LoadDocument(path, password);
+            if handle.is_null() {
+                return Err(map_load_error(bindings, path, password));
+            }
 
-        let page_count = usize::try_from(page_count)
-            .map_err(|_| Error::Other("page count out of range".into()))?;
+            let page_count = bindings.FPDF_GetPageCount(handle);
+            if page_count < 0 {
+                bindings.FPDF_CloseDocument(handle);
+                return Err(Error::Other("page count unavailable".into()));
+            }
 
-        if page_count == 0 {
-            bindings.FPDF_CloseDocument(handle);
-            return Err(Error::Malformed(ZERO_PAGE_MALFORMED.into()));
-        }
+            let page_count = usize::try_from(page_count)
+                .map_err(|_| Error::Other("page count out of range".into()))?;
 
-        Ok(Box::new(PdfiumPdfDocument {
+            if page_count == 0 {
+                bindings.FPDF_CloseDocument(handle);
+                return Err(Error::Malformed(ZERO_PAGE_MALFORMED.into()));
+            }
+
+            (pdfium, handle, page_count)
+        };
+
+        let document = Box::new(PdfiumPdfDocument {
             pdfium,
             handle,
             page_count,
-        }))
+        });
+        crate::textlayer::reject_if_no_text_layer(document.as_ref())?;
+        Ok(document)
     }
 }
 
@@ -466,10 +473,16 @@ fn page_index(page: usize, page_count: usize) -> Result<u16, Error> {
 
 fn preflight_path(path: &str) -> Result<(), Error> {
     match std::fs::metadata(path) {
-        Err(err) => Err(map_io_error(err)),
-        Ok(meta) if meta.is_dir() => Err(Error::NotFound(format!("{path} is a directory"))),
-        Ok(_) => Ok(()),
+        Err(err) => return Err(map_io_error(err)),
+        Ok(meta) if meta.is_dir() => {
+            return Err(Error::NotFound(format!("{path} is a directory")));
+        }
+        Ok(_) => {}
     }
+    if let Err(err) = std::fs::File::open(path) {
+        return Err(map_io_error(err));
+    }
+    Ok(())
 }
 
 fn map_bind_error(err: PdfiumError) -> Error {

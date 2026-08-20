@@ -53,10 +53,12 @@ impl Backend for MupdfBackend {
             }
         }
 
-        Ok(Box::new(MupdfPdfDocument {
+        let document = Box::new(MupdfPdfDocument {
             inner: Mutex::new(MupdfInner { doc }),
             page_count,
-        }))
+        });
+        crate::textlayer::reject_if_no_text_layer(document.as_ref())?;
+        Ok(document)
     }
 }
 
@@ -157,10 +159,16 @@ fn positions_from_text_page(text_page: &mupdf::TextPage) -> PagePositions {
 
 fn preflight_path(path: &str) -> Result<(), Error> {
     match std::fs::metadata(path) {
-        Err(err) => Err(map_io_error(err)),
-        Ok(meta) if meta.is_dir() => Err(Error::NotFound(format!("{path} is a directory"))),
-        Ok(_) => Ok(()),
+        Err(err) => return Err(map_io_error(err)),
+        Ok(meta) if meta.is_dir() => {
+            return Err(Error::NotFound(format!("{path} is a directory")));
+        }
+        Ok(_) => {}
     }
+    if let Err(err) = std::fs::File::open(path) {
+        return Err(map_io_error(err));
+    }
+    Ok(())
 }
 
 fn map_mupdf_error(err: MupdfError) -> Error {

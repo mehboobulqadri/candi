@@ -12,6 +12,8 @@ mod backend;
 mod error;
 mod factory;
 pub mod stub;
+#[cfg(any(feature = "mupdf-backend", feature = "pdfium-backend"))]
+mod textlayer;
 
 pub use error::Error;
 pub use factory::{BackendKind, available, open, open_default};
