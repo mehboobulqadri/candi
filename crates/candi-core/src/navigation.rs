@@ -43,6 +43,10 @@ impl ViewState {
         self.with_page(page, page_count)
     }
 
+    pub fn goto_page(self, page: usize, page_count: usize) -> Self {
+        self.with_page(page, page_count)
+    }
+
     pub fn scroll_down(self, delta: usize, max_scroll: usize) -> Self {
         let scroll_offset = (self.scroll_offset + delta).min(max_scroll);
         Self {
