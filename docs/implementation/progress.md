@@ -1,13 +1,13 @@
 # Candi — Implementation Progress
 
-Current position: base docs in review (this PR); phase 00 slices **planned** — next:
+Current position: base docs merged to dev + main; phase 00 slices **planned** — next:
 `00-foundations/01-workspace-bootstrap`.
 
 ## Status
 
 | Phase | Slice | Status | Notes |
 |---|---|---|---|
-| base | docs (repo docs + spike results + this plan) | in review (this PR) | lands as the repo's initial commit |
+| base | docs (repo docs + spike results + this plan) | merged to dev + main | architecture, phase/slice plan, workflow, CI, LICENSE AGPL-3.0, SECURITY, spike-1 results, skills-lock.json provenance, sync-creds.sh |
 | 00-foundations | 01-workspace-bootstrap | planned | |
 | 00-foundations | 02-ci-drill-gates | planned | |
 | 00-foundations | 03-benchmark-harness | planned | |
@@ -32,7 +32,7 @@ Current position: base docs in review (this PR); phase 00 slices **planned** —
 
 | Date | From → to | Commit | Independent reviewer verdict |
 |---|---|---|---|
-| — | (no merges yet — the base/docs slice is this PR; merge history fills in at merge) | | |
+| 2026-08-20 | slice/00-base (`1d667ef`) → dev (`07d02a8`) → main (`414252d`) | `07d02a8`, `414252d` | APPROVE after FIX-THEN-MERGE round (6 findings fixed) — base contents: architecture, phase/slice plan, workflow, CI, LICENSE AGPL-3.0, SECURITY, spike-1 results, skills-lock.json provenance, sync-creds.sh |
 
 ## How to update
 
