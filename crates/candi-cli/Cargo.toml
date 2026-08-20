@@ -4,12 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "candi"
-path = "src/main.rs"
+[lib]
+name = "candi_cli"
+path = "src/lib.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
 candi-core = { path = "../candi-core" }
 candi-pdf = { path = "../candi-pdf" }
-candi-tui = { path = "../candi-tui" }
+
+[dev-dependencies]
+candi-pdf = { path = "../candi-pdf" }

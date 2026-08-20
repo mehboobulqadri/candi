@@ -20,7 +20,7 @@ fn bench_fixture(name: &str) -> PathBuf {
 
 fn temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "candi-cli-test-{}-{}-{}",
+        "candi-gui-test-{}-{}-{}",
         label,
         std::process::id(),
         std::time::SystemTime::now()
@@ -40,12 +40,8 @@ fn copy_fixture(src: &Path, dir: &Path, name: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> std::process::Output {
-    Command::new(bin()).args(args).output().unwrap()
-}
-
-fn run_with_env(key: &str, value: &str, args: &[&str]) -> std::process::Output {
     Command::new(bin())
-        .env(key, value)
+        .env("CANDI_NO_GUI", "1")
         .args(args)
         .output()
         .unwrap()
@@ -67,7 +63,7 @@ fn unknown_flag_exits_one() {
 
 #[test]
 fn missing_file_exits_with_not_found_message() {
-    let output = run(&["/tmp/candi-cli-does-not-exist.pdf"]);
+    let output = run(&["/tmp/candi-gui-does-not-exist.pdf"]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -115,7 +111,7 @@ fn headless_tiny_pdf_prints_first_page() {
     let dir = temp_dir("headless-tiny");
     let pdf = copy_fixture(&fixture("tiny.pdf"), &dir, "tiny.pdf");
     let path = pdf.to_str().unwrap();
-    let output = run_with_env("CANDI_NO_TUI", "1", &[path]);
+    let output = run(&[path]);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -144,7 +140,7 @@ updated_at = "2026-08-20T12:00:00Z"
     .unwrap();
 
     let path = pdf.to_str().unwrap();
-    let output = run_with_env("CANDI_NO_TUI", "1", &[path]);
+    let output = run(&[path]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -169,7 +165,7 @@ updated_at = "2026-08-20T12:00:00Z"
     .unwrap();
 
     let path = pdf.to_str().unwrap();
-    let output = run_with_env("CANDI_NO_TUI", "1", &[path]);
+    let output = run(&[path]);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -186,7 +182,7 @@ fn corrupt_sidecar_warns_and_starts_fresh() {
     fs::write(sidecar_path(&pdf), "not valid {{{ toml").unwrap();
 
     let path = pdf.to_str().unwrap();
-    let output = run_with_env("CANDI_NO_TUI", "1", &[path]);
+    let output = run(&[path]);
     assert_eq!(
         output.status.code(),
         Some(0),
