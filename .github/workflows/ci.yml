@@ -9,28 +9,67 @@ on:
     branches: [main, dev]
 
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Validates all workflow files so a syntax error fails loudly with the
+      # actual error instead of silently scheduling zero jobs.
+      - uses: raven-actions/actionlint@v2
+
   fmt:
     runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
     steps:
       - uses: actions/checkout@v4
       - run: cargo fmt --check
 
-  clippy:
-    runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
+  rust-checks:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        # --no-default-features --features pdfium-backend joins when features land in slice 01/01.
+        features: [""]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # Feature-mode matrix (--no-default-features --features pdfium-backend)
-      # lands in slice 00/02.
-      - run: cargo clippy --all-targets -- -D warnings
+      # Cache the cargo registry/git caches and the workspace target dir; keyed on
+      # Cargo.lock so any dependency change invalidates the cache.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
+      - run: cargo build --release ${{ matrix.features }}
+      - run: cargo test --all-targets ${{ matrix.features }}
 
-  test:
+  cargo-deny:
     runs-on: ubuntu-latest
-    if: hashFiles('Cargo.toml') != ''
     steps:
       - uses: actions/checkout@v4
-      - run: cargo test --all-targets
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      # Fixtures-only: CI has no corpus-local.toml, so real books and fixture
+      # generation are skipped loudly; the committed fixture must still run.
+      - run: cargo build --release --benches
+      - run: ./bench/run.sh --fixtures-only
 
   docs-links:
     runs-on: ubuntu-latest

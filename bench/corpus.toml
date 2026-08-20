@@ -1,0 +1,10 @@
+# Committed benchmark corpus. Paths are relative to this file's directory.
+# [generated] entries are created by run.sh into fixtures/generated/ (gitignored)
+# and only run when a generation source exists (corpus-local.toml [generation]).
+
+[fixtures]
+dummy-encrypted = "fixtures/dummy-encrypted.pdf"
+
+[generated]
+broken = "fixtures/generated/broken.pdf"
+image-only = "fixtures/generated/image-only.pdf"

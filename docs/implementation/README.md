@@ -44,6 +44,8 @@ for the project):
 4. **Merciless line-by-line review** — an independent reviewer pass before any
    change is done; a change that fails review is fixed and re-reviewed, never merged
    on promise.
+5. **Workflow/YAML changes** (`.github/workflows/`) are validated with actionlint
+   before push — `hashFiles` is step-level only.
 
 CI enforces the automatable stages (fmt, clippy, tests; the feature-mode matrix
 lands with slice 00/02);

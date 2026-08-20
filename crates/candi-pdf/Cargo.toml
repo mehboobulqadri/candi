@@ -1,0 +1,13 @@
+[package]
+name = "candi-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Standalone measurement binary driven by bench/run.sh. harness=false so the
+# built binary runs our main() instead of the libtest harness (which would
+# otherwise run zero tests and exit 0 without measuring anything).
+[[bench]]
+name = "bench"
+path = "benches/bench.rs"
+harness = false
