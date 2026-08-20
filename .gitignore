@@ -1,0 +1,28 @@
+# Agent layer (private tooling — not part of the product)
+.agents/
+.opencode/
+.cursor/
+AGENTS.md
+opencode.json
+skills-lock.json
+
+# Rust
+/target/
+
+# Jekyll build output
+/_site/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Note: Cargo.lock is intentionally NOT ignored — this is an application
+# workspace and the lockfile will be committed.
+
+# Spike prototypes (throwaway)
+/spikes/*
+!/spikes/results/
