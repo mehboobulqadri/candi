@@ -13,6 +13,12 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-21 (docs catch-up)
+
+- **Decision/Issue:** Documentation still described pre-implementation / CLI-only state after PRs #17–#18 landed TUI polish and Linux GUI on `dev`.
+- **Why:** README, progress, architecture, and knowledge context were not updated when user binaries shifted to `candi-tui` + `candi` and `candi-cli` became a lib.
+- **Changed:** README quick start; progress rows for 01/11, tui-readability, gui-text-linux; architecture diagram/frontends; handoff + status; 01-v0.1 README one-liner on compressed GUI scope. No tag/`main` claims.
+
 ## 2026-08-21 (01/11 close-out)
 
 - **Decision/Issue:** Slice 01/11 v01-release engineering merged to `dev` via PR #16 (slice feat `d7ce832`, HEAD `74a241e`, merge `638f8bcbf97b7c89e76ff38778ab64e66c724432`, mergedAt 2026-08-20T21:48:06Z). Independent reviewer APPROVE. CI `32420211385` all green including Windows rust-checks.
