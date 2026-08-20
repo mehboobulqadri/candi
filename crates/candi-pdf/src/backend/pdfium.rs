@@ -494,12 +494,23 @@ fn map_bind_error(err: PdfiumError) -> Error {
     }
 }
 
+fn fpdf_last_error(bindings: &dyn PdfiumLibraryBindings) -> u32 {
+    #[cfg(target_os = "windows")]
+    {
+        bindings.FPDF_GetLastError()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        bindings.FPDF_GetLastError() as u32
+    }
+}
+
 fn map_load_error(
     bindings: &dyn PdfiumLibraryBindings,
     path: &str,
     password: Option<&str>,
 ) -> Error {
-    let code = bindings.FPDF_GetLastError() as u32;
+    let code = fpdf_last_error(bindings);
     match code {
         FPDF_ERR_FORMAT if is_zero_page_catalog(path) => {
             Error::Malformed(ZERO_PAGE_MALFORMED.into())

@@ -4,7 +4,9 @@
 //!
 //! Concurrent writers use last-write-wins; locking is deferred to v0.2 (Spike 4).
 
-use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
+use std::fs::OpenOptions;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
