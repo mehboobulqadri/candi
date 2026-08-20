@@ -1,0 +1,49 @@
+# Mirrors the drill's deterministic stages: fmt, clippy, tests.
+# Local green = CI green — if the checks pass locally the PR is acceptable;
+# CI exists to prove the same thing on GitHub, not to add new gates.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    if: hashFiles('Cargo.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    if: hashFiles('Cargo.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+      # Feature-mode matrix (--no-default-features --features pdfium-backend)
+      # lands in slice 00/02.
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    if: hashFiles('Cargo.toml') != ''
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --all-targets
+
+  docs-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check relative markdown links
+        run: |
+          for f in README.md $(find docs -name '*.md'); do
+            while read -r link; do
+              case "$link" in
+                http*|mailto*|*.html|*\#*) continue ;;
+              esac
+              target="$(dirname "$f")/$link"
+              [ -e "$target" ] || { echo "broken link: $f -> $link"; exit 1; }
+            done < <(grep -oE '\]\([^)]+\)' "$f" | sed 's/^](//; s/)$//')
+          done

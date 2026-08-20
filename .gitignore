@@ -1,0 +1,36 @@
+# Agent layer (private tooling — not part of the product)
+.agents/
+.opencode/
+.cursor/
+AGENTS.md
+opencode.json
+
+# Rust
+/target/
+
+# Jekyll build output
+/_site/
+
+# Corpus books and fixtures are never committed
+*.pdf
+
+# Env files are never committed
+.env*
+
+# Personal identity (never commit)
+creds.yml
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Note: Cargo.lock is intentionally NOT ignored — this is an application
+# workspace and the lockfile will be committed.
+
+# Spike prototypes (throwaway)
+/spikes/*
+!/spikes/results/
