@@ -30,8 +30,8 @@ text, scrolls, paginates, searches with next/prev, and remembers reading positio
 
 | # | Slice | Status |
 |---|---|---|
-| 01 | candi-pdf-trait | planned |
-| 02 | mupdf-backend | planned |
+| 01 | candi-pdf-trait | merged |
+| 02 | mupdf-backend | merged |
 | 03 | pdfium-backend | planned |
 | 04 | backend-parity-hardening | planned |
 | 05 | benchmarks-both-backends | planned |

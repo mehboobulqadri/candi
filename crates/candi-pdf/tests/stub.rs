@@ -157,10 +157,16 @@ fn available_lists_only_pdfium() {
 
 #[cfg(feature = "mupdf-backend")]
 #[test]
-fn open_mupdf_returns_a_document() {
-    let doc = open(BackendKind::Mupdf, "unused.pdf", None).unwrap();
-    assert_eq!(doc.page_count(), 1);
-    assert_eq!(doc.page_text(0).unwrap(), "");
+fn open_mupdf_routes_to_real_backend() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny.pdf");
+    assert!(open(BackendKind::Mupdf, path.to_str().unwrap(), None).is_ok());
+}
+
+#[cfg(feature = "mupdf-backend")]
+#[test]
+fn open_default_routes_to_mupdf() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny.pdf");
+    assert!(open_default(path.to_str().unwrap(), None).is_ok());
 }
 
 #[cfg(not(feature = "mupdf-backend"))]
@@ -187,13 +193,6 @@ fn open_pdfium_is_unsupported_without_feature() {
         open(BackendKind::Pdfium, "unused.pdf", None),
         Err(Error::Unsupported(_))
     ));
-}
-
-#[cfg(feature = "mupdf-backend")]
-#[test]
-fn open_default_opens_mupdf() {
-    let doc = open_default("unused.pdf", None).unwrap();
-    assert_eq!(doc.page_count(), 1);
 }
 
 #[cfg(not(feature = "mupdf-backend"))]

@@ -2,10 +2,11 @@
 
 //! Backend registry and runtime selection.
 //!
-//! Features gate which backends are compiled in; this slice has no real
-//! engines yet, so a compiled-in kind currently opens a [`StubBackend`]. The
-//! stub wiring is replaced by the real engine in slices 01/02/01/03.
+//! Features gate which backends are compiled in. MuPDF is real from slice
+//! 01/02; PDFium stays on the stub until slice 01/03.
 
+#[cfg(feature = "mupdf-backend")]
+use crate::backend::MupdfBackend;
 use crate::stub::StubBackend;
 use crate::{Backend, Document, Error};
 
@@ -42,7 +43,7 @@ pub fn open(
 ) -> Result<Box<dyn Document>, Error> {
     match kind {
         #[cfg(feature = "mupdf-backend")]
-        BackendKind::Mupdf => StubBackend::new(1).open(path, password),
+        BackendKind::Mupdf => MupdfBackend.open(path, password),
         #[cfg(feature = "pdfium-backend")]
         BackendKind::Pdfium => StubBackend::new(1).open(path, password),
         #[cfg(not(feature = "mupdf-backend"))]
