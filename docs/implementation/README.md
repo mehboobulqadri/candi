@@ -8,7 +8,8 @@ nav_order: 6
 Status: **planning complete.** Implementation is organized as **phases** — one phase
 per product version (or foundations) — and each phase is delivered as small
 **slices**: every slice is one independent, reviewable, mergeable commit with its
-own README. Where we are right now: [progress.md](progress.md).
+own README. Read only the phase + slice README you are executing — never
+bulk-read this directory. Where we are right now: [progress.md](progress.md).
 
 ## Phase ↔ workflow mapping
 
@@ -22,15 +23,15 @@ own README. Where we are right now: [progress.md](progress.md).
 | [05-v0.5](05-v0.5/README.md) | v0.5a+b | 6 + 7 (Python API + Distribution) | bindings, packaging |
 | [06-v0.9](06-v0.9/README.md) | v0.9 | 8 (Advanced rendering) | terminal images, page rendering |
 
-Workflow Phase 1 (spikes) is **COMPLETE** — decision artifacts in
+Workflow Phase 1 (spikes) is **COMPLETE** for its blocking decision (Spike 1) —
+decision artifacts in
 [spikes/results/spike-1-pdf-backend.md](../../spikes/results/spike-1-pdf-backend.md):
-dual MuPDF + PDFium backend, AGPL-3.0 with a permissive-build escape hatch. Every
-architecture decision is validated there; do not re-open one without a spike that
-contradicts the data.
+dual MuPDF + PDFium backend, AGPL-3.0 with a permissive-build escape hatch.
+Spike 2 (text-first rendering quality) closes in phase 01, slice 09.
 
 ## How we work — the mandatory quality drill
 
-Every task, no exceptions (the dev-loop skill in `.agents/` runs this; stated here
+Every task, no exceptions (the project's agent layer runs this drill; stated here
 for the project):
 
 1. **Organized implementation** — design-first: orient, plan, then a minimal,
@@ -44,7 +45,8 @@ for the project):
    change is done; a change that fails review is fixed and re-reviewed, never merged
    on promise.
 
-CI enforces the automatable stages (fmt, clippy, tests — in both feature modes);
+CI enforces the automatable stages (fmt, clippy, tests; the feature-mode matrix
+lands with slice 00/02);
 deslop and the merciless review are agent/human gates.
 
 ## The slice workflow (default for every slice)
@@ -62,6 +64,9 @@ Each slice = one commit: independent, reviewable, mergeable. Follow it in order.
 6. **Independent review** — an independent reviewer re-reviews the PR in a **separate
    git worktree**: deterministic checks (fmt / clippy / tests in both feature modes)
    + optimization pass + line-by-line review.
+   Local deterministic checks are the gate — if they pass locally, CI mirrors them
+   and the PR is acceptable; CI exists to prove the same thing on GitHub, not to
+   add new gates.
 7. **Fix findings** — re-run the drill on the changes; the reviewer's verdict gates
    the merge.
 8. **Merge** — slice to `dev`. After a major phase, `dev` merges to `main` with the
@@ -90,23 +95,13 @@ Each slice = one commit: independent, reviewable, mergeable. Follow it in order.
 - **SECURITY.md** at the repo root — vulnerability disclosure policy (see
   [SECURITY.md](../../SECURITY.md)).
 - **Secrets hygiene:** the agent layer (`.agents/`, `.opencode/`, …) is gitignored;
-  env files are never committed; no secrets in code, docs, or logs.
+  no credential storage is set up yet; personal/project identity lives in gitignored
+  `creds.yml`, templated into docs via `scripts/sync-creds.sh`; no secrets or credentials
+  are ever committed.
 - **CI dependency auditing:** cargo-deny (or cargo audit) + dependabot — lands in
   slice 00/02.
 - **Application security** (untrusted PDFs, resource exhaustion, error handling):
   architecture.md §Security. Every change touching those paths gets a security
   review pass.
-
-## Phase index
-
-| Phase | Status |
-|---|---|
-| 00-foundations | planned |
-| 01-v0.1 | planned |
-| 02-v0.2 | planned |
-| 03-v0.3 | planned |
-| 04-v0.4 | planned |
-| 05-v0.5 | planned |
-| 06-v0.9 | planned (open-ended) |
 
 Current position and per-slice statuses: [progress.md](progress.md).

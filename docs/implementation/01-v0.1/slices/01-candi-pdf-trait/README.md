@@ -8,12 +8,8 @@ No real engines yet.
 
 ## Prep / thinking
 
-- Copy the trait block from architecture.md §candi-pdf **verbatim**: Error kinds
-  (`NotFound`, `PermissionDenied`, `Encrypted`, `WrongPassword`, `NoTextLayer`,
-  `Malformed`, `Unsupported`, `Other`); `Document` (`page_count() -> usize` cached
-  & infallible, `page_text(p) -> Result<String, Error>` lazy, `page_positions(p) ->
-  Result<Option<PagePositions>, Error>`); `Backend` (`name()`, `open(path,
-  password)`).
+- Copy the trait block from architecture.md §candi-pdf **verbatim** — Error kinds,
+  `Document`/`Backend` signatures, and `PagePositions` types are pinned there.
 - Error-mapping policy lives at the engine level; the kind taxonomy and the
   message-for-humans-only rule are pinned here — messages are never matched on
   (architecture.md §Contracts).

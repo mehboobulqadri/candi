@@ -1,13 +1,13 @@
 # Candi — Implementation Progress
 
-Current position: base docs merged; phase 00 slices **planned** — next:
+Current position: base docs in review (this PR); phase 00 slices **planned** — next:
 `00-foundations/01-workspace-bootstrap`.
 
 ## Status
 
 | Phase | Slice | Status | Notes |
 |---|---|---|---|
-| base | docs (repo docs + spike results + this plan) | merged | lands as the repo's initial commit |
+| base | docs (repo docs + spike results + this plan) | in review (this PR) | lands as the repo's initial commit |
 | 00-foundations | 01-workspace-bootstrap | planned | |
 | 00-foundations | 02-ci-drill-gates | planned | |
 | 00-foundations | 03-benchmark-harness | planned | |
@@ -32,7 +32,7 @@ Current position: base docs merged; phase 00 slices **planned** — next:
 
 | Date | From → to | Commit | Independent reviewer verdict |
 |---|---|---|---|
-| — | (no merges yet — the base/docs slice lands as the first commit) | | |
+| — | (no merges yet — the base/docs slice is this PR; merge history fills in at merge) | | |
 
 ## How to update
 

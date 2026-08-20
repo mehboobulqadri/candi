@@ -13,14 +13,13 @@ None yet — Candi has no releases. The first supported version is v0.1.
 
 **Do not open a public issue for security problems.** Report privately:
 
-- Preferred: a [private security advisory] on this repository (GitHub → Security →
+- Preferred: a [private security advisory](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability) on this repository (GitHub → Security →
   Report a vulnerability).
-- Fallback: email `security@candi.dev` (placeholder — TODO: set the real address
-  before v0.1).
+- Fallback: email `{{email}}`.
 
 Please include: Candi version, backend in use (`--backend mupdf|pdfium`), the
 document that triggered the issue (or a minimized reproducer), steps to reproduce,
-and relevant logs. Logs live locally at `~/.local/state/candi/logs/` — never paste
+and relevant logs. v0.1 ships diagnostics to stderr behind `--verbose`; file logs at `~/.local/state/candi/logs/` arrive with the tracing-based logging planned in the implementation docs — never paste
 document contents or personal data into a report.
 
 ## Scope

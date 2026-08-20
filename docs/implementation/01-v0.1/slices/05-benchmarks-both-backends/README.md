@@ -3,8 +3,8 @@
 ## Goal
 
 Production benchmark numbers for **both** backends on the full corpus, checked
-against the architecture.md §9 budget, with the spike doc updated to production
-numbers.
+against the architecture.md §Cross-cutting performance budget, with the spike doc
+updated to production numbers.
 
 ## Prep / thinking
 
@@ -12,13 +12,13 @@ numbers.
   page-text (per-page **mean**, not whole-doc), first search-result latency,
   process-level RSS (baseline → VmHWM peak → delta), best-of-2, timeout-wrapped,
   nonzero exit on error paths.
-- **Targets** (architecture.md §9): startup-to-first-page < 300 ms; open ≤ 150 ms;
-  page-text < 20 ms/page mean; first search result < 300 ms; next/prev < 50 ms;
-  peak RSS < 200 MB. The 294 MB mupdf outlier on silberschatz is the lazy-loading
-  proof case — it must come down.
-- **Corpus:** the spike's five local books (frankl, sysdesign, cleancode,
-  silberschatz, attention, alice-scan — same set for comparability) via the
-  gitignored manifest, plus committed fixtures.
+- **Targets** (architecture.md §Cross-cutting): startup-to-first-page < 300 ms;
+  open ≤ 150 ms; page-text < 20 ms/page mean; first search result < 300 ms;
+  next/prev < 50 ms; peak RSS < 200 MB. The 294 MB mupdf outlier on silberschatz is
+  the lazy-loading proof case — it must come down.
+- **Corpus:** the spike's corpus (frankl, sysdesign, cleancode, silberschatz,
+  attention, alice-scan — same set for comparability) via the gitignored manifest,
+  plus committed fixtures.
 - **Spike doc update:** spikes/results/spike-1-pdf-backend.md gets per-backend
   notes with production numbers + a pointer to where the harness lives.
 - Benchmarks are a **phase gate** (workflow standing rule 2) — these numbers are

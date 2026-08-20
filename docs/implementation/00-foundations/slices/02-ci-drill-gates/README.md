@@ -2,43 +2,48 @@
 
 ## Goal
 
-GitHub Actions CI that enforces every automatable stage of the drill — fmt,
-clippy `-D warnings`, release build, tests — in both feature modes, on push and
-PR. Plus dependency auditing (cargo-deny + dependabot).
+Extend the CI the base already ships — root `.github/workflows/ci.yml` with
+guarded fmt/clippy/test + docs-links jobs, and `.github/dependabot.yml` — into
+the full drill gate: the clippy feature-mode matrix and dependency auditing
+(cargo-deny or cargo audit) once the workspace exists.
 
 ## Prep / thinking
 
+- **What the base ships:** `ci.yml` with fmt, clippy (`-D warnings`), test, and
+  docs-links jobs; the Rust jobs are guarded with `if: hashFiles('Cargo.toml') != ''`
+  so the base PR is green-skipped and they activate automatically once the
+  workspace lands (slice 00/01). `dependabot.yml`: cargo + github-actions,
+  weekly, open-pull-requests-limit 5.
 - **Job matrix:** Linux (ubuntu-latest) now; the Windows job is added at the v0.1
   tag (acceptance requires Windows) — shape the matrix so adding an OS is a
   one-line change.
-- **Which checks in which mode:** fmt once (mode-independent); clippy, `cargo
-  build --release`, `cargo test` in **both** feature modes once features exist —
-  `default` (both backends) and the permissive build
-  (`--no-default-features --features pdfium-backend`). Until features exist,
-  single mode; the matrix is written to grow.
+- **Feature-mode matrix:** clippy, `cargo build --release`, `cargo test` in
+  **both** feature modes once features exist — `default` (both backends) and the
+  permissive build (`--no-default-features --features pdfium-backend`). Until
+  features exist, single mode; the matrix is written to grow.
 - **Drill enforcement split:** fmt/clippy/tests are CI gates; deslop and the
-  merciless review are human gates (cannot run in CI) — the split is documented in
-  docs/implementation/README.md §How we work; CI just runs the automatable three.
+  merciless review are human gates (cannot run in CI) — the split is documented
+  in docs/implementation/README.md §How we work; CI just runs the automatable
+  three.
 - **Dependency auditing** (security-in-development plan): cargo-deny (license +
-  advisory checks) or cargo audit + dependabot, from day one.
+  advisory checks) or cargo audit. Dependabot already covers dependency updates;
+  this job covers licenses and advisories.
 - **CI caching:** mupdf's vendored C build takes 5–10 min on first build — cache
   the cargo target dir, keyed on `Cargo.lock`.
 
 ## Files
 
-- `.github/workflows/ci.yml`
-- `.github/dependabot.yml`
+- `.github/workflows/ci.yml` (extend)
+- `.github/dependabot.yml` (extend if needed)
+- anything else CI-side the drill still needs
 
 ## Implementation tasks
 
-1. `ci.yml`: on push + PR; toolchain from `rust-toolchain.toml`; `cargo fmt
-   --check`; `cargo clippy --all-targets -- -D warnings`; `cargo build --release`;
-   `cargo test` — both feature modes (single mode until features exist).
-2. Add the cargo-deny check job (licenses + advisories).
-3. `dependabot.yml`: weekly cargo updates.
-4. Cache `target/` keyed on `Cargo.lock`.
-5. Push the slice branch; prove CI green on it.
-6. Run the drill.
+1. Feature-mode matrix in `ci.yml`: clippy/build/test run in both feature modes.
+2. Add the cargo-deny (or cargo audit) job — licenses + advisories.
+3. Cache `target/` keyed on `Cargo.lock`.
+4. Push the slice branch; prove CI green on it.
+5. Run the drill.
 
 ## Verification
 
@@ -50,7 +55,7 @@ PR. Plus dependency auditing (cargo-deny + dependabot).
 ## Commit message
 
 ```
-ci: enforce drill gates in GitHub Actions
+ci: extend drill gates to feature modes and dependency audit
 ```
 
 ## PR notes

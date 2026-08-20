@@ -4,13 +4,21 @@
 .cursor/
 AGENTS.md
 opencode.json
-skills-lock.json
 
 # Rust
 /target/
 
 # Jekyll build output
 /_site/
+
+# Corpus books and fixtures are never committed
+*.pdf
+
+# Env files are never committed
+.env*
+
+# Personal identity (never commit)
+creds.yml
 
 # OS junk
 .DS_Store

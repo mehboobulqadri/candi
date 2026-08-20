@@ -29,3 +29,9 @@ results, no code yet).
 
 Public documentation sources live under `docs/`. The site is published with
 GitHub Pages — see [docs/publishing.md](docs/publishing.md) for how.
+
+## Maintainer
+
+{{name}} — [{{email}}](mailto:{{email}})
+
+*Identity is templated from the gitignored `creds.yml` — run `scripts/sync-creds.sh` to fill values.*

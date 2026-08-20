@@ -29,12 +29,11 @@ This defines the procedure for taking Candi from an idea to a distributed applic
 
 **Activities:**
 - Execute Spike 1 (PDF backend + licensing) — see `spikes.md`
-- Execute Spike 2 (text-first rendering quality) using the chosen backend
+- Spike 2 (text-first rendering quality) executes in Phase 2 (phase 01, slice 09)
 - Document findings and failure modes in `/spikes/results/`
 
-**Exit criteria:**
-- A PDF backend is chosen with a license compatible with Candi's intended distribution (PyPI, AUR, Debian)
-- Structured text extraction is proven to work cleanly on single-column documents, with known/documented limitations for multi-column and footnotes
+**Exit criteria:** Spike 1's pass/fail criteria are met (spikes.md §2); Spike 2's
+pass/fail is not a Phase 1 gate — it closes in Phase 2 (phase 01, slice 09; spikes.md §3).
 
 **Decision gate:** ⛔ Do not write `candi-pdf` production code until this gate is passed. If no backend passes the license check, stop and re-evaluate the project's own license before continuing.
 
