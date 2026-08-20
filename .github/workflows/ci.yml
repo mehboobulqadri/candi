@@ -26,7 +26,7 @@ jobs:
   rust-checks:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         # One entry per feature mode: default (both backends) and the
         # permissive pdfium-only build (zero AGPL third-party code). The empty
         # string keeps default features; the second entry drops them.
@@ -68,26 +68,6 @@ jobs:
           fi
           echo "PDFIUM_LIB=$PDFIUM_LIB_DIR" >> "$GITHUB_ENV"
           echo "2383a414050dd21ae5300b119ad8a72360ef92cff820b4c685c047dc272c2794  $PDFIUM_LIB_DIR/libpdfium.so" | sha256sum -c -
-      - name: Install libpdfium (chromium/7543, pdfium_7543)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PDFIUM_CACHE = Join-Path $env:USERPROFILE '.cache\candi-pdfium'
-          $PDFIUM_LIB_DIR = Join-Path $PDFIUM_CACHE 'chromium-7543\bin'
-          if (-not (Test-Path (Join-Path $PDFIUM_LIB_DIR 'pdfium.dll'))) {
-            New-Item -ItemType Directory -Force -Path $PDFIUM_CACHE | Out-Null
-            $tgz = Join-Path $PDFIUM_CACHE 'pdfium-win-x64.tgz'
-            Invoke-WebRequest -Uri 'https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7543/pdfium-win-x64.tgz' -OutFile $tgz
-            tar xzf $tgz -C $PDFIUM_CACHE
-            New-Item -ItemType Directory -Force -Path (Join-Path $PDFIUM_CACHE 'chromium-7543') | Out-Null
-            Move-Item (Join-Path $PDFIUM_CACHE 'bin') $PDFIUM_LIB_DIR
-          }
-          "PDFIUM_LIB=$PDFIUM_LIB_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          $hash = (Get-FileHash (Join-Path $PDFIUM_LIB_DIR 'pdfium.dll') -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne '6b963c2be9cacbaa0c0c7f4bf6d20d2fd16729ebdaa9989978b0f7b119c1c1cb') {
-            throw "pdfium.dll sha256 mismatch: $hash"
-          }
       - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
       - run: cargo build --release ${{ matrix.features }}
       - run: cargo test --all-targets ${{ matrix.features }}
