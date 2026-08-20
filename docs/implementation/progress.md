@@ -1,7 +1,9 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/11-v01-release committed (engineering); tag/dogfood/main
-blocked on user; release merge pending authorization.
+Current position: Phase 01 reader on `dev` — TUI (`candi-tui`) and GUI (`candi`) with
+text display, search, and sidecar persistence. Post-01/11 slices merged (TUI
+readability, Linux GUI). Tag, dogfood evidence, and `dev`→`main` blocked on user;
+Windows CI deferred (Linux-only matrix).
 
 ## Status
 
@@ -19,9 +21,11 @@ blocked on user; release merge pending authorization.
 | 01-v0.1 | 06-candi-core-navigation | merged | merge 994a154 (PR #11); feat 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
 | 01-v0.1 | 07-reading-position-sidecar | merged | merge decce47 (PR #12); feat bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
 | 01-v0.1 | 08-search-abstraction | merged | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
-| 01-v0.1 | 09-candi-tui | merged | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc |
-| 01-v0.1 | 10-candi-cli | merged | de1ecce — `candi` binary (clap 4.6.6), open+sidecar resume, CANDI_NO_TUI headless hook, exit-1 error UX, 10 CLI integration tests; merge 9b86661 (PR #15) |
-| 01-v0.1 | 11-v01-release | committed | d7ce832 — Windows rust-checks matrix + acceptance evidence; tag/dogfood/`dev`→`main` blocked on user |
+| 01-v0.1 | 09-candi-tui | merged | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc; merge 62739c9 (PR #14) |
+| 01-v0.1 | 10-candi-cli | merged | de1ecce — `candi-cli` shared lib (open, sidecar resume/save, backend parse); original CLI binary superseded by GUI; 10 integration tests now in `crates/candi-gui/tests/cli.rs` via `CANDI_NO_GUI=1`; merge 9b86661 (PR #15) |
+| 01-v0.1 | 11-v01-release | merged | d7ce832 — release checklist + acceptance evidence; merge 638f8bc (PR #16); tag/dogfood/`dev`→`main` still blocked on user |
+| 01-v0.1 | tui-readability | merged | 4db1529 — ligature normalize, centered column, opaque dark bg, mouse/j/k scroll, skip blank cover pages; merge 24dff95 (PR #17) |
+| 01-v0.1 | gui-text-linux | merged | egui/eframe GUI (`candi` bin in candi-gui), file dialog, text view + search + sidecar; candi-cli → lib; Windows matrix removed from CI; merge 54d9f26 (PR #18) |
 | 02-v0.2 | — | planned | phase README only |
 | 03-v0.3 | — | planned | phase README only |
 | 04-v0.4 | — | planned | phase README only |
@@ -40,9 +44,15 @@ blocked on user; release merge pending authorization.
 | 2026-08-20 | slice/01-03-pdfium-backend → dev | b9902d0 | APPROVE — pdfium-render 0.8.37 (chromium/7543); FPDF error mapping + zero-page catalog sniff; CI libpdfium pin + PDFIUM_LIB; permissive matrix green |
 | 2026-08-20 | slice/01-04-backend-parity-hardening → dev | 3d519af | APPROVE (round 2b after REQUEST CHANGES) — shared parity suite + text-layer sampling; feat 153cafc |
 | 2026-08-20 | slice/01-05-benchmarks-both-backends → dev | c3634e0 | APPROVE — reader_peak budget gate; PR #10; feat fc5a2af |
-| 2026-08-21 | slice/01-10-candi-cli → dev | 9b86661 | APPROVE — CLI entry + 10 integration tests; PR #15; feat de1ecce |
+| 2026-08-21 | slice/01-09-candi-tui → dev | 62739c9 | APPROVE — TUI reader; PR #14; feat 8ae4cc4 |
+| 2026-08-21 | slice/01-10-candi-cli → dev | 9b86661 | APPROVE — shared lib + original CLI wiring; PR #15; feat de1ecce |
+| 2026-08-21 | slice/01-11-v01-release → dev | 638f8bc | APPROVE — release engineering; PR #16; feat d7ce832 |
+| 2026-08-21 | slice/tui-readability → dev | 24dff95 | APPROVE — TUI readability pass; PR #17 |
+| 2026-08-21 | slice/gui-text-linux → dev | 54d9f26 | APPROVE — Linux GUI text reader; PR #18 |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
+
+**Phase 01 reader complete on `dev`** after PR #18; release gates (dogfood, tag, `main`) remain user stop-gates.
 
 ## How to update
 

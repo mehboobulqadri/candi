@@ -6,8 +6,9 @@ nav_order: 5
 # Candi — Architecture
 
 Candi is a minimal, fast, cross-platform document reader built as one shared native Rust
-core with two frontends: a keyboard-first terminal UI (TUI, v0.1) and a graphical UI
-(GUI, v0.3). All document-independent logic — navigation, search, reading position,
+core with two frontends: a keyboard-first terminal UI (`candi-tui`, v0.1) and a
+graphical text UI (`candi` in candi-gui, v0.1 — pixel PDF page rendering remains a
+later phase). All document-independent logic — navigation, search, reading position,
 configuration — lives in candi-core and is exposed through one API both frontends share.
 PDF access sits behind a single document-backend trait in candi-pdf with two
 runtime-switchable engines: MuPDF (default) and PDFium. Both ship in v1; the user
@@ -18,26 +19,22 @@ logic.
 ## Workspace & dependencies
 
 ```text
-              candi-cli                  v0.1 entry: `candi book.pdf [--backend …]`
-                 │
-     ┌───────────┼───────────┐
-     │           │           │
-  candi-tui   candi-core   candi-gui      (v0.3, planned)
-     │      (nav, search,    │
-     │       position,       │
-     │       config)         │
-     └─────┐   │   ┌─────────┘
-           │   │   │
-        candi-theme  (semantic tokens; UI-independent)
-           │   │
-           └───┼───┐
-               │   │
-           candi-pdf  (Document/Backend trait + engines)
+  candi-tui (bin)              candi-gui (bin `candi`)
+       │                              │
+       │         candi-cli (lib) ◄────┘   open/resume/sidecar helpers
+       │              │
+       └──────┬───────┘
+              │
+          candi-core  (nav, search, position, config)
+              │
+          candi-theme  (semantic tokens; UI-independent)
+              │
+          candi-pdf  (Document/Backend trait + engines)
            ├── mupdf-backend    feature `mupdf-backend`,  default — AGPL-3.0
            └── pdfium-backend   feature `pdfium-backend`, default — BSD-3-Clause
 
-Arrows = depends on. TUI/GUI → core + theme; core → candi-pdf (trait only); CLI wires
-all; bindings/python (v0.5) wraps candi-core.
+Arrows = depends on. TUI/GUI → core (+ candi-cli for GUI open path); core → candi-pdf
+(trait only); bindings/python (v0.5) wraps candi-core.
 ```
 
 ## Design decisions
@@ -55,12 +52,12 @@ and its merciless review; do not re-open without a spike that contradicts the da
 | Positions API & semantics | `Result<Option<PagePositions>>` — real errors propagate, `Ok(None)` only when a backend has no positional API; block/line/word definitions pinned once at the trait level | The spike's `Option<Stats>` conflation was a reviewed bug; backends count differently on the same page (15 vs 67 blocks) | `Option<Stats>`; per-backend semantics (rejected) | decided |
 | Engine ownership | MuPDF `Document` owns its context; the PDFium engine is Arc-shared, created by the backend factory, held outside per-document objects | The spike's `Box::leak` was accepted only for a once-per-process probe; production leaks nothing | `Box::leak` (rejected) | decided |
 | Search (FR-008) | Core-level abstraction over lazy per-page text: page-at-a-time scan, result list, next/prev (v0.1) | Document-independent; the backend only supplies text | Backend-level search API (rejected: duplicates core logic) | decided |
-| Workspace layout | crates/candi-core, candi-pdf, candi-theme, candi-tui, candi-gui (v0.3), candi-cli; bindings/python (v0.5) | Per project.md; core never gains frontend logic | — | decided |
+| Workspace layout | crates/candi-core, candi-pdf, candi-theme, candi-tui, candi-gui, candi-cli (lib); bindings/python (v0.5) | Per project.md; user binaries `candi-tui` + `candi`; core never gains frontend logic | — | decided |
 | Themes, config & state | Semantic tokens + TOML + safe fallback with reported error; XDG config (`~/.config/candi/{config.toml,themes/}`); versioned sidecar `book.pdf.candi.toml`, atomic writes | UI-independent theming; platform conventions; the source PDF is never modified | Widget-specific keys (rejected) | decided |
 | Security posture | Untrusted PDFs: no JS execution, bounded resources, explicit errors; MuPDF's silent-open-on-truncated is detected and errored | Backend reality from the spike (MuPDF opens truncated files as 0-page docs) | — | decided |
 | Quality drill | 4 stages per task: organized write → static analysis → performance review → merciless line-by-line review | User mandate; non-negotiable | — | decided |
 | Benchmarks | A gate per phase; both backends; best-of-2; process-level RSS methodology from the fixed probe | workflow.md standing rule 2; numbers defined before implementation | — | decided |
-| v0.1 scope | `candi book.pdf`, text display, scroll, first/last page, search + n/N, position persistence, default keybindings, graceful errors, SSH | project.md 4.1; smaller is shippable | original wider draft (deferred to v0.2+) | decided |
+| v0.1 scope | `candi-tui` + `candi` (GUI text), scroll, first/last page, search + n/N, position persistence, default keybindings, graceful errors, SSH (TUI) | project.md 4.1; GUI text pulled into v0.1; pixel PDF pages deferred | original wider draft (deferred to v0.2+) | decided |
 
 ## candi-pdf
 
@@ -129,8 +126,8 @@ pub fn open(kind: BackendKind, path: &str, password: Option<&str>)
     -> Result<Box<dyn Document>, Error>;          // default: Mupdf
 ```
 
-The CLI passes `--backend mupdf|pdfium` (default mupdf; config key later); unknown
-names are `Unsupported`.
+The GUI passes `--backend mupdf|pdfium` (default mupdf; config key later); unknown
+names are `Unsupported`. The TUI uses the default backend factory.
 
 ### License implications
 
@@ -173,12 +170,14 @@ Document-independent logic; the only frontend-agnostic consumer of the `Document
 
 - **TUI (candi-tui, v0.1)** — ratatui + crossterm, keyboard-first. Layout: page view,
   status bar (file, page x/y, search state), search prompt, error screen; resize via
-  crossterm; no display/GPU dependency — works over SSH. Keybindings fixed per
+  crossterm; no display/GPU dependency — works over SSH. Ligature-normalized text,
+  centered column, mouse wheel and j/k continuous page scroll. Keybindings fixed per
   project.md §6.
-- **GUI (candi-gui, v0.3)** — Slint is the first candidate (Spike 3 decides:
-  Linux/Windows/Android portability, page rendering, touch); renders real PDF pages
-  (images, diagrams), open dialog / drag & drop / recent documents, shares candi-core's
-  API + sidecar; zero document logic; designed in detail only after Spike 3.
+- **GUI (candi-gui, v0.1 text)** — egui/eframe + rfd file dialog. Binary name `candi`.
+  No args opens a file picker; path arg opens that PDF. Scrollable extracted text,
+  page navigation, search, sidecar persistence via candi-cli helpers. Real PDF page
+  rendering (images, diagrams) and richer shell features remain a later phase (Spike 3
+  framework choice still open for that work).
 
 ## candi-theme
 
