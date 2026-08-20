@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Benchmark harness driver. Replicates the spike's methodology
 # (spikes/pdf-backend/run.sh): open_ms timed before backend open, best-of-2 for
-# page/search/nav metrics, process-level RSS (VmRSS baseline -> VmHWM peak
-# -> delta), timeout-wrapped runs, nonzero exit on every error path.
+# page/search/nav metrics, process-level RSS (VmRSS baseline -> VmHWM
+# reader_peak after open/search/nav -> full_pass_peak after page-mean sweep;
+# budget gate uses full_pass_peak), timeout-wrapped runs, nonzero exit on every
+# error path.
 set -euo pipefail
 trap 'echo "bench/run.sh: FAILED at line $LINENO" >&2; exit 1' ERR
 
@@ -136,8 +138,8 @@ if [ -n "$DUPES" ]; then
   exit 1
 fi
 
-printf '%-8s %-18s %7s %10s %9s %9s %7s %11s %12s %11s\n' \
-  "backend" "doc" "open_ms" "startup_ms" "page_ms" "search_ms" "nav_ms" "baseline RSS" "process peak" "delta vs baseline"
+printf '%-8s %-18s %7s %10s %9s %9s %7s %11s %12s %11s %14s %14s\n' \
+  "backend" "doc" "open_ms" "startup_ms" "page_ms" "search_ms" "nav_ms" "baseline RSS" "reader peak" "reader delta" "full_pass peak" "full_pass delta"
 
 while IFS=$'\t' read -r label path; do
   [ -n "$label" ] || continue

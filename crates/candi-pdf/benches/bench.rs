@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0
 // Benchmark harness binary — driven by bench/run.sh, one process per backend/doc.
 // Methodology: open_ms before backend open, best-of-2 for page/search/nav,
-// process RSS (VmRSS baseline -> VmHWM peak -> delta), nonzero exit on errors.
+// process RSS (VmRSS baseline -> VmHWM reader_peak after open/search/nav ->
+// full_pass_peak after the page-mean sweep; budget gate uses full_pass_peak),
+// nonzero exit on errors.
 
 use std::env;
 use std::process;
@@ -186,10 +188,11 @@ where
 {
     let run1 = f()?;
     let run2 = f()?;
-    Ok(SearchNavRun {
-        search_ms: run1.search_ms.min(run2.search_ms),
-        nav_ms: run1.nav_ms.min(run2.nav_ms),
-    })
+    if run1.search_ms + run1.nav_ms <= run2.search_ms + run2.nav_ms {
+        Ok(run1)
+    } else {
+        Ok(run2)
+    }
 }
 
 fn within_budget(
@@ -198,7 +201,7 @@ fn within_budget(
     open_ms: f64,
     startup_ms: f64,
     timed: &TimedRun,
-    peak_mb: u64,
+    full_pass_peak_mb: u64,
 ) -> bool {
     let mut ok = true;
     let mut fail = |metric: &str, value: &str, limit: &str| {
@@ -241,26 +244,35 @@ fn within_budget(
             &format!("< {BUDGET_NAV_MS:.0}ms"),
         );
     }
-    if peak_mb > BUDGET_PEAK_RSS_MB {
+    if full_pass_peak_mb > BUDGET_PEAK_RSS_MB {
         fail(
-            "peak_rss_mb",
-            &format!("{peak_mb} MB"),
+            "full_pass_peak_rss_mb",
+            &format!("{full_pass_peak_mb} MB"),
             &format!("< {BUDGET_PEAK_RSS_MB} MB"),
         );
     }
     ok
 }
 
-fn print_error_row(backend: &str, label: &str, baseline: u64, peak: u64, delta: u64, kind: &str) {
+fn print_error_row(
+    backend: &str,
+    label: &str,
+    baseline: u64,
+    reader_peak: u64,
+    reader_delta: u64,
+    kind: &str,
+) {
     println!(
-        "{backend:<8} {label:<18} {kind:<9} {startup:>10} {page:>9} {search:>9} {nav:>7} {base:>11} {peak:>12} {delta:>11}",
+        "{backend:<8} {label:<18} {kind:<9} {startup:>10} {page:>9} {search:>9} {nav:>7} {base:>11} {reader_peak:>12} {reader_delta:>11} {full_pass_peak:>14} {full_pass_delta:>14}",
         startup = "ok",
         page = "-",
         search = "-",
         nav = "-",
         base = format!("{baseline} MB"),
-        peak = format!("{peak} MB"),
-        delta = format!("{delta} MB"),
+        reader_peak = format!("{reader_peak} MB"),
+        reader_delta = format!("{reader_delta} MB"),
+        full_pass_peak = "-",
+        full_pass_delta = "-",
     );
 }
 
@@ -269,21 +281,25 @@ struct ProcessMetrics {
     startup_ms: f64,
     timed: TimedRun,
     baseline: u64,
-    peak: u64,
-    delta: u64,
+    reader_peak: u64,
+    reader_delta: u64,
+    full_pass_peak: u64,
+    full_pass_delta: u64,
 }
 
 fn print_metrics_row(backend: &str, label: &str, metrics: &ProcessMetrics) {
     println!(
-        "{backend:<8} {label:<18} {open:>7} {startup:>10} {page:>9} {search:>9} {nav:>7} {base:>11} {peak:>12} {delta:>11}",
+        "{backend:<8} {label:<18} {open:>7} {startup:>10} {page:>9} {search:>9} {nav:>7} {base:>11} {reader_peak:>12} {reader_delta:>11} {full_pass_peak:>14} {full_pass_delta:>14}",
         open = group(metrics.open_ms.round() as u64),
         startup = group(metrics.startup_ms.round() as u64),
         page = group(metrics.timed.page_ms_mean.round() as u64),
         search = group(metrics.timed.search_ms.round() as u64),
         nav = group(metrics.timed.nav_ms.round() as u64),
         base = format!("{} MB", metrics.baseline),
-        peak = format!("{} MB", metrics.peak),
-        delta = format!("{} MB", metrics.delta),
+        reader_peak = format!("{} MB", metrics.reader_peak),
+        reader_delta = format!("{} MB", metrics.reader_delta),
+        full_pass_peak = format!("{} MB", metrics.full_pass_peak),
+        full_pass_delta = format!("{} MB", metrics.full_pass_delta),
     );
 }
 
@@ -322,15 +338,15 @@ fn main() {
     if let Some(expected) = expected_open_error(label) {
         match open_result {
             Err(ref err) if matches_expected(err, expected) => {
-                let peak = measure::peak_rss_mb();
-                let delta = peak.saturating_sub(baseline);
+                let reader_peak = measure::peak_rss_mb();
+                let reader_delta = reader_peak.saturating_sub(baseline);
                 eprintln!("{label} ({backend_name}): expected open error: {err}");
                 print_error_row(
                     backend_name,
                     label,
                     baseline,
-                    peak,
-                    delta,
+                    reader_peak,
+                    reader_delta,
                     match expected {
                         ExpectedOpenError::Encrypted => "Encrypted",
                         ExpectedOpenError::Malformed => "Malformed",
@@ -380,8 +396,8 @@ fn main() {
         }
     };
 
-    let peak = measure::peak_rss_mb();
-    let delta = peak.saturating_sub(baseline);
+    let reader_peak = measure::peak_rss_mb();
+    let reader_delta = reader_peak.saturating_sub(baseline);
 
     let page_ms_mean = match best_of_two_pages(|| page_pass_ms(doc.as_ref())) {
         Ok(ms) => ms,
@@ -397,8 +413,11 @@ fn main() {
         nav_ms: search_nav.nav_ms,
     };
 
+    let full_pass_peak = measure::peak_rss_mb();
+    let full_pass_delta = full_pass_peak.saturating_sub(baseline);
+
     eprintln!(
-        "{label} ({backend_name}): best-of-2 page_ms={} search_ms={} nav_ms={} peak={peak} MB",
+        "{label} ({backend_name}): best-of-2 page_ms={} search_ms={} nav_ms={} reader_peak={reader_peak} MB full_pass_peak={full_pass_peak} MB",
         fmt_ms(timed.page_ms_mean),
         fmt_ms(timed.search_ms),
         fmt_ms(timed.nav_ms),
@@ -412,12 +431,23 @@ fn main() {
             startup_ms,
             timed,
             baseline,
-            peak,
-            delta,
+            reader_peak,
+            reader_delta,
+            full_pass_peak,
+            full_pass_delta,
         },
     );
 
-    if enforce_budget && !within_budget(label, backend_name, open_ms, startup_ms, &timed, peak) {
+    if enforce_budget
+        && !within_budget(
+            label,
+            backend_name,
+            open_ms,
+            startup_ms,
+            &timed,
+            full_pass_peak,
+        )
+    {
         process::exit(1);
     }
 }

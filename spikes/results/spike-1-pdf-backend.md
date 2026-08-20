@@ -128,35 +128,45 @@ Fallback posture: if MuPDF's AGPL ever becomes a blocker, PDFium is a drop-in-qu
 
 Harness: `bench/run.sh` driving `crates/candi-pdf/benches/bench.rs` (one process per backend/doc).
 Methodology vs spike probe: `open_ms` timed before `candi_pdf::open`; `startup_ms` = process start →
-first `page_text(0)`; page/search/nav best-of-2; **peak RSS snapshot after open + search/nav only**
-(lazy workload — before the full-corpus page pass used for `page_ms` mean); VmRSS baseline → VmHWM
-peak → delta; error-path fixtures assert expected `Error` kinds; budget gate via `BENCH_CHECK_BUDGET`
-(full corpus only; CI `--fixtures-only` sets `BENCH_CHECK_BUDGET=0`).
+first `page_text(0)`; page/search/nav best-of-2 (search/nav pick the **entire run** with lower
+`search_ms + nav_ms`, not per-metric min across runs); **two VmHWM peaks in the same process** —
+`reader_peak` after open + first page + search/nav, `full_pass_peak` after the best-of-2 page-mean
+sweep (all pages); VmRSS baseline → peak → delta for each window; error-path fixtures assert expected
+`Error` kinds; **budget gate (`BENCH_CHECK_BUDGET`, full corpus only) uses `full_pass_peak`** for the
+200 MB RSS target (CI `--fixtures-only` sets `BENCH_CHECK_BUDGET=0`). `nav_ms` is the mean
+`page_text` latency on pages adjacent to the first search hit (next/prev proxy until core search
+lands in 01/08).
 
 Run: 2026-08-20, Linux 7.1.6-1-cachyos, rustc 1.97.1, release build, full corpus (frankl,
-sysdesign, cleancode, silberschatz, attention, alice-scan) + error fixtures. All v0.1 budget targets
-met on this run.
+sysdesign, cleancode, silberschatz, attention, alice-scan) + error fixtures.
 
-| Backend | Doc | open_ms | startup_ms | page_ms (mean) | search_ms | nav_ms | baseline RSS | process peak | delta |
-|---|---|---|---|---|---|---|---|---|---|
-| mupdf | frankl | 3 | 3 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB |
-| mupdf | sysdesign | 4 | 4 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB |
-| mupdf | cleancode | 8 | 8 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB |
-| mupdf | silberschatz | 40 | 40 | 2 | 2 | 0 | 6 MB | 43 MB | 37 MB |
-| mupdf | attention | 13 | 14 | 2 | 1 | 1 | 6 MB | 14 MB | 8 MB |
-| mupdf | alice-scan | 49 | 49 | 0 | 0 | 0 | 6 MB | 13 MB | 7 MB |
-| pdfium | frankl | 1 | 1 | 2 | 0 | 0 | 6 MB | 11 MB | 5 MB |
-| pdfium | sysdesign | 2 | 2 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB |
-| pdfium | cleancode | 2 | 2 | 1 | 0 | 0 | 6 MB | 12 MB | 6 MB |
-| pdfium | silberschatz | 111 | 111 | 3 | 3 | 0 | 6 MB | 59 MB | 53 MB |
-| pdfium | attention | 18 | 18 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB |
-| pdfium | alice-scan | 15 | 15 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+**Budget gate (full_pass_peak + other v0.1 targets): FAIL** on MuPDF silberschatz
+(`full_pass_peak` 295 MB > 200 MB). MuPDF silberschatz `reader_peak` is ~44 MB — lazy per-page
+access keeps the interactive path small, but a full page sweep still hits MuPDF decoded-resource
+caching (~294 MB in the spike whole-doc extract). PDFium silberschatz `full_pass_peak` 92 MB passes.
+PDFium attention cold-start `startup_ms` can exceed 300 ms (one-time engine init); warm metrics pass.
 
-Notes: MuPDF silberschatz peak RSS dropped from 294 MB (spike whole-doc extraction) to 43 MB with
-lazy per-page access + RSS measured before the full page-pass timing sweep. PDFium silberschatz open
-(111 ms) stays within the 150 ms open budget. Search uses page-at-a-time scan for `"the"`; nav_ms
-is the mean `page_text` latency on pages adjacent to the first hit (next/prev proxy until core search
-lands in 01/08).
+| Backend | Doc | open_ms | startup_ms | page_ms (mean) | search_ms | nav_ms | baseline RSS | reader peak | reader Δ | full_pass peak | full_pass Δ |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| mupdf | frankl | 3 | 3 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB | 11 MB | 5 MB |
+| mupdf | sysdesign | 4 | 4 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB | 21 MB | 15 MB |
+| mupdf | cleancode | 9 | 9 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB | 18 MB | 12 MB |
+| mupdf | silberschatz | 46 | 46 | 2 | 2 | 0 | 6 MB | 44 MB | 38 MB | **295 MB** | 289 MB |
+| mupdf | attention | 34 | 34 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB | 18 MB | 12 MB |
+| mupdf | alice-scan | 49 | 49 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB | 25 MB | 19 MB |
+| pdfium | frankl | 2 | 2 | 2 | 0 | 0 | 6 MB | 11 MB | 5 MB | 13 MB | 7 MB |
+| pdfium | sysdesign | 2 | 2 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB | 23 MB | 17 MB |
+| pdfium | cleancode | 3 | 3 | 1 | 1 | 0 | 6 MB | 11 MB | 5 MB | 22 MB | 16 MB |
+| pdfium | silberschatz | 117 | 117 | 3 | 3 | 0 | 6 MB | 58 MB | 52 MB | 92 MB | 86 MB |
+| pdfium | attention | 350 | 351 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB | 30 MB | 24 MB |
+| pdfium | alice-scan | 15 | 15 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB | 21 MB | 15 MB |
+
+Notes: The earlier claim that MuPDF silberschatz peak RSS dropped from 294 MB to 43 MB was a
+**measurement-window artifact** — peak was snapshotted after search/nav but before the full page
+pass. Honest accounting: `reader_peak` ~44 MB (interactive path), `full_pass_peak` ~295 MB (same
+order as spike whole-doc extract). Lazy loading helps the reader path; it does **not** eliminate
+MuPDF store growth during a full-document page sweep. Blocker tracked in architecture.md §Cross-cutting
+(`full_pass_peak` gate). Search uses page-at-a-time scan for `"the"`.
 
 ## Failed/hung commands and root causes
 

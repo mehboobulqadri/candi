@@ -239,7 +239,7 @@ the parser and extraction code of the two C engines.
 | Page text extraction | < 20 ms/page mean on corpus | ~2–4 ms/page |
 | Search first result | < 300 ms on any corpus doc | extraction-bound |
 | Search next/prev | < 50 ms | in-memory cursor |
-| Peak RSS | < 200 MB on corpus | MuPDF 294 MB outlier — lazy loading must fix; PDFium 90 MB |
+| Peak RSS (full_pass_peak) | < 200 MB on corpus | MuPDF silberschatz ~294 MB on full page sweep (reader_peak ~43 MB); spike whole-doc extract 294 MB; PDFium 90 MB |
 
 ## Open questions / future
 
