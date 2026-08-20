@@ -7,7 +7,7 @@ nav_order: 3
 
 ## Spike results
 
-**Spike 1 is RESOLVED** — [full results](../../spikes/results/spike-1-pdf-backend.md).
+**Spike 1 is RESOLVED** — [full results](../spikes/results/spike-1-pdf-backend.md).
 
 Outcome: Candi ships a dual, runtime-switchable PDF backend — MuPDF (default) and
 PDFium behind one `Document` trait; Poppler is rejected (slowest, no structured API,
@@ -21,7 +21,7 @@ A spike is a short, throwaway investigation meant to answer one specific questio
 | # | Decision | Blocks | Priority |
 |---|---|---|---|
 | 1 | PDF backend + its license | Everything | Critical — do first |
-| 2 | Text-extraction quality for TUI rendering | v0.1 core | Critical |
+| 2 | Text-extraction quality for TUI rendering | v0.1 TUI (phase 01, slice 09) | Critical |
 | 3 | GUI framework (Slint vs alternatives) | v0.3 | High, but not urgent |
 | 4 | Sidecar file format & schema versioning | v0.2 | Medium |
 | 5 | Terminal image protocol(s) | v0.9 (advanced rendering) | Low |
@@ -117,7 +117,7 @@ Options: Kitty graphics protocol, Sixel, iTerm2 image protocol, Unicode/Braille/
 ```
 1. PDF backend licensing check        (blocks everything — days, not weeks)
 2. PDF backend text-extraction spike  (blocks v0.1 core)
-3. Text-first rendering spike         (blocks v0.1 TUI)
+3. Text-first rendering spike         (blocks v0.1 TUI; lands in phase 01, slice 09)
         │
         ▼
    v0.1 build begins

@@ -11,7 +11,7 @@ skeleton; CI green (workflow Phase 0).
 
 - **Cargo workspace** with the five v0.1 crates as empty skeletons
   (`candi-core`, `candi-pdf`, `candi-theme`, `candi-tui`, `candi-cli`) per
-  project.md §5; AGPL-3.0 LICENSE at repo root. `candi-gui` and `bindings/python`
+  project.md §5; AGPL-3.0 LICENSE.md at repo root. `candi-gui` and `bindings/python`
   are created when their phases start.
 - **GitHub Actions CI** — fmt, clippy `-D warnings`, release build, tests; Linux
   now, Windows job at the v0.1 tag. Dependency auditing (cargo-deny + dependabot).
@@ -34,6 +34,5 @@ skeleton; CI green (workflow Phase 0).
 | 02 | ci-drill-gates | planned |
 | 03 | benchmark-harness | planned |
 
-Each slice merges to `dev`; [progress.md](../progress.md) updates before every
-merge. Slice READMEs: `slices/01-workspace-bootstrap/`, `slices/02-ci-drill-gates/`,
-`slices/03-benchmark-harness/`.
+Slice READMEs: `slices/01-workspace-bootstrap/`,
+`slices/02-ci-drill-gates/`, `slices/03-benchmark-harness/`.

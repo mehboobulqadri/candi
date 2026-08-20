@@ -13,8 +13,9 @@ dependencies — plus the corpus manifest, ready to measure candi-pdf in phase 0
   baseline → VmHWM peak → delta), every run timeout-wrapped, nonzero exit on error
   paths.
 - **Corpus references:** committed small fixtures (attention paper, alice-scan,
-  dummy-encrypted — currently under `spikes/corpus/`) + local real books from
-  `/mnt/personal/Books/` via a **gitignored** manifest. Real books are never
+  dummy-encrypted — currently under `spikes/corpus/`) + local real books
+  referenced by a **gitignored** manifest (paths live on the dev machine only,
+  never in the repo). Real books are never
   committed. DECIDE: `spikes/corpus/` is currently ignored by `.gitignore`
   (`/spikes/*` except `results/`) — un-ignore the fixtures or move them into the
   workspace; the manifest must fail loudly if a listed book is missing.
@@ -41,7 +42,7 @@ dependencies — plus the corpus manifest, ready to measure candi-pdf in phase 0
 2. `run.sh`: manifest loading, fixture generation, best-of-2, timeout wrapping,
    nonzero exits, one-corpus-match-per-book assertion.
 3. Resolve the `spikes/corpus/` ignore question (commit fixtures or move them).
-4. Gitignored local manifest listing the spike's five real books.
+4. Gitignored local manifest listing the spike's corpus books.
 5. Fresh-machine run (fixtures only) green; full-corpus run on the dev machine.
 6. Run the drill.
 

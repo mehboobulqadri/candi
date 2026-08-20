@@ -10,13 +10,13 @@ screen; resize handling; SSH-safe; `TestBackend`-tested. Also closes Spike 2.
 - ratatui + crossterm (pin versions — API churn is a known risk). Layout per
   architecture.md §Frontends: page view (paragraph wrapping), status bar (file,
   page x/y, search state), search prompt overlay, error screen.
-- **Keybindings exactly per project.md §6** — j/k scroll, h/l page, g/G first/last,
-  `/` search, n/N next/prev result, q quit. No additions in v0.1.
+- **Keybindings exactly per project.md §6** — no additions in v0.1.
 - **Resize:** crossterm events → re-render. No display/GPU dependency — pure
   terminal, works over SSH (project.md 4.1 NFR). TERM=dumb / unsupported terminal →
   a minimal fallback (error screen, never a hang).
 - **Spike 2 closure** (workflow Phase 1 leftover — do it here, not later): validate
-  structured-text rendering on a single-column novel (frankl fixture) — must render
+  structured-text rendering on a single-column novel (frankl, local corpus book per
+  the gitignored manifest) — must render
   cleanly with minimal heuristics; document the known multi-column/footnote
   limitations in spikes/results (limitations documented, not silently wrong — the
   spike's pass/fail).

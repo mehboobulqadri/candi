@@ -165,7 +165,7 @@ Document-independent logic; the only frontend-agnostic consumer of the `Document
 - **Search abstraction.** `SearchSession { query, results: Vec<(page, offset)>, cursor }`
   over lazy `page_text`: pages extracted and scanned one at a time on demand — first
   result cheap, full scan never materializes the document. n/N moves the cursor; the TUI
-  renders the result's page; the result list holds page numbers only.
+  renders the result's page; the result list holds page numbers + offsets only.
 - **Config.** XDG lookup (`~/.config/candi/config.toml`); v0.1 reads minimal keys
   (backend selection later); CLI flags take precedence over file keys.
 
@@ -174,7 +174,7 @@ Document-independent logic; the only frontend-agnostic consumer of the `Document
 - **TUI (candi-tui, v0.1)** — ratatui + crossterm, keyboard-first. Layout: page view,
   status bar (file, page x/y, search state), search prompt, error screen; resize via
   crossterm; no display/GPU dependency — works over SSH. Keybindings fixed per
-  project.md §6 (j/k/h/l/g/G, /, n/N, q).
+  project.md §6.
 - **GUI (candi-gui, v0.3)** — Slint is the first candidate (Spike 3 decides:
   Linux/Windows/Android portability, page rendering, touch); renders real PDF pages
   (images, diagrams), open dialog / drag & drop / recent documents, shares candi-core's
@@ -245,6 +245,6 @@ the parser and extraction code of the two C engines.
 
 Remaining open items (tracked in spikes.md) block nothing in v0.1:
 
-- Spike 2 — text-first rendering quality (closes in implementation Phase 2); Spike 3 —
+- Spike 2 — text-first rendering quality (closes in phase 01, slice 09); Spike 3 —
   GUI framework (v0.3); Spike 4 — sidecar format & concurrent access (v0.2).
 - Spike 5 — terminal images (v0.9); Spike 6 — Python bindings (v0.5); Spike 7 — packaging (v0.5).

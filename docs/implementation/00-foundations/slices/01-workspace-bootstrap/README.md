@@ -17,7 +17,7 @@ with the drill applied — the base every later slice lands on.
   frontends (architecture.md workspace diagram, standing rule 4).
 - **Edition + toolchain:** pin current stable via `rust-toolchain.toml` (the spike
   used 1.97.1); the pin is deliberate — document the choice in the PR.
-- **LICENSE:** AGPL-3.0 full text at repo root, one license for the workspace; the
+- **LICENSE.md:** AGPL-3.0 full text at repo root, one license for the workspace; the
   permissive escape hatch is a cargo feature, not a separate license
   (architecture.md §License implications).
 - `Cargo.lock` is committed — application workspace (`.gitignore` already notes
@@ -29,7 +29,7 @@ with the drill applied — the base every later slice lands on.
 
 - `Cargo.toml` (workspace)
 - `rust-toolchain.toml`
-- `LICENSE` (AGPL-3.0)
+- `LICENSE.md` (AGPL-3.0)
 - `crates/candi-core/{Cargo.toml, src/lib.rs}`
 - `crates/candi-pdf/{Cargo.toml, src/lib.rs}`
 - `crates/candi-theme/{Cargo.toml, src/lib.rs}`
@@ -42,7 +42,7 @@ with the drill applied — the base every later slice lands on.
    profile).
 2. Create the five crates per project.md §5 (tui = lib + bin; cli = bin).
 3. Add `rust-toolchain.toml` pinning current stable.
-4. Add AGPL-3.0 `LICENSE` at repo root.
+4. Add AGPL-3.0 `LICENSE.md` at repo root.
 5. `cargo build` + `cargo test` — workspace green, zero warnings.
 6. Run the drill.
 
@@ -65,7 +65,7 @@ build: bootstrap cargo workspace with empty crates
 
 - Merge target: `dev`.
 - Reviewer: crate set matches project.md §5 (no candi-gui, no bindings); members
-  pattern `crates/*`; release profile; LICENSE is AGPL-3.0; no dead config, zero
+  pattern `crates/*`; release profile; LICENSE.md is AGPL-3.0; no dead config, zero
   warnings.
 
 ## Risks

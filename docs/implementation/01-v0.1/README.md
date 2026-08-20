@@ -20,9 +20,8 @@ text, scrolls, paginates, searches with next/prev, and remembers reading positio
 ## Exit criteria
 
 - v0.1 acceptance criteria (REQUIREMENTS.md §v0.1) all pass.
-- Benchmarks on both backends meet the architecture.md §9 budget: startup-to-first
-  page < 300 ms, open ≤ 150 ms, page-text < 20 ms/page mean, first search result
-  < 300 ms, next/prev < 50 ms, peak RSS < 200 MB.
+- Benchmarks on both backends meet the architecture.md §Cross-cutting
+  performance budget.
 - Windows build verified (CI job or local) at the tag.
 - **Dogfood gate** — used daily by at least one person *before* tagging
   (workflow Phase 2 decision gate).
@@ -43,5 +42,4 @@ text, scrolls, paginates, searches with next/prev, and remembers reading positio
 | 10 | candi-cli | planned |
 | 11 | v01-release | planned |
 
-Each slice merges to `dev`; [progress.md](../progress.md) updates before every
-merge. Slice READMEs live in `slices/<NN-name>/`.
+Slice READMEs live in `slices/<NN-name>/`.
