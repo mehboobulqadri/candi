@@ -13,6 +13,24 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-20 (01/04 close-out)
+
+- **Decision/Issue:** Slice 01/04 backend-parity-hardening merged to `dev` via PR #8 (slice HEAD `153cafc`, merge `3d519af`). Independent reviewer APPROVE (round 2b); round 1 REQUEST CHANGES (`_open_fn` typo; dishonest Unsupported self-match). CI run `32387915511` on `153cafc`: all 7 jobs success.
+- **Why:** Phase 01 fourth slice — shared parity suite, hardening matrix, first-page text sampling for `NoTextLayer`, cross-backend fixture expectations.
+- **Changed:** `tests/parity/`, `textlayer.rs` sampling, fixture helpers; Option B Unsupported (factory gating only — PDFium never maps open to Unsupported); textlayer zero-page → `Malformed`; compile skip `let _ = open_fn`. Handoff advances to 01/05.
+
+- **Decision/Issue:** Round 1 caught dishonest Unsupported self-match — test asserted Unsupported via factory gate, not engine behavior.
+- **Why:** Parity slice must pin engine outcomes, not factory wiring tricks.
+- **Changed:** Option B: Unsupported only via factory gating; PDFium open path never returns Unsupported; reviewer round 2b APPROVE.
+
+- **Decision/Issue:** Hardening table row “unsupported PDF feature → Unsupported” deferred.
+- **Why:** No honest cross-backend fixture/policy without factory-only gating; 01/04 scoped to provable parity cases.
+- **Changed:** Factory gating only; open question carried to later slice.
+
+- **Decision/Issue:** `progress.md` still cites commit SHA `1b4b613` after 01/04 merge.
+- **Why:** Third recurrence of progress SHA lag — row written before final slice commit or not updated at merge close-out.
+- **Changed:** 01/05 builder must set 01/04 merged + merge SHA; memory updated with recurring-pattern lesson.
+
 ## 2026-08-20 (01/03 close-out)
 
 - **Decision/Issue:** Slice 01/03 pdfium-backend merged to `dev` via PR #7 (feat `b3d1326`, merge `b9902d0`). Independent reviewer APPROVE (nits only). PR CI run `32383125922`: all 7 jobs success.
