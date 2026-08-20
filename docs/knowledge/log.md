@@ -13,6 +13,20 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-20 (01/06 close-out)
+
+- **Decision/Issue:** Slice 01/06 candi-core-navigation merged to `dev` via PR #11 (slice feat `8b955fa`, progress `e44a58d`, merge `994a154`, mergedAt 2026-08-20T18:17:13Z). Independent reviewer APPROVE. CI run `32401474027`: all jobs success.
+- **Why:** Phase 01 sixth slice — `ViewState` navigation model in `candi-core` (page + scroll clamping, no TUI coupling).
+- **Changed:** `ViewState` in `candi-core`; 15 tests; handoff advances to 01/07; remote slice branch deleted; worktree `/tmp/candi-slice-01-06` removed.
+
+- **Decision/Issue:** `ViewState` navigation semantics pinned for downstream slices.
+- **Why:** TUI/GUI layers must share one core model without re-deriving clamp rules.
+- **Changed:** 0-based page; clamp never `Result`/panic on realistic inputs; `max_scroll` caller-supplied (no TUI types); page change resets scroll to 0; empty doc stays page 0; `Copy`.
+
+- **Decision/Issue:** Reviewer nits carried forward (non-blocking): `scroll_down` should use `saturating_add`; document inclusive `max_scroll`; add explicit first/last page scroll-reset tests.
+- **Why:** Edge-case clarity and overflow safety — not merge blockers.
+- **Changed:** Nits table in handoff; optional cleanup in a later touch of `candi-core`.
+
 ## 2026-08-20 (01/05 close-out)
 
 - **Decision/Issue:** Slice 01/05 benchmarks-both-backends merged to `dev` via PR #10 (slice HEAD `883a98c`, gate-fix `1fb4242`, merge `fc5a2af`, mergedAt 2026-08-20T16:52:55Z). Independent reviewer APPROVE at `883a98c`. CI run `32393653573` on `883a98c`: all 7 jobs success.
