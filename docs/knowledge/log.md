@@ -13,6 +13,16 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-20 (01/08 close-out)
+
+- **Decision/Issue:** Slice 01/08 search-abstraction merged to `dev` via PR #13 (slice feat `9c7e0f1`, wrap fix `a77a874`, progress `7f6655a`, merge `4af89e8c499da22a622fd20bb275472da51c8a06`, mergedAt 2026-08-20T18:55:41Z). Independent reviewer APPROVE after REQUEST CHANGES (wrap rescan). CI run `32404983245`.
+- **Why:** Phase 01 eighth slice — shared `SearchSession` abstraction over both PDF backends for lazy, case-insensitive document search.
+- **Changed:** `SearchSession`: page-at-a-time lazy scan; case-insensitive `to_lowercase`; results `(page, offset)` only; `start_page` + wrap; empty query → 0 `page_text` calls; errors propagate. Handoff advances to 01/09.
+
+- **Decision/Issue:** Wrap scan with `start_page > 0` rescanned the start page — duplicate work and wrong termination.
+- **Why:** Wrap loop did not stop at `start_page` when continuing from a mid-document start.
+- **Changed:** Fix `a77a874`; test asserts `call_count == page_count`; hazard added to handoff; memory lesson on wrap boundary.
+
 ## 2026-08-20 (01/07 close-out)
 
 - **Decision/Issue:** Slice 01/07 reading-position-sidecar merged to `dev` via PR #12 (slice feat `bd440c3`, progress `a82aaa0`, merge `decce477537a4196cc50f61065b3088f4b344ebd`, mergedAt verified via `gh pr view`). Independent reviewer APPROVE. CI run `32402904183`: all jobs success.
