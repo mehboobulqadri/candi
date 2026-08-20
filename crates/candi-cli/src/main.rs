@@ -11,6 +11,9 @@ use candi_core::{Load, Position, ViewState, load, save};
 use candi_pdf::{BackendKind, Error as PdfError, open};
 use clap::Parser;
 
+/// Scroll cap before TUI resize; page max scroll is unknown until then.
+const UNBOUND_SCROLL: usize = usize::MAX;
+
 #[derive(Parser)]
 #[command(
     name = "candi",
@@ -27,7 +30,13 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let args = match Args::try_parse() {
+        Ok(args) => args,
+        Err(err) => {
+            let _ = err.print();
+            return ExitCode::from(1);
+        }
+    };
     let path = Path::new(&args.file);
 
     let kind = match args.backend.as_str() {
@@ -85,7 +94,7 @@ fn view_from_load(pdf: &dyn candi_pdf::Document, load: Load) -> ViewState {
         Load::Missing => ViewState::new(),
         Load::Loaded(position) => ViewState::new()
             .goto_page(position.page(), pdf.page_count())
-            .scroll_down(position.scroll(), usize::MAX),
+            .scroll_down(position.scroll(), UNBOUND_SCROLL),
         Load::Corrupt(message) => {
             eprintln!("warning: corrupt sidecar: {message}");
             ViewState::new()

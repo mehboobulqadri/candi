@@ -54,7 +54,15 @@ fn run_with_env(key: &str, value: &str, args: &[&str]) -> std::process::Output {
 #[test]
 fn no_args_exits_nonzero() {
     let output = run(&[]);
-    assert_ne!(output.status.code(), Some(0));
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn unknown_flag_exits_one() {
+    let pdf = fixture("tiny.pdf");
+    let path = pdf.to_str().unwrap();
+    let output = run(&["--nope", path]);
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -115,6 +123,34 @@ fn headless_tiny_pdf_prints_first_page() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "page=1");
+    assert!(sidecar_path(&pdf).exists());
+    let sidecar = fs::read_to_string(sidecar_path(&pdf)).unwrap();
+    assert!(sidecar.contains("schema_version = 1"));
+}
+
+#[test]
+fn unsupported_sidecar_schema_exits_with_message() {
+    let dir = temp_dir("unsupported-schema");
+    let pdf = copy_fixture(&fixture("tiny.pdf"), &dir, "tiny.pdf");
+    fs::write(
+        sidecar_path(&pdf),
+        r#"schema_version = 2
+[reading]
+page = 0
+scroll = 0
+updated_at = "2026-08-20T12:00:00Z"
+"#,
+    )
+    .unwrap();
+
+    let path = pdf.to_str().unwrap();
+    let output = run_with_env("CANDI_NO_TUI", "1", &[path]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported sidecar schema version"),
+        "stderr: {stderr}"
+    );
 }
 
 #[test]
