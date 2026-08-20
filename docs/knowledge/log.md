@@ -13,6 +13,28 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-20 (01/05 close-out)
+
+- **Decision/Issue:** Slice 01/05 benchmarks-both-backends merged to `dev` via PR #10 (slice HEAD `883a98c`, gate-fix `1fb4242`, merge `fc5a2af`, mergedAt 2026-08-20T16:52:55Z). Independent reviewer APPROVE at `883a98c`. CI run `32393653573` on `883a98c`: all 7 jobs success.
+- **Why:** Phase 01 fifth slice — production bench harness for both backends, corpus comparison against architecture.md §Cross-cutting budget, spike doc updates.
+- **Changed:** `crates/candi-pdf/benches/bench.rs`, `bench/run.sh`, CI bench job with libpdfium; handoff advances to 01/06; remote slice branch deleted.
+
+- **Decision/Issue:** Dual-peak RSS methodology — **`reader_peak`** (open + first page + search/nav page window) is the v0.1 **200 MB gate**; **`full_pass_peak`** after full page sweep is **printed, not gated**.
+- **Why:** Full sweep hits MuPDF TLS `fz_context` decode store (`FZ_STORE_DEFAULT` ~256 MiB); dropping `Page` does not empty the store — MuPDF silberschatz ~43–44 MB reader vs ~295 MB full pass.
+- **Changed:** Architecture table uses `reader_peak` for Peak RSS; `full_pass_peak` recorded not gated; CI `--fixtures-only`, `BENCH_CHECK_BUDGET=0`.
+
+- **Decision/Issue:** Per-page `fz_empty_store` experiment **worsened** peak (~940 MB).
+- **Why:** Store purge mid-sweep fights MuPDF caching; not a viable production strategy.
+- **Changed:** **No production store purge**; carry forward as hazard.
+
+- **Decision/Issue:** Do **not** claim lazy loading “fixed 294→43 MB”.
+- **Why:** That delta was a **measurement-window artifact** (reader window vs full pass), not an optimization win.
+- **Changed:** Knowledge and memory updated; reviewer nit on slice README wording carried forward (do not edit README in this close-out).
+
+- **Decision/Issue:** `progress.md` SHA pattern on 01/05 — gate-fix commit `1fb4242` then separate docs commit `883a98c` before merge.
+- **Why:** Extra commit after gate fix is the correct pattern vs amending; slice HEAD for review/CI was `883a98c`.
+- **Changed:** Memory lesson appended; recurring progress SHA lag entry refined.
+
 ## 2026-08-20 (01/04 close-out)
 
 - **Decision/Issue:** Slice 01/04 backend-parity-hardening merged to `dev` via PR #8 (slice HEAD `153cafc`, merge `3d519af`). Independent reviewer APPROVE (round 2b); round 1 REQUEST CHANGES (`_open_fn` typo; dishonest Unsupported self-match). CI run `32387915511` on `153cafc`: all 7 jobs success.

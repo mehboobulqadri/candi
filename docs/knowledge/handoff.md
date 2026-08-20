@@ -5,19 +5,20 @@ Overwritten every session — this file is always current, never stale.
 
 ## Done
 
-- **Slice 01/04 backend-parity-hardening merged to `dev`** (PR #8, https://github.com/mehboobulqadri/candi/pull/8): slice HEAD `153cafc`, merge `3d519af`. Shared parity suite (`tests/parity/`), hardening matrix, first-page text sampling (`textlayer.rs`), fixture helpers. CI run `32387915511` on `153cafc`: all 7 jobs success.
-- **Independent reviewer APPROVE** (round 2b). Round 1 REQUEST CHANGES: `_open_fn` typo; dishonest Unsupported self-match. Fixes: Option B Unsupported (factory gating only — PDFium never maps open to Unsupported); textlayer zero-page → `Malformed`; compile skip `let _ = open_fn`.
+- **Slice 01/05 benchmarks-both-backends merged to `dev`** (PR #10, https://github.com/mehboobulqadri/candi/pull/10): slice HEAD `883a98c`, gate-fix `1fb4242`, merge `fc5a2af`. Production harness: `crates/candi-pdf/benches/bench.rs` + `bench/run.sh`; both backends; corpus via gitignored `bench/corpus-local.toml` (never commit real books). CI `--fixtures-only`, `BENCH_CHECK_BUDGET=0`; `nav_ms` = adjacent `page_text` proxy until 01/08. CI run `32393653573` on `883a98c`: all 7 jobs success. Independent reviewer APPROVE at `883a98c`. Remote slice branch deleted; worktree `/tmp/candi-slice-01-05` removed.
+- **RSS methodology (01/05):** **`reader_peak`** (open + first page + search/nav page window) is the **v0.1 200 MB gate** — MuPDF silberschatz ~43–44 MB. **`full_pass_peak`** after full page sweep is **printed, not gated** — MuPDF silberschatz ~295 MB (= `FZ_STORE_DEFAULT` 256 MiB decode store in TLS `fz_context`; dropping `Page` does not empty the store). Do **not** claim lazy loading “fixed 294→43”; that was a measurement-window artifact.
+- **Slice 01/04 backend-parity-hardening merged** (PR #8, slice `153cafc`, merge `3d519af`). Shared parity suite, hardening matrix, first-page text sampling.
 - **Prior slices on `dev`:** 01/01–01/03 (PRs #4–#7); PR #9 identity merged `b3abfe5`.
 - **Cursor harness parity** (sync.sh, orchestration.mdc, remove.sh).
 
 ## In progress
 
-**Slice 01/05 — benchmarks-both-backends** next (`docs/implementation/01-v0.1/slices/05-benchmarks-both-backends/README.md`). Builder sets `progress.md` row for 01/04 merged + merge SHA — do not edit `progress.md` in this close-out (`progress.md` still cites stale SHA `1b4b613`).
+**PDF-reader RSS research** (user asked how real readers keep footprint low) — optional investigation, **not** an implementation slice. User constraint: extra ~50 MB on a big book OK; window of pages; app must work. Per-page `fz_empty_store` **worsened** peak (~940 MB) — **no production store purge**.
 
 ## Next
 
-1. Complete slice **01/05** (benchmarks): wire both backends into production harness; full corpus; compare against architecture.md §Cross-cutting budget; update spike doc.
-2. **Slice cadence 05 → 11** sequentially — user override this session: complete remaining Phase 01 slices in order; do not skip ahead.
+1. **Slice 01/06 — candi-core-navigation** (`docs/implementation/01-v0.1/slices/06-candi-core-navigation/README.md`) — next **code** slice; **do not start** until delegated.
+2. **Slice cadence 06 → 11** sequentially — user override: complete remaining Phase 01 slices in order; do not skip ahead.
 3. Full slice workflow per slice: one independent commit → in-session 4-stage drill → independent reviewer in separate worktree → update `docs/implementation/progress.md` before merge → merge to `dev` (Mia may approve slice PR merge to `dev` under Phase-01 cadence; do not stall for user).
 4. **Standing constraint:** Mia approves worker permission requests (`full_network`, sandbox `all`, `git_write`, slice merge to `dev`) — do not bounce to user unless destructive git (force-push, hard reset) or 01/11 tag/dogfood/main-merge.
 5. **01/11 dogfood / tag / `main` merge** — needs explicit user authorization; not auto-next.
@@ -26,7 +27,7 @@ Overwritten every session — this file is always current, never stale.
 ## Open questions
 
 - **Unsupported PDF-feature row** in hardening table — deferred in 01/04 (factory gating only; no open-time Unsupported on PDFium). Decide fixture/policy in a later slice or accept factory-only gate.
-- None blocking 01/05.
+- **PDF RSS strategy** — research in progress; no production decision until user/product direction.
 
 ## Nits carried forward
 
@@ -34,7 +35,7 @@ Overwritten every session — this file is always current, never stale.
 |---|---|
 | **`PDFIUM_OPS` mutex vs `thread_safe`** | `thread_safe` alone did not stop parallel-test SIGABRT; global mutex added — document rationale or prove redundant. |
 | **Duplicate zero-page message strings** | Same literal in `mupdf.rs`, `pdfium.rs`, and test files — consolidate when touching backends next. |
-| **libpdfium on bench job** | 01/05 needs both backends — add libpdfium install to `bench` job if not already present (01/03 YAGNI lifted). |
+| **Slice README wording** | 01/05 README “All budget targets met” could imply `full_pass_peak` is gated — wording nit only; gate is `reader_peak`. |
 
 ## Hazards (read before coding)
 
@@ -46,4 +47,6 @@ Overwritten every session — this file is always current, never stale.
 | **Prove guards with fixtures** | Unproven guards triggered round-1 REQUEST CHANGES on 01/02 and 01/04 — prove behavior, do not assert. |
 | **libpdfium pin** | `pdfium-render 0.8.37` `pdfium_latest` = `pdfium_7543` (bblanchon `chromium/7543`, sha256 `2383a414…`). Slice README marketing version `153.0.8009.0` is NOT the ABI pin — use chromium/7543. |
 | **pdfium-render `sync` feature** | Required for `Arc<Pdfium>` and `Document` Send+Sync — enable in `Cargo.toml` with `pdfium_latest` + `thread_safe`. |
-| **progress.md SHA lag** | Recurring — write progress row only after slice commit is final; 01/04 builder on 01/05 must fix stale `1b4b613`. |
+| **progress.md SHA lag** | Recurring — write progress row only after slice commit is final AND update at merge close-out; 01/05 added docs commit `883a98c` after gate fix `1fb4242` (correct pattern vs amending). |
+| **RSS budget semantics** | Gate **`reader_peak`** only; **`full_pass_peak`** recorded not gated. Do not market 294→43 as optimization. Do not `fz_empty_store` per page in production. |
+| **Bench corpus** | Real books live in gitignored `bench/corpus-local.toml` — never commit. |
