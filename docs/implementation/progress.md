@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/08-search-abstraction committed; next:
-`01-v0.1/09-candi-tui`.
+Current position: 01-v0.1/09-candi-tui committed; next:
+`01-v0.1/10-candi-cli`.
 
 ## Status
 
@@ -18,8 +18,8 @@ Current position: 01-v0.1/08-search-abstraction committed; next:
 | 01-v0.1 | 05-benchmarks-both-backends | merged | fc5a2af — budget gate uses reader_peak (<200 MB); full_pass_peak ~295 MB documented FAIL vs MuPDF store ceiling, not gated; merge c3634e0; PR #10 |
 | 01-v0.1 | 06-candi-core-navigation | merged | merge 994a154 (PR #11); feat 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
 | 01-v0.1 | 07-reading-position-sidecar | merged | merge decce47 (PR #12); feat bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
-| 01-v0.1 | 08-search-abstraction | committed | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
-| 01-v0.1 | 09-candi-tui | planned | |
+| 01-v0.1 | 08-search-abstraction | merged | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
+| 01-v0.1 | 09-candi-tui | committed | 238d410 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 14 tests, Spike 2 closure doc |
 | 01-v0.1 | 10-candi-cli | planned | |
 | 01-v0.1 | 11-v01-release | planned | |
 | 02-v0.2 | — | planned | phase README only |
