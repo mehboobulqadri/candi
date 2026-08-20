@@ -36,6 +36,7 @@ Current position: 01-v0.1/02-mupdf-backend merged; next:
 | 2026-08-20 | slice/00-02-ci-drill-gates → dev | 78ae626 | APPROVE — CI green twice, cache hit proven; 2 nits non-blocking (deny.toml trailing newline; AGPL-3.0 SPDX deprecation tracked for later normalization) |
 | 2026-08-20 | slice/00-03-benchmark-harness → dev | e7c5461 | APPROVE — methodology verified vs spike probe, error paths live-tested; 2 nits non-blocking (run.sh:26 message cosmetics; bench glob noted for 01/05) |
 | 2026-08-20 | slice/01-01-candi-pdf-trait → dev | 5b0d1c1 | APPROVE — verbatim conformance exact, 2 feature modes 23/23 tests; nit: trailing-newline pattern (3rd) tracked for prevention |
+| 2026-08-20 | slice/01-02-mupdf-backend → dev | ad83c7b | APPROVE — mupdf-backend feature (mupdf 0.8.0); fz_error_code mapping; zero-page → Malformed guard with fixtures; independent reviewer sign-off |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
 
