@@ -26,14 +26,15 @@ artifacts are **blocked on user**.
 | Target | Evidence | Status |
 |---|---|---|
 | Linux | CI `rust-checks` on `ubuntu-latest` (both feature modes); local clippy/test green in slice worktree | Met (CI + local) |
-| Windows | CI `rust-checks` on `windows-latest` (both feature modes) in PR #16 | **Job added** — first CI run failed on Windows-only clippy (`unnecessary_cast` in `pdfium.rs:502`); fix pushed; re-check PR checks |
+| Windows | CI `rust-checks` on `windows-latest` (both feature modes), PR #16 run `32416699093` | **Met (CI)** — default (MuPDF+PDFium) and pdfium-only matrix cells green after Windows clippy fixes |
 
 ### Windows backend note
 
-First CI run (PR #16): **MuPDF vendored build succeeded** on `windows-latest`.
-Failure was clippy `-D warnings` on `FPDF_GetLastError() as u32` (Windows `c_ulong`
-is already `u32`). Fixed with `u32::try_from(...)`. Both default and pdfium-only
-matrix entries compile MuPDF via workspace path deps (documented in `ci.yml`).
+CI run `32416699093`: **MuPDF vendored build succeeded** on `windows-latest` (default
+matrix entry). Initial failures were Windows-only clippy under `-D warnings`
+(`FPDF_GetLastError` cast, gated `OpenOptions` import, parity skip `return`); fixed
+in commits `fae1979`–`a16c544`. Both default and pdfium-only matrix entries compile
+MuPDF via workspace path deps (documented in `ci.yml`).
 
 ## Benchmarks
 
