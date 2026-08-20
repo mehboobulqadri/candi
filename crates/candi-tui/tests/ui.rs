@@ -244,6 +244,54 @@ fn resize_rewraps_without_panic() {
 }
 
 #[test]
+fn scroll_down_at_page_end_advances_via_key() {
+    let long = "word ".repeat(200);
+    let doc = FakeDoc::new(vec![long.as_str(), "page two"]);
+    let mut app = setup_app(&doc, "pages.pdf");
+    loop {
+        let page = app.view().page();
+        handle_key(&mut app, key_char('j')).unwrap();
+        if app.view().page() != page {
+            break;
+        }
+    }
+    assert_eq!(app.view().page(), 1);
+    assert_eq!(app.view().scroll_offset(), 0);
+}
+
+#[test]
+fn scroll_up_at_page_top_retreats_via_key() {
+    let long = "word ".repeat(200);
+    let doc = FakeDoc::new(vec![long.as_str(), "page two"]);
+    let mut app = setup_app(&doc, "pages.pdf");
+    handle_key(&mut app, key_char('l')).unwrap();
+    assert_eq!(app.view().page(), 1);
+    assert_eq!(app.view().scroll_offset(), 0);
+    handle_key(&mut app, key_char('k')).unwrap();
+    assert_eq!(app.view().page(), 0);
+    assert!(app.view().scroll_offset() > 0);
+}
+
+#[test]
+fn draw_fills_background_on_test_backend() {
+    let doc = FakeDoc::new(vec!["hi"]);
+    let app = setup_app(&doc, "bg.pdf");
+    let backend = TestBackend::new(40, 10);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let main_bg = ratatui::style::Color::Rgb(18, 18, 22);
+    let status_bg = ratatui::style::Color::Rgb(30, 30, 36);
+    assert!(
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .all(|cell| { cell.bg == main_bg || cell.bg == status_bg })
+    );
+}
+
+#[test]
 fn search_esc_cancels_without_session() {
     let doc = FakeDoc::new(vec!["text"]);
     let mut app = setup_app(&doc, "cancel.pdf");

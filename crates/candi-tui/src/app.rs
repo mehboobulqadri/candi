@@ -134,12 +134,8 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
                     draft: String::new(),
                 };
             }
-            Action::ScrollDown => {
-                self.view = self.view.scroll_down(1, self.max_scroll);
-            }
-            Action::ScrollUp => {
-                self.view = self.view.scroll_up(1, self.max_scroll);
-            }
+            Action::ScrollDown => self.scroll_down()?,
+            Action::ScrollUp => self.scroll_up()?,
             Action::NextPage => {
                 self.view = self.view.next_page(self.document.page_count());
                 self.reload_page()?;
@@ -166,6 +162,42 @@ impl<'a, D: Document + ?Sized> App<'a, D> {
                     self.search_prev()?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn scroll_down(&mut self) -> Result<(), Error> {
+        if !matches!(self.mode, Mode::Reading) {
+            return Ok(());
+        }
+        let page_count = self.document.page_count();
+        if page_count == 0 {
+            return Ok(());
+        }
+        let last = page_count - 1;
+        if self.view.scroll_offset() >= self.max_scroll && self.view.page() < last {
+            self.view = self.view.next_page(page_count);
+            self.reload_page()?;
+        } else {
+            self.view = self.view.scroll_down(1, self.max_scroll);
+        }
+        Ok(())
+    }
+
+    pub fn scroll_up(&mut self) -> Result<(), Error> {
+        if !matches!(self.mode, Mode::Reading) {
+            return Ok(());
+        }
+        let page_count = self.document.page_count();
+        if page_count == 0 {
+            return Ok(());
+        }
+        if self.view.scroll_offset() == 0 && self.view.page() > 0 {
+            self.view = self.view.prev_page(page_count);
+            self.reload_page()?;
+            self.view = self.view.scroll_down(self.max_scroll, self.max_scroll);
+        } else {
+            self.view = self.view.scroll_up(1, self.max_scroll);
         }
         Ok(())
     }
@@ -335,6 +367,66 @@ mod tests {
         app.resize(40, 10);
         app.reload_page().unwrap();
         assert!(app.wrapped_lines().join(" ").contains("finger"));
+    }
+
+    #[test]
+    fn scroll_down_at_page_end_advances() {
+        let long = "word ".repeat(200);
+        let doc = TwoPageDoc {
+            pages: [long, "second page".into()],
+        };
+        let mut app = App::new(&doc, "two.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        assert_eq!(app.view().page(), 0);
+        loop {
+            let page = app.view().page();
+            app.scroll_down().unwrap();
+            if app.view().page() != page {
+                break;
+            }
+        }
+        assert_eq!(app.view().page(), 1);
+        assert_eq!(app.view().scroll_offset(), 0);
+    }
+
+    #[test]
+    fn scroll_up_at_page_top_retreats_to_prev_end() {
+        let long = "word ".repeat(200);
+        let doc = TwoPageDoc {
+            pages: [long, "second page".into()],
+        };
+        let mut app = App::new(&doc, "two.pdf", ViewState::new());
+        app.resize(40, 10);
+        app.reload_page().unwrap();
+        app.view = app.view.goto_page(1, doc.page_count());
+        app.reload_page().unwrap();
+        assert_eq!(app.view().page(), 1);
+        assert_eq!(app.view().scroll_offset(), 0);
+        app.scroll_up().unwrap();
+        assert_eq!(app.view().page(), 0);
+        assert!(app.view().scroll_offset() > 0);
+    }
+
+    struct TwoPageDoc {
+        pages: [String; 2],
+    }
+
+    impl Document for TwoPageDoc {
+        fn page_count(&self) -> usize {
+            2
+        }
+
+        fn page_text(&self, page: usize) -> Result<String, Error> {
+            self.pages
+                .get(page)
+                .cloned()
+                .ok_or_else(|| Error::Malformed("bad page".into()))
+        }
+
+        fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
+            Ok(None)
+        }
     }
 
     struct BlankFirstPageDoc;

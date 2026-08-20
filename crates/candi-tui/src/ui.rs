@@ -3,11 +3,29 @@
 use candi_pdf::Document;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::app::{App, Mode, reader_column_width};
 
+const BG: Color = Color::Rgb(18, 18, 22);
+const FG: Color = Color::Rgb(230, 230, 225);
+const STATUS_BG: Color = Color::Rgb(30, 30, 36);
+
+fn base_style() -> Style {
+    Style::default().bg(BG).fg(FG)
+}
+
+fn status_style() -> Style {
+    Style::default().bg(STATUS_BG).fg(FG)
+}
+
+fn paint_background(frame: &mut Frame, area: Rect) {
+    frame.render_widget(Clear, area);
+    frame.render_widget(Block::default().style(base_style()), area);
+}
+
 pub fn draw<D: Document + ?Sized>(frame: &mut Frame, app: &App<'_, D>) {
+    paint_background(frame, frame.area());
     match app.mode() {
         Mode::Error { message } => draw_error(frame, message),
         Mode::Searching { draft } => {
@@ -35,9 +53,9 @@ fn draw_reading<D: Document + ?Sized>(frame: &mut Frame, app: &App<'_, D>) {
         .map(|line| Line::from(line.as_str()))
         .collect();
 
-    frame.render_widget(Paragraph::new(visible), text_area);
+    frame.render_widget(Paragraph::new(visible).style(base_style()), text_area);
     frame.render_widget(
-        Paragraph::new(Line::from(status_text(app))).style(Style::default().reversed()),
+        Paragraph::new(Line::from(status_text(app))).style(status_style()),
         chunks[1],
     );
 }
@@ -46,7 +64,9 @@ fn draw_search_overlay(frame: &mut Frame, draft: &str) {
     let area = centered_rect(60, 3, frame.area());
     let prompt = format!("/{draft}");
     frame.render_widget(
-        Paragraph::new(prompt).block(Block::bordered().title("search")),
+        Paragraph::new(prompt)
+            .style(base_style())
+            .block(Block::bordered().title("search").style(base_style())),
         area,
     );
 }
@@ -54,7 +74,7 @@ fn draw_search_overlay(frame: &mut Frame, draft: &str) {
 fn draw_error(frame: &mut Frame, message: &str) {
     let text = format!("Error: {message}\n\nPress q to quit.");
     frame.render_widget(
-        Paragraph::new(text).block(Block::bordered().title("candi")),
+        Paragraph::new(text).block(Block::bordered().title("candi").style(base_style())),
         frame.area(),
     );
 }
