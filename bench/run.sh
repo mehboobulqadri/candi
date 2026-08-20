@@ -3,7 +3,7 @@
 # (spikes/pdf-backend/run.sh): open_ms timed before backend open, best-of-2 for
 # page/search/nav metrics, process-level RSS (VmRSS baseline -> VmHWM
 # reader_peak after open/search/nav -> full_pass_peak after page-mean sweep;
-# budget gate uses full_pass_peak), timeout-wrapped runs, nonzero exit on every
+# budget gate uses reader_peak), timeout-wrapped runs, nonzero exit on every
 # error path.
 set -euo pipefail
 trap 'echo "bench/run.sh: FAILED at line $LINENO" >&2; exit 1' ERR

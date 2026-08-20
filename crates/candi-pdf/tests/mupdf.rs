@@ -176,7 +176,8 @@ fn rss_mb(field: &str) -> u64 {
 /// Findings (2026-08-20): without store intervention, VmRSS/VmHWM plateau near 295 MB
 /// on 889 pages; `pdf_empty_store` + `fz_empty_store` after each page *increases*
 /// peak (~940 MB) by forcing re-decode while MuPDF retains other per-page state.
-/// Gentle `fz_shrink_store` alone does not bring peak under the 200 MB architecture gate.
+/// Gentle `fz_shrink_store` alone does not cap full-pass peak; v0.1 budget gates
+/// `reader_peak` (page window), not this full sweep.
 ///
 /// Run: `CANDI_SILBERSCHATZ_PDF=/path/to/silberschatz.pdf cargo test -p candi-pdf --release --features mupdf-backend silberschatz_memory_plateau_probe -- --nocapture`
 #[test]

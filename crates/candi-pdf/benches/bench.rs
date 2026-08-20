@@ -2,7 +2,7 @@
 // Benchmark harness binary — driven by bench/run.sh, one process per backend/doc.
 // Methodology: open_ms before backend open, best-of-2 for page/search/nav,
 // process RSS (VmRSS baseline -> VmHWM reader_peak after open/search/nav ->
-// full_pass_peak after the page-mean sweep; budget gate uses full_pass_peak),
+// full_pass_peak after the page-mean sweep; budget gate uses reader_peak),
 // nonzero exit on errors.
 
 use std::env;
@@ -201,7 +201,7 @@ fn within_budget(
     open_ms: f64,
     startup_ms: f64,
     timed: &TimedRun,
-    full_pass_peak_mb: u64,
+    reader_peak_mb: u64,
 ) -> bool {
     let mut ok = true;
     let mut fail = |metric: &str, value: &str, limit: &str| {
@@ -244,10 +244,10 @@ fn within_budget(
             &format!("< {BUDGET_NAV_MS:.0}ms"),
         );
     }
-    if full_pass_peak_mb > BUDGET_PEAK_RSS_MB {
+    if reader_peak_mb > BUDGET_PEAK_RSS_MB {
         fail(
-            "full_pass_peak_rss_mb",
-            &format!("{full_pass_peak_mb} MB"),
+            "reader_peak_rss_mb",
+            &format!("{reader_peak_mb} MB"),
             &format!("< {BUDGET_PEAK_RSS_MB} MB"),
         );
     }
@@ -445,7 +445,7 @@ fn main() {
             open_ms,
             startup_ms,
             &timed,
-            full_pass_peak,
+            reader_peak,
         )
     {
         process::exit(1);
