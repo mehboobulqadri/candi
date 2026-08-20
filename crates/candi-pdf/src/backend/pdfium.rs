@@ -499,7 +499,7 @@ fn map_load_error(
     path: &str,
     password: Option<&str>,
 ) -> Error {
-    let code = bindings.FPDF_GetLastError() as u32;
+    let code = u32::try_from(bindings.FPDF_GetLastError()).unwrap_or(u32::MAX);
     match code {
         FPDF_ERR_FORMAT if is_zero_page_catalog(path) => {
             Error::Malformed(ZERO_PAGE_MALFORMED.into())
