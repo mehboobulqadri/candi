@@ -1,6 +1,6 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/05-benchmarks-both-backends committed (PR pending); next:
+Current position: 01-v0.1/05-benchmarks-both-backends committed (PR #10 fix pushed); next:
 `01-v0.1/06-candi-core-navigation`.
 
 ## Status
@@ -15,7 +15,7 @@ Current position: 01-v0.1/05-benchmarks-both-backends committed (PR pending); ne
 | 01-v0.1 | 02-mupdf-backend | merged | `mupdf-backend` feature (mupdf 0.8.0 base14-fonts); MupdfBackend + fz_context ownership; error mapping by `fz_error_code`; zero-page open → `Malformed`; fixture tests (attention paper, truncated, encrypted); fix commit proves blank-first-page vs zero-pages |
 | 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
 | 01-v0.1 | 04-backend-parity-hardening | merged | 153cafc — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); merge 3d519af; independent reviewer APPROVE (round 2b after REQUEST CHANGES) |
-| 01-v0.1 | 05-benchmarks-both-backends | committed | e7f9faf — both backends wired into bench harness; v0.1 budget gate on full corpus; production numbers in spike doc; PR pending |
+| 01-v0.1 | 05-benchmarks-both-backends | committed | cfcfb7b — honest RSS peaks (reader + full_pass); best-of-2 whole-run search/nav; budget FAIL MuPDF silberschatz full_pass_peak 295 MB; PR #10 pending |
 | 01-v0.1 | 06-candi-core-navigation | planned | |
 | 01-v0.1 | 07-reading-position-sidecar | planned | |
 | 01-v0.1 | 08-search-abstraction | planned | |
