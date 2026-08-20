@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use candi_core::ViewState;
 use candi_pdf::{Document, Error};
-use candi_tui::{App, Mode, Quit, draw, handle_key};
+use candi_tui::{App, Mode, Quit, RunError, draw, handle_key, run};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -190,6 +190,33 @@ fn error_mode_shows_message() {
     assert!(matches!(app.mode(), Mode::Error { .. }));
     let text = buffer_text(&app);
     assert!(text.contains("malformed document"));
+}
+
+#[test]
+fn error_mode_quit_key_exits() {
+    let doc = FakeDoc::failing(0);
+    let mut app = setup_app(&doc, "bad.pdf");
+    assert!(matches!(app.mode(), Mode::Error { .. }));
+    let quit = handle_key(&mut app, key_char('q')).unwrap();
+    assert_eq!(quit, Some(Quit));
+    assert!(app.should_quit());
+}
+
+#[test]
+fn term_dumb_returns_terminal_error() {
+    let prev = std::env::var("TERM").ok();
+    unsafe {
+        std::env::set_var("TERM", "dumb");
+    }
+    let doc = Box::new(FakeDoc::new(vec!["x"]));
+    let result = run(doc, "test.pdf");
+    unsafe {
+        match prev {
+            Some(term) => std::env::set_var("TERM", term),
+            None => std::env::remove_var("TERM"),
+        }
+    }
+    assert!(matches!(result, Err(RunError::Terminal(_))));
 }
 
 #[test]

@@ -64,6 +64,25 @@ impl std::error::Error for RunError {
     }
 }
 
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn new() -> io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = stdout.execute(LeaveAlternateScreen);
+        let _ = stdout.execute(crossterm::cursor::Show);
+        let _ = stdout.execute(crossterm::terminal::Clear(ClearType::All));
+    }
+}
+
 /// Apply one key event. Returns [`Quit`] when the user presses `q`.
 pub fn handle_key<D: Document + ?Sized>(
     app: &mut App<'_, D>,
@@ -94,7 +113,7 @@ pub fn run(document: Box<dyn Document>, filename: &str) -> Result<(), RunError> 
         ));
     }
 
-    enable_raw_mode()?;
+    let _guard = TerminalGuard::new()?;
     let mut stdout = stdout();
     stdout
         .execute(EnterAlternateScreen)?
@@ -108,16 +127,7 @@ pub fn run(document: Box<dyn Document>, filename: &str) -> Result<(), RunError> 
     app.resize(size.width, size.height);
     let _ = app.reload_page();
 
-    let result = run_loop(&mut terminal, &mut app);
-
-    disable_raw_mode()?;
-    let mut stdout = io::stdout();
-    stdout
-        .execute(LeaveAlternateScreen)?
-        .execute(crossterm::cursor::Show)?
-        .execute(crossterm::terminal::Clear(ClearType::All))?;
-
-    result
+    run_loop(&mut terminal, &mut app)
 }
 
 fn run_loop(

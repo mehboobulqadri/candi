@@ -137,7 +137,6 @@ version = "0.1.0"
 dependencies = [
  "candi-core",
  "candi-pdf",
- "candi-theme",
  "crossterm",
  "ratatui",
 ]
