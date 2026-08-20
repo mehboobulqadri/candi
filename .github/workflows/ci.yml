@@ -34,6 +34,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
+      # The pdfium-only matrix entry still unifies mupdf-backend through workspace
+      # path dependencies that keep default features enabled.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
       # Cache the cargo registry/git caches and the workspace target dir; keyed on
       # Cargo.lock so any dependency change invalidates the cache.
       - uses: actions/cache@v4
@@ -59,6 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
       - uses: actions/cache@v4
         with:
           path: |
