@@ -14,7 +14,7 @@ Current position: 01-v0.1/04-backend-parity-hardening committed; next:
 | 01-v0.1 | 01-candi-pdf-trait | merged | pinned trait block verbatim (8-kind Error, Document/Backend, PagePositions); factory + features declared (empty deps); StubBackend + 23 tests; both feature modes green; permissive matrix entry activated |
 | 01-v0.1 | 02-mupdf-backend | merged | `mupdf-backend` feature (mupdf 0.8.0 base14-fonts); MupdfBackend + fz_context ownership; error mapping by `fz_error_code`; zero-page open → `Malformed`; fixture tests (attention paper, truncated, encrypted); fix commit proves blank-first-page vs zero-pages |
 | 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
-| 01-v0.1 | 04-backend-parity-hardening | committed | bf24caa — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); committed image-only fixture |
+| 01-v0.1 | 04-backend-parity-hardening | committed | 1b4b613 — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); committed image-only fixture |
 | 01-v0.1 | 05-benchmarks-both-backends | planned | |
 | 01-v0.1 | 06-candi-core-navigation | planned | |
 | 01-v0.1 | 07-reading-position-sidecar | planned | |
