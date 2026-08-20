@@ -67,7 +67,6 @@ pub fn hardening_permission_denied(open_fn: OpenFn) {
     {
         eprintln!("SKIP permission_denied: unix-only chmod 000");
         let _ = open_fn;
-        return;
     }
 
     #[cfg(unix)]
