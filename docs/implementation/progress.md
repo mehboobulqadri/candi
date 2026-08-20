@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/06-candi-core-navigation committed; next:
-`01-v0.1/07-reading-position-sidecar`.
+Current position: 01-v0.1/07-reading-position-sidecar committed; next:
+`01-v0.1/08-search-abstraction`.
 
 ## Status
 
@@ -16,8 +16,8 @@ Current position: 01-v0.1/06-candi-core-navigation committed; next:
 | 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
 | 01-v0.1 | 04-backend-parity-hardening | merged | 153cafc — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); merge 3d519af; independent reviewer APPROVE (round 2b after REQUEST CHANGES) |
 | 01-v0.1 | 05-benchmarks-both-backends | merged | fc5a2af — budget gate uses reader_peak (<200 MB); full_pass_peak ~295 MB documented FAIL vs MuPDF store ceiling, not gated; merge c3634e0; PR #10 |
-| 01-v0.1 | 06-candi-core-navigation | committed | 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
-| 01-v0.1 | 07-reading-position-sidecar | planned | |
+| 01-v0.1 | 06-candi-core-navigation | merged | merge 994a154 (PR #11); feat 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
+| 01-v0.1 | 07-reading-position-sidecar | committed | bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
 | 01-v0.1 | 08-search-abstraction | planned | |
 | 01-v0.1 | 09-candi-tui | planned | |
 | 01-v0.1 | 10-candi-cli | planned | |
