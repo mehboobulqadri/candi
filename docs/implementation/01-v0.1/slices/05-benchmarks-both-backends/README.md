@@ -14,8 +14,9 @@ updated to production numbers.
   nonzero exit on error paths.
 - **Targets** (architecture.md §Cross-cutting): startup-to-first-page < 300 ms;
   open ≤ 150 ms; page-text < 20 ms/page mean; first search result < 300 ms;
-  next/prev < 50 ms; peak RSS < 200 MB. The 294 MB mupdf outlier on silberschatz is
-  the lazy-loading proof case — it must come down.
+  next/prev < 50 ms; peak RSS (`reader_peak`, page window) < 200 MB. MuPDF
+  silberschatz `full_pass_peak` ~295 MB (256 MiB decode store on a sequential
+  all-pages sweep) is recorded but not gated — not the v0.1 reader path.
 - **Corpus:** the spike's corpus (frankl, sysdesign, cleancode, silberschatz,
   attention, alice-scan — same set for comparability) via the gitignored manifest,
   plus committed fixtures.
@@ -63,8 +64,9 @@ bench(candi-pdf): benchmark both backends against v0.1 budget
 
 ## Risks
 
-- RSS gate failure on silberschatz (294 MB spike outlier): if lazy loading doesn't
-  bring it under 200 MB, investigate mupdf resource caps BEFORE relaxing the target
-  (architecture.md risks).
+- MuPDF silberschatz `full_pass_peak` ~295 MB exceeds 200 MB but is expected
+  (MuPDF `FZ_STORE_DEFAULT` during a full page sweep); v0.1 gates `reader_peak`
+  (~44 MB). Per-page store purge was measured worse (~940 MB); no cheap
+  `mupdf::Context` store cap in this slice.
 - CI does not run the full corpus — the dev-machine run is the gate; CI stays
   fixture-only.

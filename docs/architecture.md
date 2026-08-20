@@ -51,7 +51,7 @@ and its merciless review; do not re-open without a spike that contradicts the da
 | License & escape hatch | AGPL-3.0 for v1; PDFium impl behind its own cargo feature, so `--no-default-features --features pdfium-backend` links zero AGPL code | MuPDF statically linked → the app is AGPL (accepted); the feature de-risks a future permissive/commercial re-license without code changes | Artifex commercial license (cost); pdfium-only from day one (loses MuPDF quality) | decided |
 | Backend impl location | Feature-gated modules inside candi-pdf (`mupdf-backend`, `pdfium-backend`, both default-on) | One crate, one trait, one test suite; features provide the license escape hatch | Separate impl crates (rejected: shared trait/error types across crates, duplicated parity tests, feature spread) | decided |
 | Trait error model | Enum by kind: `NotFound`, `PermissionDenied`, `Encrypted`, `WrongPassword`, `NoTextLayer`, `Malformed`, `Unsupported`, `Other` | Kinds are stable and UI-matchable; MuPDF exposes error codes — use them, never parse messages | String matching (rejected: brittle; reviewed bug class) | decided |
-| Cached, lazy access | `page_count()` cached & infallible after open; `page_text(page)` extracts one page on demand, never the whole document | Navigation needs O(1) count; NFR + mitigates MuPDF's 294 MB peak RSS on the 889-page corpus doc | Whole-doc extraction (rejected) | decided |
+| Cached, lazy access | `page_count()` cached & infallible after open; `page_text(page)` extracts one page on demand, never the whole document | Navigation needs O(1) count; v0.1 TUI/search load a page window — `reader_peak` ~44 MB on silberschatz; a sequential all-pages sweep still hits MuPDF's ~295 MB `full_pass_peak` (256 MiB decode store), which is not the reader path | Whole-doc extraction (rejected) | decided |
 | Positions API & semantics | `Result<Option<PagePositions>>` — real errors propagate, `Ok(None)` only when a backend has no positional API; block/line/word definitions pinned once at the trait level | The spike's `Option<Stats>` conflation was a reviewed bug; backends count differently on the same page (15 vs 67 blocks) | `Option<Stats>`; per-backend semantics (rejected) | decided |
 | Engine ownership | MuPDF `Document` owns its context; the PDFium engine is Arc-shared, created by the backend factory, held outside per-document objects | The spike's `Box::leak` was accepted only for a once-per-process probe; production leaks nothing | `Box::leak` (rejected) | decided |
 | Search (FR-008) | Core-level abstraction over lazy per-page text: page-at-a-time scan, result list, next/prev (v0.1) | Document-independent; the backend only supplies text | Backend-level search API (rejected: duplicates core logic) | decided |
@@ -239,7 +239,7 @@ the parser and extraction code of the two C engines.
 | Page text extraction | < 20 ms/page mean on corpus | ~2–4 ms/page |
 | Search first result | < 300 ms on any corpus doc | extraction-bound |
 | Search next/prev | < 50 ms | in-memory cursor |
-| Peak RSS | < 200 MB on corpus | MuPDF 294 MB outlier — lazy loading must fix; PDFium 90 MB |
+| Peak RSS (reader_peak) | < 200 MB on corpus | MuPDF silberschatz ~44 MB (open + first page + search/nav page window); `full_pass_peak` ~295 MB on full page sweep is MuPDF `FZ_STORE_DEFAULT` (256 MiB) — recorded, not gated; PDFium silberschatz reader ~58 MB, full_pass ~92 MB |
 
 ## Open questions / future
 

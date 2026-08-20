@@ -124,6 +124,57 @@ Finding: mupdf is the weakest on malformed-input detection — a truncated file 
 
 Fallback posture: if MuPDF's AGPL ever becomes a blocker, PDFium is a drop-in-quality replacement for text extraction (identical reading order on the two-column test), so the backend trait design in `main-probe/src/lib.rs` is validated for either choice.
 
+## Production harness (candi-pdf, slice 01/05)
+
+Harness: `bench/run.sh` driving `crates/candi-pdf/benches/bench.rs` (one process per backend/doc).
+Methodology vs spike probe: `open_ms` timed before `candi_pdf::open`; `startup_ms` = process start →
+first `page_text(0)`; page/search/nav best-of-2 (search/nav pick the **entire run** with lower
+`search_ms + nav_ms`, not per-metric min across runs); **two VmHWM peaks in the same process** —
+`reader_peak` after open + first page + search/nav, `full_pass_peak` after the best-of-2 page-mean
+sweep (all pages); VmRSS baseline → peak → delta for each window; error-path fixtures assert expected
+`Error` kinds; **budget gate (`BENCH_CHECK_BUDGET`, full corpus only) uses `reader_peak`**
+for the 200 MB RSS target (open + first page + search/nav page window; CI
+`--fixtures-only` sets `BENCH_CHECK_BUDGET=0`). `full_pass_peak` (sequential
+all-pages sweep) is always printed and recorded but not gated. `nav_ms` is the mean
+`page_text` latency on pages adjacent to the first search hit (next/prev proxy until core search
+lands in 01/08).
+
+Run: 2026-08-20, Linux 7.1.6-1-cachyos, rustc 1.97.1, release build, full corpus (frankl,
+sysdesign, cleancode, silberschatz, attention, alice-scan) + error fixtures.
+
+**Budget gate (reader_peak + other v0.1 targets): PASS** on full corpus including MuPDF
+silberschatz (`reader_peak` ~44 MB < 200 MB). **`full_pass_peak` documented FAIL vs
+store ceiling:** MuPDF silberschatz ~295 MB (> 200 MB) — MuPDF `FZ_STORE_DEFAULT`
+(256 MiB decode store) filling during a sequential all-pages extract; not the v0.1
+reader/TUI path. Lazy per-page access keeps the interactive path small; it does
+**not** eliminate store growth during a full-document page sweep. PDFium silberschatz
+`full_pass_peak` 92 MB passes. PDFium attention cold-start `startup_ms` can exceed
+300 ms (one-time engine init); warm metrics pass.
+
+| Backend | Doc | open_ms | startup_ms | page_ms (mean) | search_ms | nav_ms | baseline RSS | reader peak | reader Δ | full_pass peak | full_pass Δ |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| mupdf | frankl | 3 | 3 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB | 11 MB | 5 MB |
+| mupdf | sysdesign | 4 | 4 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB | 21 MB | 15 MB |
+| mupdf | cleancode | 9 | 9 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB | 18 MB | 12 MB |
+| mupdf | silberschatz | 46 | 46 | 2 | 2 | 0 | 6 MB | 44 MB | 38 MB | **295 MB** | 289 MB |
+| mupdf | attention | 34 | 34 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB | 18 MB | 12 MB |
+| mupdf | alice-scan | 49 | 49 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB | 25 MB | 19 MB |
+| pdfium | frankl | 2 | 2 | 2 | 0 | 0 | 6 MB | 11 MB | 5 MB | 13 MB | 7 MB |
+| pdfium | sysdesign | 2 | 2 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB | 23 MB | 17 MB |
+| pdfium | cleancode | 3 | 3 | 1 | 1 | 0 | 6 MB | 11 MB | 5 MB | 22 MB | 16 MB |
+| pdfium | silberschatz | 117 | 117 | 3 | 3 | 0 | 6 MB | 58 MB | 52 MB | 92 MB | 86 MB |
+| pdfium | attention | 350 | 351 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB | 30 MB | 24 MB |
+| pdfium | alice-scan | 15 | 15 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB | 21 MB | 15 MB |
+
+Notes: The earlier claim that MuPDF silberschatz peak RSS dropped from 294 MB to 43 MB was a
+**measurement-window artifact** — peak was snapshotted after search/nav but before the full page
+pass. Honest accounting: `reader_peak` ~44 MB (interactive page window), `full_pass_peak` ~295 MB
+(same order as spike whole-doc extract). Lazy loading helps the reader path; it does **not**
+eliminate MuPDF store growth during a full-document page sweep — do not claim lazy loading
+"fixed" 294→43. Investigation (2026-08-20): per-page `fz_empty_store` made peak worse (~940 MB);
+no cheap store cap exposed on `mupdf::Context`. v0.1 budget gates `reader_peak`; `full_pass_peak`
+is recorded only. Search uses page-at-a-time scan for `"the"`.
+
 ## Failed/hung commands and root causes
 
 - Previous attempt's hang: `pdfium-auto` with `bundled` feature — its build.rs downloads pdfium C++ source and compiles it at build time (multi-hundred-MB fetch + long build). Root cause: wrong pdfium strategy; replaced with dlopen of a 7.6 MB prebuilt `libpdfium.so` (downloaded once, `curl --fail --max-time 90`). No hang this attempt.

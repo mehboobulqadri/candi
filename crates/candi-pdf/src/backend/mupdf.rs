@@ -69,7 +69,8 @@ struct MupdfInner {
 // The mupdf crate resolves work through a thread-local `fz_context` (`Context::get()` /
 // `context()`); we hold the opened `fz_document` and serialize access through the mutex.
 // MuPDF keeps the document alive for loaded pages — see the crate's page-survives-
-// document-drop test.
+// document-drop test. The decoded-resource store lives in that TLS context; dropping a
+// `Page` does not empty MuPDF's default ~256 MiB store ceiling.
 unsafe impl Send for MupdfInner {}
 unsafe impl Sync for MupdfInner {}
 

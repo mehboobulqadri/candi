@@ -152,6 +152,61 @@ fn assert_fixture_exists(path: &Path) {
     assert!(path.exists(), "expected fixture at {}", path.display());
 }
 
+fn silberschatz_fixture() -> Option<PathBuf> {
+    if let Ok(path) = env::var("CANDI_SILBERSCHATZ_PDF") {
+        let path = PathBuf::from(path);
+        return path.exists().then_some(path);
+    }
+    None
+}
+
+fn rss_mb(field: &str) -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status").expect("status");
+    status
+        .lines()
+        .find(|l| l.starts_with(field))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        / 1024
+}
+
+/// Optional manual probe for MuPDF silberschatz RSS during a full page sweep.
+///
+/// Findings (2026-08-20): without store intervention, VmRSS/VmHWM plateau near 295 MB
+/// on 889 pages; `pdf_empty_store` + `fz_empty_store` after each page *increases*
+/// peak (~940 MB) by forcing re-decode while MuPDF retains other per-page state.
+/// Gentle `fz_shrink_store` alone does not cap full-pass peak; v0.1 budget gates
+/// `reader_peak` (page window), not this full sweep.
+///
+/// Run: `CANDI_SILBERSCHATZ_PDF=/path/to/silberschatz.pdf cargo test -p candi-pdf --release --features mupdf-backend silberschatz_memory_plateau_probe -- --nocapture`
+#[test]
+fn silberschatz_memory_plateau_probe() {
+    let Some(path) = silberschatz_fixture() else {
+        eprintln!("SKIP: set CANDI_SILBERSCHATZ_PDF to run silberschatz memory probe");
+        return;
+    };
+    let path = path.to_str().unwrap();
+    let doc = open(BackendKind::Mupdf, path, None).expect("open");
+    let pages = doc.page_count();
+    eprintln!(
+        "pages={pages} baseline rss={} hwm={}",
+        rss_mb("VmRSS:"),
+        rss_mb("VmHWM:")
+    );
+    for page in 0..pages {
+        doc.page_text(page).expect("page_text");
+        if page == 0 || page == pages / 2 || page + 1 == pages {
+            eprintln!(
+                "after page {page}: rss={} hwm={}",
+                rss_mb("VmRSS:"),
+                rss_mb("VmHWM:")
+            );
+        }
+    }
+    eprintln!("final rss={} hwm={}", rss_mb("VmRSS:"), rss_mb("VmHWM:"));
+}
+
 #[test]
 fn committed_fixtures_exist() {
     assert_fixture_exists(&tiny_fixture());

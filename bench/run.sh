@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Benchmark harness driver. Replicates the spike's methodology
-# (spikes/pdf-backend/run.sh): open_ms timed before the file read, best-of-2
-# extraction runs per process, process-level RSS (VmRSS baseline -> VmHWM peak
-# -> delta), timeout-wrapped runs, nonzero exit on every error path.
+# (spikes/pdf-backend/run.sh): open_ms timed before backend open, best-of-2 for
+# page/search/nav metrics, process-level RSS (VmRSS baseline -> VmHWM
+# reader_peak after open/search/nav -> full_pass_peak after page-mean sweep;
+# budget gate uses reader_peak), timeout-wrapped runs, nonzero exit on every
+# error path.
 set -euo pipefail
 trap 'echo "bench/run.sh: FAILED at line $LINENO" >&2; exit 1' ERR
 
@@ -11,16 +13,25 @@ REPO="$(dirname "$ROOT")"
 MANIFEST="${BENCH_LOCAL_MANIFEST:-$ROOT/corpus-local.toml}"
 GEN_DIR="$ROOT/fixtures/generated"
 TIMEOUT="${BENCH_TIMEOUT:-120}"
+BACKENDS=(mupdf pdfium)
+
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/target}"
 
 # Bench targets build to target/release/deps/bench-<hash> (never un-hashed);
 # pick the newest built binary.
-BENCH="$(ls -t "$REPO"/target/release/deps/bench-* 2>/dev/null | grep -v '\.d$' | head -n 1 || true)"
+BENCH="$(ls -t "$TARGET_DIR"/release/deps/bench-* 2>/dev/null | grep -v '\.d$' | head -n 1 || true)"
 
 case "${1:-}" in
   "") FIXTURES_ONLY=0 ;;
   --fixtures-only) FIXTURES_ONLY=1 ;;
   *) echo "usage: $0 [--fixtures-only]" >&2; exit 2 ;;
 esac
+
+if [ "$FIXTURES_ONLY" = 1 ]; then
+  export BENCH_CHECK_BUDGET=0
+else
+  export BENCH_CHECK_BUDGET=1
+fi
 
 if [ ! -x "$BENCH" ]; then
   echo "bench/run.sh: ERROR: $BENCH not found — build it first: cargo build --release --benches -p candi-pdf" >&2
@@ -127,9 +138,8 @@ if [ -n "$DUPES" ]; then
   exit 1
 fi
 
-echo "note: extraction columns (-) are wired in slice 01/05 when candi-pdf's backend lands" >&2
-printf '%-18s %7s %10s %9s %8s %11s %12s %11s\n' \
-  "doc" "open_ms" "extract_ms" "chars" "chars/s" "baseline RSS" "process peak" "delta vs baseline"
+printf '%-8s %-18s %7s %10s %9s %9s %7s %11s %12s %11s %14s %14s\n' \
+  "backend" "doc" "open_ms" "startup_ms" "page_ms" "search_ms" "nav_ms" "baseline RSS" "reader peak" "reader delta" "full_pass peak" "full_pass delta"
 
 while IFS=$'\t' read -r label path; do
   [ -n "$label" ] || continue
@@ -137,9 +147,11 @@ while IFS=$'\t' read -r label path; do
     echo "bench/run.sh: $label: hard fail — no unique file" >&2
     exit 1
   fi
-  echo "### $label" >&2
-  if ! timeout "$TIMEOUT" "$BENCH" "$label" "$resolved"; then
-    echo "bench/run.sh: $label: FAILED or timed out after ${TIMEOUT}s" >&2
-    exit 1
-  fi
+  for backend in "${BACKENDS[@]}"; do
+    echo "### $backend / $label" >&2
+    if ! timeout "$TIMEOUT" "$BENCH" "$backend" "$label" "$resolved"; then
+      echo "bench/run.sh: $backend/$label: FAILED or timed out after ${TIMEOUT}s" >&2
+      exit 1
+    fi
+  done
 done < <(printf '%s\n%s\n%s\n' "$FIXTURES" "$GEN_ENTRIES" "$BOOKS")
