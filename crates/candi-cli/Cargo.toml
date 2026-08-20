@@ -1,0 +1,10 @@
+[package]
+name = "candi-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+candi-tui = { path = "../candi-tui" }
+candi-core = { path = "../candi-core" }
+candi-pdf = { path = "../candi-pdf" }
