@@ -6,7 +6,7 @@ Overwritten every session — this file is always current, never stale.
 ## Done
 
 - **Slice 01/10 candi-cli merged to `dev`** (PR #15, https://github.com/mehboobulqadri/candi/pull/15): slice feat `de1ecce`, fix `5089cc6`, merge `9b86661`, mergedAt 2026-08-20T19:59:31Z. Binary `candi`; clap FILE + `--backend` (default mupdf); `Args::try_parse()` — all parse failures **exit 1** (usage, unknown flags). Open → sidecar load → resume via `ViewState::goto_page`; corrupt sidecar warns; `UnsupportedSchema` fail loud. `CANDI_NO_TUI=1` prints `page=<1-based>`, still saves sidecar. `candi_tui::run(doc, filename, initial) -> Result<ViewState, RunError>`; `TerminalGuard` unchanged. 10 CLI integration tests.
-- **Slice 01/09 candi-tui merged to `dev`** (PR #14, merge `62739c9`). ratatui 0.30.2, crossterm 0.29.0; §6 keys; `TestBackend`; `TerminalGuard` Drop RAII; `TERM=dumb` before raw mode.
+- **Slice 01/09 candi-tui merged to `dev`** (PR #14, https://github.com/mehboobulqadri/candi/pull/14): slice feat `238d410`, TerminalGuard `8ae4cc4`, deny Zlib `6f3c8c8`, merge `62739c9`, mergedAt 2026-08-20T19:32:23Z. ratatui 0.30.2, crossterm 0.29.0; §6 keys; `TestBackend`; Spike 2 frankl SKIPPED honest; `TerminalGuard` Drop RAII; `TERM=dumb` before raw mode; `candi-theme` dep dropped from tui. Independent reviewer APPROVE after REQUEST CHANGES (raw-mode). cargo-deny fail was foldhash Zlib — allowed in `deny.toml`.
 - **Slices 01/01–01/08 on `dev`** (PRs #4–#13). **Cursor harness parity** (sync.sh, orchestration.mdc, remove.sh).
 
 ## In progress
