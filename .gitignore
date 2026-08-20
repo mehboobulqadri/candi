@@ -13,6 +13,13 @@ opencode.json
 
 # Corpus books and fixtures are never committed
 *.pdf
+# ... except the one committed bench fixture (the negation must be more
+# specific than *.pdf; the dir itself is not excluded)
+!/bench/fixtures/*.pdf
+
+# Bench: generated fixtures and the local machine's corpus manifest
+/bench/fixtures/generated/
+/bench/corpus-local.toml
 
 # Env files are never committed
 .env*
