@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/10-candi-cli committed; next:
-`01-v0.1/11-v01-release`.
+Current position: 01-v0.1/11-v01-release committed (engineering); tag/dogfood/main
+blocked on user; release merge pending authorization.
 
 ## Status
 
@@ -20,8 +20,8 @@ Current position: 01-v0.1/10-candi-cli committed; next:
 | 01-v0.1 | 07-reading-position-sidecar | merged | merge decce47 (PR #12); feat bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
 | 01-v0.1 | 08-search-abstraction | merged | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
 | 01-v0.1 | 09-candi-tui | merged | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc |
-| 01-v0.1 | 10-candi-cli | committed | de1ecce — `candi` binary (clap 4.6.6), open+sidecar resume, CANDI_NO_TUI headless hook, exit-1 error UX, 8 CLI integration tests; ViewState::goto_page; TUI run returns final view |
-| 01-v0.1 | 11-v01-release | planned | |
+| 01-v0.1 | 10-candi-cli | merged | de1ecce — `candi` binary (clap 4.6.6), open+sidecar resume, CANDI_NO_TUI headless hook, exit-1 error UX, 10 CLI integration tests; merge 9b86661 (PR #15) |
+| 01-v0.1 | 11-v01-release | committed | d7ce832 — Windows rust-checks matrix + acceptance evidence; tag/dogfood/`dev`→`main` blocked on user |
 | 02-v0.2 | — | planned | phase README only |
 | 03-v0.3 | — | planned | phase README only |
 | 04-v0.4 | — | planned | phase README only |
@@ -40,6 +40,7 @@ Current position: 01-v0.1/10-candi-cli committed; next:
 | 2026-08-20 | slice/01-03-pdfium-backend → dev | b9902d0 | APPROVE — pdfium-render 0.8.37 (chromium/7543); FPDF error mapping + zero-page catalog sniff; CI libpdfium pin + PDFIUM_LIB; permissive matrix green |
 | 2026-08-20 | slice/01-04-backend-parity-hardening → dev | 3d519af | APPROVE (round 2b after REQUEST CHANGES) — shared parity suite + text-layer sampling; feat 153cafc |
 | 2026-08-20 | slice/01-05-benchmarks-both-backends → dev | c3634e0 | APPROVE — reader_peak budget gate; PR #10; feat fc5a2af |
+| 2026-08-21 | slice/01-10-candi-cli → dev | 9b86661 | APPROVE — CLI entry + 10 integration tests; PR #15; feat de1ecce |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
 
