@@ -12,7 +12,7 @@ jobs:
   workflow-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Validates all workflow files so a syntax error fails loudly with the
       # actual error instead of silently scheduling zero jobs.
       - uses: raven-actions/actionlint@v2
@@ -20,7 +20,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: cargo fmt --check
 
   rust-checks:
@@ -31,7 +31,7 @@ jobs:
         features: [""]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Cache the cargo registry/git caches and the workspace target dir; keyed on
       # Cargo.lock so any dependency change invalidates the cache.
       - uses: actions/cache@v4
@@ -50,13 +50,13 @@ jobs:
   cargo-deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   bench:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache@v4
         with:
           path: |
@@ -74,7 +74,7 @@ jobs:
   docs-links:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check relative markdown links
         run: |
           for f in README.md $(find docs -name '*.md'); do
