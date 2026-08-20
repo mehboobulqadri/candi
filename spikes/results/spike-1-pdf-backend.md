@@ -124,6 +124,40 @@ Finding: mupdf is the weakest on malformed-input detection — a truncated file 
 
 Fallback posture: if MuPDF's AGPL ever becomes a blocker, PDFium is a drop-in-quality replacement for text extraction (identical reading order on the two-column test), so the backend trait design in `main-probe/src/lib.rs` is validated for either choice.
 
+## Production harness (candi-pdf, slice 01/05)
+
+Harness: `bench/run.sh` driving `crates/candi-pdf/benches/bench.rs` (one process per backend/doc).
+Methodology vs spike probe: `open_ms` timed before `candi_pdf::open`; `startup_ms` = process start →
+first `page_text(0)`; page/search/nav best-of-2; **peak RSS snapshot after open + search/nav only**
+(lazy workload — before the full-corpus page pass used for `page_ms` mean); VmRSS baseline → VmHWM
+peak → delta; error-path fixtures assert expected `Error` kinds; budget gate via `BENCH_CHECK_BUDGET`
+(full corpus only; CI `--fixtures-only` sets `BENCH_CHECK_BUDGET=0`).
+
+Run: 2026-08-20, Linux 7.1.6-1-cachyos, rustc 1.97.1, release build, full corpus (frankl,
+sysdesign, cleancode, silberschatz, attention, alice-scan) + error fixtures. All v0.1 budget targets
+met on this run.
+
+| Backend | Doc | open_ms | startup_ms | page_ms (mean) | search_ms | nav_ms | baseline RSS | process peak | delta |
+|---|---|---|---|---|---|---|---|---|---|
+| mupdf | frankl | 3 | 3 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+| mupdf | sysdesign | 4 | 4 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+| mupdf | cleancode | 8 | 8 | 0 | 0 | 0 | 6 MB | 12 MB | 6 MB |
+| mupdf | silberschatz | 40 | 40 | 2 | 2 | 0 | 6 MB | 43 MB | 37 MB |
+| mupdf | attention | 13 | 14 | 2 | 1 | 1 | 6 MB | 14 MB | 8 MB |
+| mupdf | alice-scan | 49 | 49 | 0 | 0 | 0 | 6 MB | 13 MB | 7 MB |
+| pdfium | frankl | 1 | 1 | 2 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+| pdfium | sysdesign | 2 | 2 | 1 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+| pdfium | cleancode | 2 | 2 | 1 | 0 | 0 | 6 MB | 12 MB | 6 MB |
+| pdfium | silberschatz | 111 | 111 | 3 | 3 | 0 | 6 MB | 59 MB | 53 MB |
+| pdfium | attention | 18 | 18 | 2 | 1 | 1 | 6 MB | 13 MB | 7 MB |
+| pdfium | alice-scan | 15 | 15 | 0 | 0 | 0 | 6 MB | 11 MB | 5 MB |
+
+Notes: MuPDF silberschatz peak RSS dropped from 294 MB (spike whole-doc extraction) to 43 MB with
+lazy per-page access + RSS measured before the full page-pass timing sweep. PDFium silberschatz open
+(111 ms) stays within the 150 ms open budget. Search uses page-at-a-time scan for `"the"`; nav_ms
+is the mean `page_text` latency on pages adjacent to the first hit (next/prev proxy until core search
+lands in 01/08).
+
 ## Failed/hung commands and root causes
 
 - Previous attempt's hang: `pdfium-auto` with `bundled` feature — its build.rs downloads pdfium C++ source and compiles it at build time (multi-hundred-MB fetch + long build). Root cause: wrong pdfium strategy; replaced with dlopen of a 7.6 MB prebuilt `libpdfium.so` (downloaded once, `curl --fail --max-time 90`). No hang this attempt.
