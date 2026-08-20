@@ -104,9 +104,14 @@ pub fn handle_key<D: Document + ?Sized>(
     Ok(None)
 }
 
-/// Run the interactive TUI over `document`. Returns an error for unsupported
-/// terminals (including `TERM=dumb`) or I/O failures; never busy-loops.
-pub fn run(document: Box<dyn Document>, filename: &str) -> Result<(), RunError> {
+/// Run the interactive TUI over `document`. Returns the final view on quit, or
+/// an error for unsupported terminals (including `TERM=dumb`) or I/O failures;
+/// never busy-loops.
+pub fn run(
+    document: Box<dyn Document>,
+    filename: &str,
+    initial: ViewState,
+) -> Result<ViewState, RunError> {
     if std::env::var("TERM").as_deref() == Ok("dumb") {
         return Err(RunError::Terminal(
             "TERM=dumb: interactive terminal required".into(),
@@ -122,12 +127,13 @@ pub fn run(document: Box<dyn Document>, filename: &str) -> Result<(), RunError> 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(RunError::Io)?;
 
-    let mut app = App::new(document.as_ref(), filename, ViewState::new());
+    let mut app = App::new(document.as_ref(), filename, initial);
     let size = terminal.size().map_err(RunError::Io)?;
     app.resize(size.width, size.height);
     let _ = app.reload_page();
 
-    run_loop(&mut terminal, &mut app)
+    run_loop(&mut terminal, &mut app)?;
+    Ok(app.view())
 }
 
 fn run_loop(

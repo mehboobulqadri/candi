@@ -209,7 +209,7 @@ fn term_dumb_returns_terminal_error() {
         std::env::set_var("TERM", "dumb");
     }
     let doc = Box::new(FakeDoc::new(vec!["x"]));
-    let result = run(doc, "test.pdf");
+    let result = run(doc, "test.pdf", ViewState::new());
     unsafe {
         match prev {
             Some(term) => std::env::set_var("TERM", term),

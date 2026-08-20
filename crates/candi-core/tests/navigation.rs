@@ -127,3 +127,13 @@ fn scroll_up_clamps_when_max_scroll_shrinks() {
     let state = ViewState::new().scroll_down(8, 10).scroll_up(2, 5);
     assert_eq!(state.scroll_offset(), 5);
 }
+
+#[test]
+fn goto_page_jumps_and_resets_scroll() {
+    let state = ViewState::new().scroll_down(5, 20).goto_page(3, 5);
+    assert_eq!(state.page(), 3);
+    assert_eq!(state.scroll_offset(), 0);
+
+    let state = ViewState::new().goto_page(99, 5);
+    assert_eq!(state.page(), 4);
+}

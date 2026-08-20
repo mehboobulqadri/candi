@@ -18,7 +18,7 @@ fn main() {
         }
     };
 
-    if let Err(err) = candi_tui::run(document, &path) {
+    if let Err(err) = candi_tui::run(document, &path, candi_core::ViewState::new()) {
         eprintln!("{err}");
         process::exit(1);
     }

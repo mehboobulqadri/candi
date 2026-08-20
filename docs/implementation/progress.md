@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/09-candi-tui committed; next:
-`01-v0.1/10-candi-cli`.
+Current position: 01-v0.1/10-candi-cli committed; next:
+`01-v0.1/11-v01-release`.
 
 ## Status
 
@@ -19,8 +19,8 @@ Current position: 01-v0.1/09-candi-tui committed; next:
 | 01-v0.1 | 06-candi-core-navigation | merged | merge 994a154 (PR #11); feat 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
 | 01-v0.1 | 07-reading-position-sidecar | merged | merge decce47 (PR #12); feat bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
 | 01-v0.1 | 08-search-abstraction | merged | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
-| 01-v0.1 | 09-candi-tui | committed | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc |
-| 01-v0.1 | 10-candi-cli | planned | |
+| 01-v0.1 | 09-candi-tui | merged | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc |
+| 01-v0.1 | 10-candi-cli | committed | de1ecce — `candi` binary (clap 4.6.6), open+sidecar resume, CANDI_NO_TUI headless hook, exit-1 error UX, 8 CLI integration tests; ViewState::goto_page; TUI run returns final view |
 | 01-v0.1 | 11-v01-release | planned | |
 | 02-v0.2 | — | planned | phase README only |
 | 03-v0.3 | — | planned | phase README only |
