@@ -13,6 +13,20 @@ Format per entry:
 
 <!-- entries below -->
 
+## 2026-08-20 (01/07 close-out)
+
+- **Decision/Issue:** Slice 01/07 reading-position-sidecar merged to `dev` via PR #12 (slice feat `bd440c3`, progress `a82aaa0`, merge `decce477537a4196cc50f61065b3088f4b344ebd`, mergedAt verified via `gh pr view`). Independent reviewer APPROVE. CI run `32402904183`: all jobs success.
+- **Why:** Phase 01 seventh slice — versioned reading-position sidecar with tolerant reads and atomic writes.
+- **Changed:** `{pdf}.candi.toml` sidecar (schema v1); `Load::{Missing,Loaded,Corrupt}`; `Error::UnsupportedSchema` only for schema > 1; atomic temp+rename+unix dir fsync; PDF never modified; last-write-wins; handoff advances to 01/08.
+
+- **Decision/Issue:** Sidecar read semantics — missing file is not corrupt file.
+- **Why:** Fresh start vs recoverable warning must be distinguishable for TUI/GUI callers.
+- **Changed:** `Load` enum separates `Missing` from `Corrupt`; only unsupported schema version (> 1) is a hard error.
+
+- **Decision/Issue:** Reviewer nits carried forward (non-blocking): hand-rolled `unix_days_to_ymd` untested; Windows atomic test vacuous pass; `sync_dir` failure after successful rename still returns `Err`.
+- **Why:** Edge-case clarity and cross-platform test honesty — not merge blockers.
+- **Changed:** Nits table in handoff; optional cleanup when touching `state.rs` again.
+
 ## 2026-08-20 (01/06 close-out)
 
 - **Decision/Issue:** Slice 01/06 candi-core-navigation merged to `dev` via PR #11 (slice feat `8b955fa`, progress `e44a58d`, merge `994a154`, mergedAt 2026-08-20T18:17:13Z). Independent reviewer APPROVE. CI run `32401474027`: all jobs success.
