@@ -27,8 +27,10 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        # --no-default-features --features pdfium-backend joins when features land in slice 01/01.
-        features: [""]
+        # One entry per feature mode: default (both backends) and the
+        # permissive pdfium-only build (zero AGPL third-party code). The empty
+        # string keeps default features; the second entry drops them.
+        features: ["", "--no-default-features --features pdfium-backend"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
