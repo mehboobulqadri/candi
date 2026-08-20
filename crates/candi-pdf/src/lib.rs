@@ -7,7 +7,7 @@
 //! verbatim from there. Backends (MuPDF, PDFium) implement these traits in
 //! later slices; the factory and the test stub live here.
 
-#[cfg(feature = "mupdf-backend")]
+#[cfg(any(feature = "mupdf-backend", feature = "pdfium-backend"))]
 mod backend;
 mod error;
 mod factory;
