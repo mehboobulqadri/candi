@@ -13,6 +13,16 @@ fn tiny_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny.pdf")
 }
 
+fn zero_pages_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zero-pages.pdf")
+}
+
+fn blank_first_page_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/blank-first-page.pdf")
+}
+
+const ZERO_PAGE_GUARD_MESSAGE: &str = "truncated or empty document";
+
 fn encrypted_fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/fixtures/dummy-encrypted.pdf")
 }
@@ -81,7 +91,17 @@ fn encrypted_with_correct_password_opens() {
 }
 
 #[test]
-fn truncated_pdf_is_malformed() {
+fn zero_page_count_after_open_hits_malformed_guard() {
+    let fixture = zero_pages_fixture();
+    let path = fixture.to_str().unwrap();
+    assert!(matches!(
+        open(BackendKind::Mupdf, path, None),
+        Err(Error::Malformed(msg)) if msg == ZERO_PAGE_GUARD_MESSAGE
+    ));
+}
+
+#[test]
+fn truncated_pdf_may_fail_before_zero_page_guard() {
     let tiny = std::fs::read(tiny_fixture()).unwrap();
     let truncated = &tiny[..100.min(tiny.len())];
     let dir = env::temp_dir();
@@ -120,14 +140,12 @@ fn attention_paper_when_present() {
 
 #[test]
 fn empty_page_returns_empty_string() {
-    let Some(path) = attention_fixture() else {
-        eprintln!("SKIP: attention paper fixture absent");
-        return;
-    };
-    let doc = open(BackendKind::Mupdf, path.to_str().unwrap(), None).unwrap();
-    if doc.page_text(0).unwrap().trim().is_empty() {
-        assert_eq!(doc.page_text(0).unwrap(), "");
-    }
+    let fixture = blank_first_page_fixture();
+    let path = fixture.to_str().unwrap();
+    let doc = open(BackendKind::Mupdf, path, None).unwrap();
+    assert_eq!(doc.page_count(), 2);
+    assert_eq!(doc.page_text(0).unwrap(), "");
+    assert!(doc.page_text(1).unwrap().contains("Page two"));
 }
 
 fn assert_fixture_exists(path: &Path) {
@@ -137,5 +155,7 @@ fn assert_fixture_exists(path: &Path) {
 #[test]
 fn committed_fixtures_exist() {
     assert_fixture_exists(&tiny_fixture());
+    assert_fixture_exists(&zero_pages_fixture());
+    assert_fixture_exists(&blank_first_page_fixture());
     assert_fixture_exists(&encrypted_fixture());
 }

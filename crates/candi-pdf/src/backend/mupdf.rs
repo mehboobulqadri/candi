@@ -5,15 +5,16 @@
 use std::io;
 use std::sync::Mutex;
 
-use mupdf::{
-    Context, Document as MupdfDocument, Error as MupdfError, TextExtractOptions, TextPageFlags,
-};
+use mupdf::{Document as MupdfDocument, Error as MupdfError, TextExtractOptions, TextPageFlags};
 
 use crate::{Backend, Block, Document, Error, Line, PagePositions, Word};
 
 const FZ_ERROR_FORMAT: i32 = 7;
 const FZ_ERROR_SYNTAX: i32 = 8;
 const FZ_ERROR_UNSUPPORTED: i32 = 6;
+
+/// Returned when MuPDF opens a file but reports zero pages (silent-open class).
+pub(crate) const ZERO_PAGE_MALFORMED: &str = "truncated or empty document";
 
 /// MuPDF-backed document engine.
 #[derive(Debug, Default)]
@@ -26,7 +27,6 @@ impl Backend for MupdfBackend {
 
     fn open(&self, path: &str, password: Option<&str>) -> Result<Box<dyn Document>, Error> {
         preflight_path(path)?;
-        let ctx = Context::get();
         let mut doc = MupdfDocument::open(path).map_err(map_mupdf_error)?;
 
         let page_count = doc
@@ -36,7 +36,7 @@ impl Backend for MupdfBackend {
             .map_err(|_| Error::Other("page count out of range".into()))?;
 
         if page_count == 0 {
-            return Err(Error::Malformed("truncated or empty document".into()));
+            return Err(Error::Malformed(ZERO_PAGE_MALFORMED.into()));
         }
 
         if doc.needs_password().map_err(map_mupdf_error)? {
@@ -54,19 +54,20 @@ impl Backend for MupdfBackend {
         }
 
         Ok(Box::new(MupdfPdfDocument {
-            inner: Mutex::new(MupdfInner { _ctx: ctx, doc }),
+            inner: Mutex::new(MupdfInner { doc }),
             page_count,
         }))
     }
 }
 
 struct MupdfInner {
-    _ctx: Context,
     doc: MupdfDocument,
 }
 
-// MuPDF exposes raw FFI pointers; the crate uses a thread-local `fz_context`.
-// All access is serialized through the mutex below.
+// The mupdf crate resolves work through a thread-local `fz_context` (`Context::get()` /
+// `context()`); we hold the opened `fz_document` and serialize access through the mutex.
+// MuPDF keeps the document alive for loaded pages — see the crate's page-survives-
+// document-drop test.
 unsafe impl Send for MupdfInner {}
 unsafe impl Sync for MupdfInner {}
 
