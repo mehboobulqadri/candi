@@ -181,9 +181,10 @@ fn open_mupdf_is_unsupported_without_feature() {
 #[cfg(feature = "pdfium-backend")]
 #[test]
 fn open_pdfium_returns_a_document() {
-    let doc = open(BackendKind::Pdfium, "unused.pdf", None).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tiny.pdf");
+    let doc = open(BackendKind::Pdfium, path.to_str().unwrap(), None).unwrap();
     assert_eq!(doc.page_count(), 1);
-    assert_eq!(doc.page_text(0).unwrap(), "");
+    assert!(doc.page_text(0).unwrap().contains("Hello Candi"));
 }
 
 #[cfg(not(feature = "pdfium-backend"))]

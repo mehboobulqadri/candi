@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 //! Backend registry and runtime selection.
-//!
-//! Features gate which backends are compiled in. MuPDF is real from slice
-//! 01/02; PDFium stays on the stub until slice 01/03.
 
 #[cfg(feature = "mupdf-backend")]
 use crate::backend::MupdfBackend;
-use crate::stub::StubBackend;
+#[cfg(feature = "pdfium-backend")]
+use crate::backend::PdfiumBackend;
 use crate::{Backend, Document, Error};
 
 /// The engines candi knows how to talk to.
@@ -45,7 +43,7 @@ pub fn open(
         #[cfg(feature = "mupdf-backend")]
         BackendKind::Mupdf => MupdfBackend.open(path, password),
         #[cfg(feature = "pdfium-backend")]
-        BackendKind::Pdfium => StubBackend::new(1).open(path, password),
+        BackendKind::Pdfium => PdfiumBackend.open(path, password),
         #[cfg(not(feature = "mupdf-backend"))]
         BackendKind::Mupdf => Err(Error::Unsupported(
             "mupdf-backend is not compiled in".into(),
