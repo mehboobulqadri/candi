@@ -6,6 +6,8 @@
 
 use crate::{Document, Error};
 
+const ZERO_PAGE_MALFORMED: &str = "truncated or empty document";
+
 /// Number of leading pages to sample when `page_count` is at least this large.
 pub const SAMPLE_PAGE_COUNT: usize = 3;
 
@@ -16,7 +18,7 @@ pub const SAMPLE_PAGE_COUNT: usize = 3;
 pub fn reject_if_no_text_layer(doc: &dyn Document) -> Result<(), Error> {
     let page_count = doc.page_count();
     if page_count == 0 {
-        return Ok(());
+        return Err(Error::Malformed(ZERO_PAGE_MALFORMED.into()));
     }
 
     let sample_count = page_count.min(SAMPLE_PAGE_COUNT);

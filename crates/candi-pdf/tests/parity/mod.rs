@@ -66,7 +66,7 @@ pub fn hardening_permission_denied(open_fn: OpenFn) {
     #[cfg(not(unix))]
     {
         eprintln!("SKIP permission_denied: unix-only chmod 000");
-        let _open_fn = _open_fn;
+        let _ = open_fn;
         return;
     }
 
@@ -140,16 +140,9 @@ pub fn hardening_image_only_no_text_layer(open_fn: OpenFn) {
     });
 }
 
-/// Unsupported PDF features are not faked here. Factory gating for uncompiled
-/// backends is the honest automated coverage; the kind itself is always asserted.
+/// PDF-feature `Unsupported` is not pinned until a dual-engine fixture exists (01/04 risk).
+/// Factory gating for uncompiled backends is the honest automated coverage for that row.
 pub fn hardening_unsupported(_open_fn: OpenFn) {
-    with_open_timeout("unsupported_kind", || {
-        assert!(matches!(
-            Error::Unsupported("parity probe".into()),
-            Error::Unsupported(_)
-        ));
-    });
-
     #[cfg(not(feature = "mupdf-backend"))]
     with_open_timeout("unsupported_mupdf_gated", || {
         assert!(matches!(
