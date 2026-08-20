@@ -32,6 +32,5 @@ GitHub Pages — see [docs/publishing.md](docs/publishing.md) for how.
 
 ## Maintainer
 
-{{name}} — [{{email}}](mailto:{{email}})
+Mehboob ul Qadri — [mehboobulqadri@gmail.com](mailto:mehboobulqadri@gmail.com)
 
-*Identity is templated from the gitignored `creds.yml` — run `scripts/sync-creds.sh` to fill values.*

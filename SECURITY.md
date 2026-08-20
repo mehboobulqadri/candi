@@ -15,7 +15,7 @@ None yet — Candi has no releases. The first supported version is v0.1.
 
 - Preferred: a [private security advisory](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability) on this repository (GitHub → Security →
   Report a vulnerability).
-- Fallback: email `{{email}}`.
+- Fallback: email `mehboobulqadri@gmail.com`.
 
 Please include: Candi version, backend in use (`--backend mupdf|pdfium`), the
 document that triggered the issue (or a minimized reproducer), steps to reproduce,

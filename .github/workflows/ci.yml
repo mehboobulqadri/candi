@@ -116,6 +116,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject doc identity placeholders
+        run: |
+          if git grep -qE '\{\{(name|email|github|project|license)\}\}' -- README.md SECURITY.md LICENSE.md docs/; then
+            echo "Tracked docs contain unfilled creds placeholders (run scripts/sync-creds.sh)"
+            exit 1
+          fi
       - name: Check relative markdown links
         run: |
           for f in README.md $(find docs -name '*.md'); do
