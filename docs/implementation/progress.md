@@ -1,14 +1,14 @@
 # Candi — Implementation Progress
 
-Current position: base docs in review (this PR); phase 00 slices **planned** — next:
-`00-foundations/01-workspace-bootstrap`.
+Current position: base docs and slice 00/01 merged; next:
+`00-foundations/02-ci-drill-gates`.
 
 ## Status
 
 | Phase | Slice | Status | Notes |
 |---|---|---|---|
-| base | docs (repo docs + spike results + this plan) | in review (this PR) | lands as the repo's initial commit |
-| 00-foundations | 01-workspace-bootstrap | planned | |
+| base | docs (repo docs + spike results + this plan) | merged | lands as the repo's initial commit |
+| 00-foundations | 01-workspace-bootstrap | merged | workspace skeleton + CI workflow fix (hashFiles job-level guard bug) |
 | 00-foundations | 02-ci-drill-gates | planned | |
 | 00-foundations | 03-benchmark-harness | planned | |
 | 01-v0.1 | 01-candi-pdf-trait | planned | |
@@ -32,7 +32,7 @@ Current position: base docs in review (this PR); phase 00 slices **planned** —
 
 | Date | From → to | Commit | Independent reviewer verdict |
 |---|---|---|---|
-| — | (no merges yet — the base/docs slice is this PR; merge history fills in at merge) | | |
+| 2026-08-20 | slice/00-01-workspace-bootstrap → dev | 07ad909 | APPROVE after 2 rounds (round-1 nit fixed: TOML trailing newlines; round-2: CI fix commit 007e7bd) — workspace, toolchain pin 1.97.1, CI hashFiles fix + workflow-lint |
 
 ## How to update
 
