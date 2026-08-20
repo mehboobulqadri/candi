@@ -1,7 +1,7 @@
 # Candi — Implementation Progress
 
-Current position: 01-v0.1/05-benchmarks-both-backends committed (PR #10 fix pushed); next:
-`01-v0.1/06-candi-core-navigation`.
+Current position: 01-v0.1/06-candi-core-navigation committed; next:
+`01-v0.1/07-reading-position-sidecar`.
 
 ## Status
 
@@ -15,8 +15,8 @@ Current position: 01-v0.1/05-benchmarks-both-backends committed (PR #10 fix push
 | 01-v0.1 | 02-mupdf-backend | merged | `mupdf-backend` feature (mupdf 0.8.0 base14-fonts); MupdfBackend + fz_context ownership; error mapping by `fz_error_code`; zero-page open → `Malformed`; fixture tests (attention paper, truncated, encrypted); fix commit proves blank-first-page vs zero-pages |
 | 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
 | 01-v0.1 | 04-backend-parity-hardening | merged | 153cafc — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); merge 3d519af; independent reviewer APPROVE (round 2b after REQUEST CHANGES) |
-| 01-v0.1 | 05-benchmarks-both-backends | committed | 1fb4242 — budget gate uses reader_peak (<200 MB); full_pass_peak ~295 MB documented FAIL vs MuPDF store ceiling, not gated; PR #10 pending |
-| 01-v0.1 | 06-candi-core-navigation | planned | |
+| 01-v0.1 | 05-benchmarks-both-backends | merged | fc5a2af — budget gate uses reader_peak (<200 MB); full_pass_peak ~295 MB documented FAIL vs MuPDF store ceiling, not gated; merge c3634e0; PR #10 |
+| 01-v0.1 | 06-candi-core-navigation | committed | 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
 | 01-v0.1 | 07-reading-position-sidecar | planned | |
 | 01-v0.1 | 08-search-abstraction | planned | |
 | 01-v0.1 | 09-candi-tui | planned | |
@@ -39,6 +39,7 @@ Current position: 01-v0.1/05-benchmarks-both-backends committed (PR #10 fix push
 | 2026-08-20 | slice/01-02-mupdf-backend → dev | ad83c7b | APPROVE — mupdf-backend feature (mupdf 0.8.0); fz_error_code mapping; zero-page → Malformed guard with fixtures; independent reviewer sign-off |
 | 2026-08-20 | slice/01-03-pdfium-backend → dev | b9902d0 | APPROVE — pdfium-render 0.8.37 (chromium/7543); FPDF error mapping + zero-page catalog sniff; CI libpdfium pin + PDFIUM_LIB; permissive matrix green |
 | 2026-08-20 | slice/01-04-backend-parity-hardening → dev | 3d519af | APPROVE (round 2b after REQUEST CHANGES) — shared parity suite + text-layer sampling; feat 153cafc |
+| 2026-08-20 | slice/01-05-benchmarks-both-backends → dev | c3634e0 | APPROVE — reader_peak budget gate; PR #10; feat fc5a2af |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
 
