@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use candi_pdf::{Document, Error};
+use candi_pdf::{Document, Error, TocItem};
 #[cfg(any(not(feature = "mupdf-backend"), not(feature = "pdfium-backend")))]
 use candi_pdf::BackendKind;
 
@@ -30,6 +30,7 @@ pub fn run_suite(open_fn: OpenFn) {
     hardening_zero_pages_malformed(open_fn);
     parity_tiny_opens_with_text(open_fn);
     parity_tiny_outline_is_empty(open_fn);
+    parity_ghost_outline_drops_unresolvable_entries(open_fn);
     parity_blank_first_page_not_no_text_layer(open_fn);
     parity_positions_sanity(open_fn);
     parity_page_size_matches_mediabox(open_fn);
@@ -189,6 +190,26 @@ pub fn parity_tiny_outline_is_empty(open_fn: OpenFn) {
     with_open_timeout("tiny_outline_is_empty", move || {
         let doc = open_fn(&path, None).expect("tiny.pdf should open");
         assert_eq!(doc.outline().unwrap(), Vec::new());
+    });
+}
+
+/// ghost-outline.pdf holds one valid entry plus a ghost whose destination is
+/// an orphan page object outside the page tree. Both engines must drop the
+/// unusable entry (MuPDF reports it as page -1, which must never surface as a
+/// huge or wrapped page number).
+pub fn parity_ghost_outline_drops_unresolvable_entries(open_fn: OpenFn) {
+    let path = fixtures::ghost_outline().to_str().unwrap().to_string();
+    with_open_timeout("ghost_outline_drops_unresolvable_entries", move || {
+        let doc = open_fn(&path, None).expect("ghost-outline.pdf should open");
+        assert_eq!(doc.page_count(), 2);
+        assert_eq!(
+            doc.outline().unwrap(),
+            vec![TocItem {
+                title: "Real".into(),
+                page: 1,
+                children: Vec::new(),
+            }]
+        );
     });
 }
 

@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::io;
+use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -21,6 +22,48 @@ const OPAQUE_WHITE: std::ffi::c_ulong = 0xFFFF_FFFF;
 
 static ENGINE: OnceLock<Result<Arc<Pdfium>, Error>> = OnceLock::new();
 static PDFIUM_OPS: Mutex<()> = Mutex::new(());
+
+/// Raw `FPDF_RenderPageBitmap` signature. pdfium-render's typed binding
+/// declares the C function as returning unit, discarding its `FPDF_BOOL`
+/// success flag, so failures would surface as silent blank-white images.
+type RawRenderFn = unsafe extern "C" fn(
+    FPDF_BITMAP,
+    FPDF_PAGE,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+) -> std::ffi::c_int;
+
+/// Resolve the pdfium library path the same way [`Pdfium::bind_to_library`]
+/// callers here do: `PDFIUM_LIB`, then the executable's directory.
+fn resolve_pdfium_lib() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("PDFIUM_LIB") {
+        let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
+        if lib.exists() {
+            return Some(lib);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let lib = Pdfium::pdfium_platform_library_name_at_path(exe.parent()?);
+    lib.exists().then_some(lib)
+}
+
+/// Bind the raw symbol straight from the library. The temporary
+/// [`libloading::Library`] is dropped on purpose: pdfium-render keeps its own
+/// reference to the same file for as long as the engine lives, so the mapping
+/// (and the pointer) stays valid.
+fn raw_render_fn() -> Option<RawRenderFn> {
+    static RAW: OnceLock<Option<RawRenderFn>> = OnceLock::new();
+    *RAW.get_or_init(|| {
+        let library = unsafe { libloading::Library::new(resolve_pdfium_lib()?) }.ok()?;
+        unsafe { library.get(b"FPDF_RenderPageBitmap") }
+            .ok()
+            .map(|symbol| *symbol)
+    })
+}
 
 /// PDFium-backed document engine.
 #[derive(Debug, Default)]
@@ -151,10 +194,26 @@ impl Document for PdfiumPdfDocument {
             }
 
             bindings.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, OPAQUE_WHITE);
-            bindings.FPDF_RenderPageBitmap(bitmap, page_handle, 0, 0, width, height, 0, FPDF_ANNOT);
+            let rendered = match raw_render_fn() {
+                // Safety: arguments mirror the typed binding; pdfium calls are
+                // serialized by `pdfium_lock`.
+                Some(render) => unsafe {
+                    render(bitmap, page_handle, 0, 0, width, height, 0, FPDF_ANNOT) != 0
+                },
+                // Unreachable whenever the dynamic library loaded at all;
+                // prefer rendering unchecked to failing every page.
+                None => true,
+            };
 
             let mut buffer = bindings.FPDFBitmap_GetBuffer_as_vec(bitmap);
             bindings.FPDFBitmap_Destroy(bitmap);
+
+            if !rendered {
+                return Err(Error::Other(format!(
+                    "render failed for page {}",
+                    page_index + 1
+                )));
+            }
 
             for pixel in buffer.chunks_exact_mut(4) {
                 pixel.swap(0, 2);
@@ -173,33 +232,46 @@ impl Document for PdfiumPdfDocument {
             null_mut(),
             self.pdfium.bindings(),
             &mut seen,
+            self.page_count,
+            0,
         ))
     }
 }
+
+/// Maximum outline nesting the walker descends into; malformed documents can
+/// build pathological trees and the visited set only guards against cycles.
+const MAX_OUTLINE_DEPTH: usize = 64;
 
 /// Converts the bookmark tree rooted at `parent` (`null` for the document
 /// root). Pdfium's bookmark API signals failure only through null handles and
 /// `-1` page indexes, so entries without a usable internal destination are
 /// skipped; there is no error channel that could carry a whole-tree failure.
 /// The visited set terminates cycles, which malformed documents can form
-/// through repeated `/Next` or `/First` references.
+/// through repeated `/Next` or `/First` references. Resolved pages outside
+/// `1..=page_count` are dropped.
 fn bookmark_children(
     doc: FPDF_DOCUMENT,
     parent: FPDF_BOOKMARK,
     bindings: &dyn PdfiumLibraryBindings,
     seen: &mut HashSet<usize>,
+    page_count: usize,
+    depth: usize,
 ) -> Vec<TocItem> {
+    if depth > MAX_OUTLINE_DEPTH {
+        return Vec::new();
+    }
     let mut items = Vec::new();
     let mut next = bindings.FPDFBookmark_GetFirstChild(doc, parent);
     while !next.is_null() && seen.insert(next as usize) {
         if let (Some(title), Some(page)) = (
             bookmark_title(bindings, next),
             bookmark_page(doc, next, bindings),
-        ) {
+        ) && page <= page_count
+        {
             items.push(TocItem {
                 title,
                 page,
-                children: bookmark_children(doc, next, bindings, seen),
+                children: bookmark_children(doc, next, bindings, seen, page_count, depth + 1),
             });
         }
         next = bindings.FPDFBookmark_GetNextSibling(doc, next);
@@ -259,27 +331,14 @@ fn shared_engine() -> Result<Arc<Pdfium>, Error> {
 }
 
 fn bind_pdfium_library() -> Result<Box<dyn PdfiumLibraryBindings>, Error> {
-    if let Ok(dir) = std::env::var("PDFIUM_LIB") {
-        let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
-        if lib.exists() {
-            return Pdfium::bind_to_library(&lib).map_err(map_bind_error);
-        }
+    match resolve_pdfium_lib() {
+        Some(lib) => Pdfium::bind_to_library(&lib).map_err(map_bind_error),
+        None => Err(Error::Other(
+            "libpdfium not found: set PDFIUM_LIB to the directory containing libpdfium.so, \
+             or place the library next to the executable"
+                .into(),
+        )),
     }
-
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let lib = Pdfium::pdfium_platform_library_name_at_path(dir);
-        if lib.exists() {
-            return Pdfium::bind_to_library(&lib).map_err(map_bind_error);
-        }
-    }
-
-    Err(Error::Other(
-        "libpdfium not found: set PDFIUM_LIB to the directory containing libpdfium.so, \
-         or place the library next to the executable"
-            .into(),
-    ))
 }
 
 fn with_page<T>(

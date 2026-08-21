@@ -7,9 +7,10 @@ license.workspace = true
 [features]
 default = ["mupdf-backend", "pdfium-backend"]
 mupdf-backend = ["dep:mupdf"]
-pdfium-backend = ["dep:pdfium-render"]
+pdfium-backend = ["dep:pdfium-render", "dep:libloading"]
 
 [dependencies]
+libloading = { version = "0.8", optional = true }
 mupdf = { version = "0.8.0", optional = true, features = ["base14-fonts"] }
 pdfium-render = { version = "=0.8.37", optional = true, default-features = false, features = ["pdfium_latest", "thread_safe", "sync"] }
 

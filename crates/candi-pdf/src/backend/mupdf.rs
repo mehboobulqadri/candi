@@ -135,21 +135,24 @@ impl Document for MupdfPdfDocument {
     fn outline(&self) -> Result<Vec<TocItem>, Error> {
         let inner = self.inner.lock().expect("mupdf document mutex poisoned");
         let outlines = inner.doc.outlines().map_err(map_mupdf_error)?;
-        Ok(toc_from_outlines(&outlines))
+        Ok(toc_from_outlines(&outlines, self.page_count))
     }
 }
 
 /// `LinkDestination::page_number` is the 0-based absolute page; entries with
-/// no destination (external links, unresolvable URIs) are dropped.
-fn toc_from_outlines(outlines: &[mupdf::Outline]) -> Vec<TocItem> {
+/// no destination (external links, unresolvable URIs) are dropped. Negative
+/// numbers and pages past the end of the document are dropped too, so a
+/// damaged sidecar cannot surface `-1` as a huge 1-based page.
+fn toc_from_outlines(outlines: &[mupdf::Outline], page_count: usize) -> Vec<TocItem> {
     outlines
         .iter()
         .filter_map(|outline| {
-            let page = outline.dest.as_ref()?.loc.page_number as usize + 1;
-            Some(TocItem {
+            let number = i64::from(outline.dest.as_ref()?.loc.page_number);
+            let page = usize::try_from(number).ok()? + 1;
+            (page <= page_count).then_some(TocItem {
                 title: outline.title.clone(),
                 page,
-                children: toc_from_outlines(&outline.down),
+                children: toc_from_outlines(&outline.down, page_count),
             })
         })
         .collect()
