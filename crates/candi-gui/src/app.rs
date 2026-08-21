@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use candi_cli::{open_session, save_session};
 use candi_core::{SearchSession, SessionState, ZoomMode};
@@ -70,6 +71,10 @@ pub struct ReaderApp {
     pipeline: Option<Pipeline>,
     /// Render jobs queued on the worker, awaiting their result.
     pending: HashSet<CacheKey>,
+    /// Render jobs that already failed at `failed_scale_q`; skipped until the
+    /// zoom or document changes so a bad page cannot retry forever.
+    failed: HashSet<CacheKey>,
+    failed_scale_q: u16,
     /// Promoted textures keyed by page; dropped on theme switches.
     textures: HashMap<usize, PageTexture>,
 
@@ -114,6 +119,8 @@ impl ReaderApp {
             cache: ImageCache::new(ImageCache::budget_from_env()),
             pipeline: None,
             pending: HashSet::new(),
+            failed: HashSet::new(),
+            failed_scale_q: 0,
             textures: HashMap::new(),
             layout: Layout::default(),
             layout_key: None,
@@ -143,12 +150,10 @@ impl ReaderApp {
         self.search_query.clear();
         match open_session(&path, self.backend) {
             Ok(opened) => {
-                if opened.document.page_count() == 0 {
-                    self.error = Some("document has no pages".into());
-                    return;
-                }
                 self.cache = ImageCache::new(ImageCache::budget_from_env());
                 self.pending.clear();
+                self.failed.clear();
+                self.failed_scale_q = 0;
                 self.textures.clear();
                 self.pipeline = None;
                 self.layout_key = None;
@@ -297,6 +302,7 @@ impl ReaderApp {
                 }
                 RenderResult::Failed { request, error } => {
                     self.pending.remove(&request.key());
+                    self.failed.insert(request.key());
                     self.error = Some(format!("rendering page {}: {error}", request.page + 1));
                 }
             }
@@ -383,7 +389,10 @@ impl ReaderApp {
                 } = image;
                 self.cache.insert(key, width, height, rgba);
             }
-            Err(err) => self.error = Some(format!("rendering page {}: {err}", page + 1)),
+            Err(err) => {
+                self.failed.insert(key);
+                self.error = Some(format!("rendering page {}: {err}", page + 1));
+            }
         }
     }
 
@@ -440,11 +449,16 @@ impl ReaderApp {
         }
 
         let scale_q = self.current_scale_q(ctx);
+        if self.failed_scale_q != scale_q {
+            self.failed.clear();
+            self.failed_scale_q = scale_q;
+        }
         let scale = self.current_scale(ctx.pixels_per_point());
         let mut wanted = Vec::new();
         for page in candidates {
             let key = CacheKey { page, scale_q };
             if self.pending.contains(&key)
+                || self.failed.contains(&key)
                 || self
                     .textures
                     .get(&page)
@@ -926,6 +940,12 @@ impl eframe::App for ReaderApp {
 
         self.about_window(ctx);
         self.apply_shortcuts(ctx, shortcuts);
+
+        // Completed renders must wake the UI even when no input arrives;
+        // poll at a fixed cadence while anything is outstanding.
+        if !self.pending.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
