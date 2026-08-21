@@ -81,7 +81,6 @@ impl Serialize for ZoomMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bookmark {
     pub page: usize,
-    pub label: Option<String>,
     pub created_at: String,
 }
 
@@ -127,7 +126,7 @@ impl SessionState {
         self
     }
 
-    /// Add a label-less bookmark for `page`, or remove it if one exists.
+    /// Add a bookmark for `page`, or remove it if one exists.
     pub fn toggle_bookmark(&mut self, page: usize) {
         if let Some(index) = self.bookmarks.iter().position(|b| b.page == page) {
             self.bookmarks.remove(index);
@@ -136,15 +135,14 @@ impl SessionState {
         }
     }
 
-    /// Add a label-less bookmark for `page`; existing bookmarks for the same
-    /// page are kept as-is.
+    /// Add a bookmark for `page`; existing bookmarks for the same page are
+    /// kept as-is.
     pub fn add_bookmark(&mut self, page: usize) {
         if self.bookmarks.iter().any(|b| b.page == page) {
             return;
         }
         self.bookmarks.push(Bookmark {
             page,
-            label: None,
             created_at: format_rfc3339_utc(SystemTime::now()),
         });
     }
@@ -460,17 +458,8 @@ fn zoom_field(field: Option<&toml::Value>) -> Result<ZoomMode, String> {
 
 fn bookmark(value: &toml::Value) -> Result<Bookmark, String> {
     let page = uint_field(value.get("page"), "bookmark page")?;
-    let label = match value.get("label") {
-        Some(toml::Value::String(label)) => Some(label.clone()),
-        Some(_) => return Err("invalid bookmark label type".into()),
-        None => None,
-    };
     let created_at = text_field(value.get("created_at"), "bookmark created_at")?;
-    Ok(Bookmark {
-        page,
-        label,
-        created_at,
-    })
+    Ok(Bookmark { page, created_at })
 }
 
 #[derive(Serialize)]
@@ -517,8 +506,6 @@ struct SessionReading<'a> {
 #[derive(Serialize)]
 struct BookmarkSection<'a> {
     page: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<&'a str>,
     created_at: &'a str,
 }
 
@@ -537,7 +524,6 @@ fn serialize_session(session: &SessionState, updated_at: &str) -> io::Result<Str
             .iter()
             .map(|bookmark| BookmarkSection {
                 page: bookmark.page,
-                label: bookmark.label.as_deref(),
                 created_at: &bookmark.created_at,
             })
             .collect(),

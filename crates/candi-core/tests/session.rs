@@ -57,7 +57,6 @@ fn session_v2_roundtrip_all_fields() {
         theme: "Sepia".to_owned(),
         bookmarks: vec![Bookmark {
             page: 5,
-            label: Some("intro".to_owned()),
             created_at: "2026-08-20T12:00:00Z".to_owned(),
         }],
     };
@@ -86,23 +85,32 @@ fn zoom_percent_roundtrips() {
 }
 
 #[test]
-fn label_less_bookmark_survives_roundtrip() {
-    let dir = temp_fixture_dir("label-less");
+fn bookmark_label_keys_are_ignored() {
+    let dir = temp_fixture_dir("label-ignored");
     let pdf = pdf_path(&dir);
-    let mut session = SessionState::new(10);
-    session.bookmarks.push(Bookmark {
-        page: 7,
-        label: None,
-        created_at: "2026-08-20T12:00:00Z".to_owned(),
-    });
-
-    save_session(&pdf, &session).unwrap();
+    write_sidecar(
+        &pdf,
+        r#"schema_version = 2
+updated_at = "2026-08-20T12:00:00Z"
+[reading]
+page = 0
+scroll_frac = 0.0
+zoom = "fit-width"
+theme = "Light"
+[[bookmarks]]
+page = 7
+label = "kept by older writers"
+created_at = "2026-08-20T12:00:00Z"
+"#,
+    );
 
     let restored = loaded(load_session(&pdf).unwrap());
     assert_eq!(restored.bookmarks.len(), 1);
     assert_eq!(restored.bookmarks[0].page, 7);
-    assert_eq!(restored.bookmarks[0].label, None);
-    assert_eq!(restored.bookmarks[0].created_at, "2026-08-20T12:00:00Z");
+    assert_eq!(
+        restored.bookmarks[0].created_at, "2026-08-20T12:00:00Z",
+        "labels written by older builds must not break parsing"
+    );
 }
 
 #[test]
