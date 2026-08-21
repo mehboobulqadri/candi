@@ -13,7 +13,7 @@ use std::time::Duration;
 use candi_cli::{open_session, save_session};
 use candi_core::{SearchSession, SessionState, ZoomMode};
 use candi_pdf::{BackendKind, Document, Error as PdfError, PageImage};
-use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, recolor};
+use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, to_yaml};
 use eframe::egui;
 use egui::Key;
 
@@ -26,6 +26,7 @@ use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
 const TEXTURE_KEEP_AROUND: usize = 6;
 const SIDEBAR_WIDTH: f32 = 260.0;
 const SEARCH_FIELD_WIDTH: f32 = 180.0;
+const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x48, 0x4D);
 
 /// A promoted GPU texture for one page plus the scale it was rendered at.
 struct PageTexture {
@@ -38,6 +39,40 @@ enum SidebarSection {
     Contents,
     Bookmarks,
     Search,
+}
+
+/// Center-pane theme editor state: the YAML buffer plus its last parse
+/// outcome. Openness is encoded by [`ReaderApp`] holding
+/// `Option<ThemeEditor>`; applying a parsed theme stays with the caller so
+/// this stays egui-free and unit-testable.
+struct ThemeEditor {
+    buffer: String,
+    error: Option<String>,
+}
+
+impl ThemeEditor {
+    fn open(theme: &Theme) -> Self {
+        Self {
+            buffer: to_yaml(theme),
+            error: None,
+        }
+    }
+
+    /// Swap in the edited buffer and reparse immediately; `Some` carries the
+    /// theme to apply, `None` leaves the caller's last-good theme in place.
+    fn edit(&mut self, buffer: String) -> Option<Theme> {
+        self.buffer = buffer;
+        match parse(&self.buffer) {
+            Ok(theme) => {
+                self.error = None;
+                Some(theme)
+            }
+            Err(err) => {
+                self.error = Some(err.to_string());
+                None
+            }
+        }
+    }
 }
 
 pub struct ReaderApp {
@@ -76,6 +111,8 @@ pub struct ReaderApp {
     search_query: String,
     search_hits: Option<Vec<usize>>,
     about_open: bool,
+    /// Live theme editor; `Some` while the center pane shows it.
+    editor: Option<ThemeEditor>,
 
     /// Saved scroll fraction waiting for the first layout to apply.
     restore_frac: Option<f64>,
@@ -116,6 +153,7 @@ impl ReaderApp {
             search_query: String::new(),
             search_hits: None,
             about_open: false,
+            editor: None,
             restore_frac: None,
             pending_scroll: None,
             primed: true,
@@ -166,12 +204,33 @@ impl ReaderApp {
 
     /// Switch the active built-in theme. Visuals are re-applied at the top of
     /// the next [`ReaderApp::update`]; texture slots are dropped so pages
-    /// re-promote from their cached originals in the new colors.
+    /// re-promote from their cached originals in the new colors. Closes the
+    /// theme editor: a dropdown/menu switch means the buffer is no longer
+    /// authoritative.
     fn set_theme(&mut self, name: &str) {
         self.theme =
             builtin(name).unwrap_or_else(|| builtin("Light").expect("built-in Light parses"));
         self.session.theme = self.theme.name.clone();
         self.textures.clear();
+        self.editor = None;
+    }
+
+    /// Open the center-pane theme editor seeded with the active theme;
+    /// re-opening while open keeps the user's buffer.
+    fn open_theme_editor(&mut self) {
+        if self.editor.is_none() {
+            self.editor = Some(ThemeEditor::open(&self.theme));
+        }
+    }
+
+    /// Swap in a theme parsed from the editor buffer. Same mechanism as
+    /// [`ReaderApp::set_theme`], but `applied_theme` is cleared so visuals are
+    /// restyled even when the edited name is unchanged.
+    fn apply_edited_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.session.theme = self.theme.name.clone();
+        self.textures.clear();
+        self.applied_theme.clear();
     }
 
     fn page_count(&self) -> usize {
@@ -482,6 +541,49 @@ impl ReaderApp {
         });
     }
 
+    /// Center-pane theme editor: header row, parse-error banner when the
+    /// buffer is bad, and a monospace TextEdit filling the rest. Every edit
+    /// reparses immediately; a good buffer swaps the live theme.
+    fn show_theme_editor(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.strong(format!("Theme — {}", self.theme.name));
+            ui.label(egui::RichText::new("Edits apply live · Esc to close").weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Close").clicked() {
+                    self.editor = None;
+                }
+            });
+        });
+        ui.label(
+            egui::RichText::new(
+                "Only built-in names persist; unknown names load as Light next session.",
+            )
+            .weak()
+            .small(),
+        );
+
+        let edited = {
+            let Some(editor) = self.editor.as_mut() else {
+                return;
+            };
+            if let Some(err) = &editor.error {
+                ui.colored_label(ERROR_RED, err);
+            }
+            let mut buffer = std::mem::take(&mut editor.buffer);
+            let edit_box = egui::TextEdit::multiline(&mut buffer).code_editor();
+            let response = ui.add_sized([ui.available_width(), ui.available_height()], edit_box);
+            if response.changed() {
+                editor.edit(buffer)
+            } else {
+                editor.buffer = buffer;
+                None
+            }
+        };
+        if let Some(theme) = edited {
+            self.apply_edited_theme(theme);
+        }
+    }
+
     fn show_canvas(&mut self, ui: &mut egui::Ui) {
         if !self.ensure_layout(ui.available_width()) {
             return;
@@ -602,6 +704,10 @@ impl ReaderApp {
                     self.save_state();
                 }
                 self.theme_menu(ui);
+                if ui.button("Edit theme YAML…   Ctrl+E").clicked() {
+                    ui.close_menu();
+                    self.open_theme_editor();
+                }
                 if ui.button("About Candi").clicked() {
                     ui.close_menu();
                     self.about_open = true;
@@ -729,7 +835,9 @@ impl ReaderApp {
                         }
                     }
                 });
-            ui.add_enabled(false, egui::Button::new("Edit…"));
+            if ui.button("Edit…").clicked() {
+                self.open_theme_editor();
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Fit width").clicked() {
@@ -755,7 +863,7 @@ impl ReaderApp {
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new("Candi").strong().size(18.0));
                 ui.label("A minimal PDF reader.");
-                ui.label("v0.1 — AGPL-3.0");
+                ui.label(format!("v{} — AGPL-3.0", env!("CARGO_PKG_VERSION")));
             });
     }
 }
@@ -780,6 +888,13 @@ impl ReaderApp {
                 self.search_open = true;
                 self.focus_search = true;
             }
+            if ctrl && input.key_pressed(Key::E) {
+                if self.editor.is_some() {
+                    self.editor = None;
+                } else {
+                    self.open_theme_editor();
+                }
+            }
             if plain && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals)) {
                 self.zoom_step(5);
             }
@@ -803,6 +918,8 @@ impl ReaderApp {
             if input.key_pressed(Key::Escape) {
                 if self.about_open {
                     self.about_open = false;
+                } else if self.editor.is_some() {
+                    self.editor = None;
                 } else if self.search_open {
                     self.search_open = false;
                     self.search_hits = None;
@@ -889,14 +1006,16 @@ impl eframe::App for ReaderApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(error) = self.error.clone() {
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(egui::Color32::from_rgb(0xE5, 0x48, 0x4D), error);
+                    ui.colored_label(ERROR_RED, error);
                     if ui.small_button("dismiss").clicked() {
                         self.error = None;
                     }
                 });
                 ui.separator();
             }
-            if self.document.is_some() {
+            if self.editor.is_some() {
+                self.show_theme_editor(ui);
+            } else if self.document.is_some() {
                 self.show_canvas(ui);
             } else {
                 ui.centered_and_justified(|ui| {
@@ -921,5 +1040,64 @@ impl eframe::App for ReaderApp {
         {
             eprintln!("candi: saving state on exit: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builtin_theme(name: &str) -> Theme {
+        builtin(name).unwrap_or_else(|| panic!("{name} must exist"))
+    }
+
+    #[test]
+    fn open_seeds_buffer_from_the_active_theme() {
+        let theme = builtin_theme("Sepia");
+        let editor = ThemeEditor::open(&theme);
+        assert_eq!(editor.error, None);
+        assert_eq!(parse(&editor.buffer), Ok(theme));
+    }
+
+    #[test]
+    fn valid_edit_returns_the_parsed_theme() {
+        let theme = builtin_theme("Light");
+        let mut editor = ThemeEditor::open(&theme);
+        let applied = editor
+            .edit(to_yaml(&theme).replacen("name: Light", "name: Custom", 1))
+            .expect("valid buffer applies");
+        assert_eq!(applied.name, "Custom");
+        assert_eq!(applied.page_bg, theme.page_bg);
+        assert_eq!(editor.error, None);
+    }
+
+    #[test]
+    fn color_edit_applies_without_a_name_change() {
+        let theme = builtin_theme("Dark");
+        let mut editor = ThemeEditor::open(&theme);
+        let applied = editor
+            .edit(to_yaml(&theme).replace("accent: \"#4C8DF6\"", "accent: \"#FF0000\""))
+            .expect("valid buffer applies");
+        assert_eq!(applied.accent, Color::from([0xFF, 0x00, 0x00, 0xFF]));
+    }
+
+    #[test]
+    fn invalid_edit_reports_none_and_keeps_the_error_verbatim() {
+        let mut editor = ThemeEditor::open(&builtin_theme("Dark"));
+        let applied = editor.edit("page_bg: oops\n".into());
+        assert!(applied.is_none());
+        let err = editor.error.as_deref().expect("error recorded");
+        assert!(err.contains("invalid"), "{err}");
+    }
+
+    #[test]
+    fn good_edit_after_a_bad_one_recovers() {
+        let theme = builtin_theme("Warm Dark");
+        let mut editor = ThemeEditor::open(&theme);
+        assert!(editor.edit("name: [unclosed".into()).is_none());
+        assert!(editor.error.is_some());
+        let applied = editor.edit(to_yaml(&theme)).expect("recovers");
+        assert_eq!(applied, theme);
+        assert_eq!(editor.error, None);
     }
 }
