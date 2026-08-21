@@ -9,6 +9,8 @@
 //! sequentially. Dropping the [`Pipeline`] closes the request channel and the
 //! worker exits after its current page.
 
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -60,6 +62,39 @@ pub fn coalesce(requests: &[RenderRequest]) -> Vec<RenderRequest> {
     positions.into_iter().map(|i| requests[i]).collect()
 }
 
+/// Render one request, converting a panic in the backend into `Failed` so a
+/// panicking page cannot kill the worker thread and stall every pending job.
+fn render_isolated(document: &dyn Document, req: RenderRequest) -> RenderResult {
+    match catch_unwind(AssertUnwindSafe(|| {
+        document.render_page(req.page, req.scale)
+    })) {
+        Ok(Ok(image)) => RenderResult::Ready {
+            request: req,
+            image,
+        },
+        Ok(Err(err)) => RenderResult::Failed {
+            request: req,
+            error: err.to_string(),
+        },
+        Err(payload) => RenderResult::Failed {
+            request: req,
+            error: panic_message(&payload),
+        },
+    }
+}
+
+/// Best-effort payload extraction; Rust panics carry `String` or `&str`.
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    let detail = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()));
+    match detail {
+        Some(detail) => format!("renderer panicked: {detail}"),
+        None => "renderer panicked".into(),
+    }
+}
+
 /// Worker-side render pipeline. Cheap to drop: the thread outlives the last
 /// queued page at most.
 pub struct Pipeline {
@@ -82,16 +117,7 @@ impl Pipeline {
                         batch.push(req);
                     }
                     for req in coalesce(&batch) {
-                        let result = match document.render_page(req.page, req.scale) {
-                            Ok(image) => RenderResult::Ready {
-                                request: req,
-                                image,
-                            },
-                            Err(err) => RenderResult::Failed {
-                                request: req,
-                                error: err.to_string(),
-                            },
-                        };
+                        let result = render_isolated(&*document, req);
                         if result_tx.send(result).is_err() {
                             return;
                         }
@@ -102,11 +128,17 @@ impl Pipeline {
         Pipeline { tx, rx }
     }
 
-    /// Queue renders for execution on the worker.
-    pub fn submit(&self, requests: &[RenderRequest]) {
+    /// Queue renders for execution on the worker. Returns `false` when the
+    /// worker has stopped (its receiver is gone), meaning nothing will ever
+    /// process these or future requests.
+    pub fn submit(&self, requests: &[RenderRequest]) -> bool {
+        let mut queued = true;
         for req in requests {
-            let _ = self.tx.send(*req);
+            if self.tx.send(*req).is_err() {
+                queued = false;
+            }
         }
+        queued
     }
 
     /// Take all completed results without blocking.
@@ -125,14 +157,38 @@ mod tests {
     use std::time::Duration;
     use std::time::Instant;
 
-    use candi_pdf::Backend;
     use candi_pdf::stub::StubBackend;
+    use candi_pdf::{Backend, Error, PagePositions};
 
     fn req(page: usize, scale_q: u16) -> RenderRequest {
         RenderRequest {
             page,
             scale_q,
             scale: scale_q as f32 / 100.0,
+        }
+    }
+
+    /// A document whose renders always panic; the worker must survive it.
+    struct PanickingDoc;
+
+    impl Document for PanickingDoc {
+        fn page_count(&self) -> usize {
+            2
+        }
+        fn page_text(&self, _page: usize) -> Result<String, Error> {
+            Ok(String::new())
+        }
+        fn page_positions(&self, _page: usize) -> Result<Option<PagePositions>, Error> {
+            Ok(None)
+        }
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<PageImage, Error> {
+            panic!("render boom");
+        }
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
         }
     }
 
@@ -156,6 +212,35 @@ mod tests {
         let batch = vec![req(2, 100), req(0, 100)];
         assert_eq!(coalesce(&batch), batch);
         assert!(coalesce(&[]).is_empty());
+    }
+
+    #[test]
+    fn panicking_render_yields_failed_and_worker_survives() {
+        let doc: Arc<dyn Document> = Arc::new(PanickingDoc);
+        let pipeline = Pipeline::spawn(doc);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for page in [0, 1] {
+            assert!(pipeline.submit(&[req(page, 100)]));
+            loop {
+                let polled = pipeline.poll();
+                if !polled.is_empty() {
+                    match &polled[..] {
+                        [RenderResult::Failed { request, error }] => {
+                            assert_eq!(request.page, page);
+                            assert!(error.contains("panicked"), "{error}");
+                        }
+                        other => panic!("unexpected results: {other:?}"),
+                    }
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "worker produced no result in time"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
     }
 
     #[test]

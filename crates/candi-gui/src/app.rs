@@ -479,9 +479,19 @@ impl ReaderApp {
         }
         if !wanted.is_empty()
             && let Some(pipeline) = &self.pipeline
+            && !pipeline.submit(&wanted)
         {
-            pipeline.submit(&wanted);
+            self.renderer_stopped();
         }
+    }
+
+    /// The worker thread died; nothing will ever drain `pending`. Drop the
+    /// pipeline so placeholders stop promising progress and surface the
+    /// failure instead of spinning silently.
+    fn renderer_stopped(&mut self) {
+        self.pipeline = None;
+        self.pending.clear();
+        self.error = Some("renderer stopped; restart Candi to keep reading".into());
     }
 
     fn prune_textures(&mut self) {
