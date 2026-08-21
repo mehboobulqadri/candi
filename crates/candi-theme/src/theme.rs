@@ -33,8 +33,6 @@ pub struct Theme {
     pub accent: Color,
     #[serde(default = "light_selection")]
     pub selection: Color,
-    #[serde(default = "light_search")]
-    pub search: Color,
 }
 
 fn light_page_bg() -> Color {
@@ -63,10 +61,6 @@ fn light_accent() -> Color {
 
 fn light_selection() -> Color {
     Color::from([0x25, 0x63, 0xEB, 0x40])
-}
-
-fn light_search() -> Color {
-    Color::from([0xFB, 0xBF, 0x24, 0xFF])
 }
 
 /// Parse a theme document (user YAML or embedded built-in).

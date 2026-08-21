@@ -8,7 +8,7 @@
 use crate::parse;
 use crate::theme::Theme;
 
-/// Names of the built-in themes, in cycling order (TUI `T` key).
+/// Names of the built-in themes, in cycling order.
 pub const BUILTIN_NAMES: [&str; 5] = ["Light", "Sepia", "Warm Dark", "Dark", "True Dark"];
 
 /// Look up a built-in theme by name (case-sensitive, as in [`BUILTIN_NAMES`]).

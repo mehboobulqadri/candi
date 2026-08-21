@@ -15,7 +15,6 @@ panel_bg: \"#2A2A2A\"
 ui_fg: \"#DDDDDD\"
 accent: \"#FF8800\"
 selection: \"#FF880066\"
-search: \"#FBBF24\"
 ";
     let t = parse(src).expect("valid document");
     assert_eq!(t.name, "Night");
@@ -26,7 +25,6 @@ search: \"#FBBF24\"
     assert_eq!(t.ui_fg, Color::from([0xDD, 0xDD, 0xDD, 0xFF]));
     assert_eq!(t.accent, Color::from([0xFF, 0x88, 0x00, 0xFF]));
     assert_eq!(t.selection, Color::from([0xFF, 0x88, 0x00, 0x66]));
-    assert_eq!(t.search, Color::from([0xFB, 0xBF, 0x24, 0xFF]));
 }
 
 #[test]
@@ -40,7 +38,6 @@ fn missing_fields_default_to_light_palette() {
     assert_eq!(t.ui_fg, light.ui_fg);
     assert_eq!(t.accent, light.accent);
     assert_eq!(t.selection, light.selection);
-    assert_eq!(t.search, light.search);
 }
 
 #[test]
