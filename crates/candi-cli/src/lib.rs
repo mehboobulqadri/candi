@@ -4,11 +4,10 @@
 
 use std::path::Path;
 
-use candi_core::{
-    Load, Position, SessionLoad, SessionState, ViewState, load, load_session, save,
-    save_session as save_session_file,
-};
+use candi_core::{Load, Position, SessionLoad, SessionState, ViewState, load, load_session, save};
 use candi_pdf::{BackendKind, Document, Error as PdfError, open};
+
+pub use candi_core::save_session;
 
 /// Scroll cap before the UI knows wrap height; page max scroll is unknown until then.
 pub const UNBOUND_SCROLL: usize = usize::MAX;
@@ -98,9 +97,4 @@ pub fn open_session(path: &Path, kind: BackendKind) -> Result<OpenSession, OpenE
         document: pdf,
         session,
     })
-}
-
-/// Atomically persist a reading session next to the PDF.
-pub fn save_session(path: &Path, session: &SessionState) -> Result<(), candi_core::Error> {
-    save_session_file(path, session)
 }
