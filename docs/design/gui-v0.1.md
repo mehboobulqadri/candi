@@ -25,8 +25,9 @@ Non-goals for v0.1:
 
 Left to right:
 
-- Hamburger menu: Open File (Ctrl+O), Open Recent ▸ (submenu), Save State
+- Hamburger menu: Open File (Ctrl+O), Save State
   (Ctrl+S), Theme ▸ (built-in themes + Edit theme YAML… Ctrl+E), About Candi.
+  Open Recent ▸ is deferred — no implementation planned for v0.1.
 - Centered document title.
 - Page navigation: ‹ n/N › (previous page, current page indicator, next page).
 - Collapsible search field on the far right.
@@ -39,7 +40,7 @@ Toggled with Ctrl+B. Width ~260 pt. Structure top to bottom:
 - Navigation rows: Contents / Bookmarks / Search, each showing an item count.
 - Section content below the active nav row:
   - **Contents**: TOC tree; clicking an entry jumps to that section's page.
-  - **Bookmarks**: list of bookmarks (page number + optional label) with
+  - **Bookmarks**: list of bookmarks (page number) with
     add/remove controls.
   - **Search**: search box plus results list; clicking a result jumps to it.
 
@@ -93,13 +94,12 @@ panel_bg: "#332B21"
 ui_fg: "#D8CFC0"
 accent: "#C89B3C"
 selection: "#A85D3C66"
-search: "#E6B84C"
 ```
 
 Built-in themes are embedded as YAML strings parsed through exactly the same
 code path as user files: Light, Sepia, Warm Dark, Dark, True Dark.
 
-UI tokens (`ui_bg`, `panel_bg`, `ui_fg`, `accent`, `selection`, `search`) drive
+UI tokens (`ui_bg`, `panel_bg`, `ui_fg`, `accent`, `selection`) drive
 the egui style at runtime; `page_bg`/`page_fg` drive bitmap recoloring. A parse
 error keeps the last-good theme active and raises the error banner.
 
@@ -130,8 +130,8 @@ only the pass over cached originals (~ms per page) rather than re-rendering.
 - Priorities: current page > adjacent pages > prefetch (±2).
 - `ctx.request_repaint()` when a render completes so the UI picks it up.
 - First page renders synchronously on open so something is visible immediately.
-- Bitmap cache: LRU keyed `(page, scale_q)`, byte-budgeted at 192 MB
-  (override via `CANDI_CACHE_MB`), holding original RGBA bitmaps.
+- Bitmap cache: LRU keyed `(page, scale_q)`, byte-budgeted at 192 MB,
+  holding original RGBA bitmaps.
 - Textures: `ColorImage::from_rgba_unmultiplied` + `ctx.load_texture` once per
   slot; `TextureHandle::set` on re-render. LINEAR filtering.
 - Render scale = pdf_points × zoom × pixels_per_point. Zoom quantized to ~5%
@@ -153,13 +153,14 @@ zoom: "fit-width" | <percent>
 theme: "<theme name>"
 bookmarks:
   - page: <int>
-    label: <optional string>
     created_at: <timestamp>
 ```
 
 v1 → v2 migration: keep `page`; everything else defaults. Known limitation:
-the TUI still writes v1 and will drop bookmarks if a doc is interleaved between
-the two frontends. Fixed in the TUI phase.
+the TUI does not touch sidecars, and the headless `CANDI_NO_GUI=1` mode reads
+schema v1 only — it hard-fails with UnsupportedSchema on GUI-written v2 files
+(pinned by `crates/candi-gui/tests/cli.rs`), so after a GUI session the
+headless smoke-check exits 1 for that book.
 
 ## 8. Testing strategy
 
