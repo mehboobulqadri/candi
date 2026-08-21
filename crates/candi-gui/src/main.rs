@@ -98,7 +98,10 @@ fn run_headless(args: Args) -> ExitCode {
 }
 
 fn pick_pdf() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("PDF", &["pdf"])
-        .pick_file()
+    pdf_dialog().pick_file()
+}
+
+/// The single PDF file-picker construction shared by all open entry points.
+pub(crate) fn pdf_dialog() -> rfd::FileDialog {
+    rfd::FileDialog::new().add_filter("PDF", &["pdf"])
 }

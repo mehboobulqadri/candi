@@ -17,9 +17,11 @@ pub const GAP: f32 = 8.0;
 pub const MARGIN: f32 = 12.0;
 /// Zoom quantization step, in percent.
 const ZOOM_STEP: f32 = 5.0;
-/// Lowest and highest supported zoom percent.
-pub const MIN_ZOOM_PERCENT: u16 = 25;
-pub const MAX_ZOOM_PERCENT: u16 = 800;
+
+use candi_core::MAX_ZOOM_PERCENT;
+/// Lowest supported zoom percent; the bounds live in candi-core so the
+/// sidecar parser clamps to exactly the same range.
+pub use candi_core::MIN_ZOOM_PERCENT;
 
 /// Axis-aligned rectangle in content coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,7 +115,7 @@ fn widest_page(sizes: &[(f32, f32)]) -> f32 {
 }
 
 /// Fit-width zoom percent for the widest page, floored to a quantized step.
-pub fn fit_width_percent(sizes: &[(f32, f32)], avail_w: f32) -> u16 {
+fn fit_width_percent(sizes: &[(f32, f32)], avail_w: f32) -> u16 {
     quantize_floor(usable_width(avail_w) / widest_page(sizes) * 100.0)
 }
 
@@ -124,7 +126,7 @@ pub fn quantize_nearest(percent: f32) -> u16 {
 }
 
 /// Floor `percent` to a quantized step, clamped to the supported range.
-pub fn quantize_floor(percent: f32) -> u16 {
+fn quantize_floor(percent: f32) -> u16 {
     clamp_percent((percent / ZOOM_STEP).floor() * ZOOM_STEP)
 }
 

@@ -17,7 +17,7 @@ use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, recolor};
 use eframe::egui;
 use egui::Key;
 
-use crate::render::cache::{CacheKey, ImageCache};
+use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
 
@@ -38,23 +38,6 @@ enum SidebarSection {
     Contents,
     Bookmarks,
     Search,
-}
-
-/// Keyboard shortcuts sampled once per frame.
-#[derive(Clone, Copy)]
-struct Shortcuts {
-    open: bool,
-    save: bool,
-    sidebar: bool,
-    find: bool,
-    zoom_in: bool,
-    zoom_out: bool,
-    fit_width: bool,
-    cycle_theme: bool,
-    quit: bool,
-    escape: bool,
-    prev_page: bool,
-    next_page: bool,
 }
 
 pub struct ReaderApp {
@@ -116,7 +99,7 @@ impl ReaderApp {
             session: SessionState::new(1),
             theme: builtin("Light").expect("built-in Light parses"),
             applied_theme: String::new(),
-            cache: ImageCache::new(ImageCache::budget_from_env()),
+            cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
             pipeline: None,
             pending: HashSet::new(),
             failed: HashSet::new(),
@@ -150,7 +133,7 @@ impl ReaderApp {
         self.search_query.clear();
         match open_session(&path, self.backend) {
             Ok(opened) => {
-                self.cache = ImageCache::new(ImageCache::budget_from_env());
+                self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
                 self.pending.clear();
                 self.failed.clear();
                 self.failed_scale_q = 0;
@@ -222,10 +205,7 @@ impl ReaderApp {
     }
 
     fn open_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("PDF", &["pdf"])
-            .pick_file()
-        {
+        if let Some(path) = crate::pdf_dialog().pick_file() {
             self.open_path(path);
         }
     }
@@ -564,7 +544,7 @@ impl ReaderApp {
 
             let panel = color_of(self.theme.panel_bg);
             let fg = color_of(self.theme.ui_fg);
-            let border = stroke(1.0, fg.gamma_multiply(0.25));
+            let border = egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25));
             let hint_font = egui::FontId::proportional(14.0);
             for page in view.visible.clone() {
                 let rect = self.layout.rects[page];
@@ -780,88 +760,67 @@ impl ReaderApp {
     }
 }
 
-fn read_shortcuts(ctx: &egui::Context) -> Shortcuts {
-    let plain = !ctx.wants_keyboard_input();
-    ctx.input(|input| {
-        let ctrl = input.modifiers.ctrl;
-        Shortcuts {
-            open: ctrl && input.key_pressed(Key::O),
-            save: ctrl && input.key_pressed(Key::S),
-            sidebar: ctrl && input.key_pressed(Key::B),
-            find: ctrl && input.key_pressed(Key::F),
-            zoom_in: plain && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals)),
-            zoom_out: plain && input.key_pressed(Key::Minus),
-            fit_width: plain && input.key_pressed(Key::Num0),
-            cycle_theme: plain && input.key_pressed(Key::T),
-            quit: plain && input.key_pressed(Key::Q),
-            escape: input.key_pressed(Key::Escape),
-            prev_page: plain
-                && (input.key_pressed(Key::ArrowLeft) || input.key_pressed(Key::PageUp)),
-            next_page: plain
-                && (input.key_pressed(Key::ArrowRight) || input.key_pressed(Key::PageDown)),
-        }
-    })
-}
-
 impl ReaderApp {
-    fn apply_shortcuts(&mut self, ctx: &egui::Context, s: Shortcuts) {
-        if s.open {
-            self.open_dialog();
-        }
-        if s.save {
-            self.save_state();
-        }
-        if s.sidebar {
-            self.sidebar_open = !self.sidebar_open;
-        }
-        if s.find {
-            self.search_open = true;
-            self.focus_search = true;
-        }
-        if s.zoom_in {
-            self.zoom_step(5);
-        }
-        if s.zoom_out {
-            self.zoom_step(-5);
-        }
-        if s.fit_width {
-            self.session.zoom = ZoomMode::FitWidth;
-        }
-        if s.cycle_theme {
-            let next = BUILTIN_NAMES
-                .iter()
-                .position(|name| *name == self.theme.name)
-                .map_or(0, |idx| (idx + 1) % BUILTIN_NAMES.len());
-            self.set_theme(BUILTIN_NAMES[next]);
-        }
-        if s.quit {
-            self.save_state();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        if s.escape {
-            if self.about_open {
-                self.about_open = false;
-            } else if self.search_open {
-                self.search_open = false;
-                self.search_hits = None;
-                self.search_query.clear();
+    /// Handle the frame's keyboard input. Plain keys are ignored while any
+    /// widget wants keyboard input (text fields, menus).
+    fn handle_input(&mut self, ctx: &egui::Context) {
+        let plain = !ctx.wants_keyboard_input();
+        ctx.input(|input| {
+            let ctrl = input.modifiers.ctrl;
+            if ctrl && input.key_pressed(Key::O) {
+                self.open_dialog();
             }
-        }
-        if s.prev_page {
-            self.goto_page(self.session.page.saturating_sub(1));
-        }
-        if s.next_page {
-            self.goto_page(self.session.page + 1);
-        }
+            if ctrl && input.key_pressed(Key::S) {
+                self.save_state();
+            }
+            if ctrl && input.key_pressed(Key::B) {
+                self.sidebar_open = !self.sidebar_open;
+            }
+            if ctrl && input.key_pressed(Key::F) {
+                self.search_open = true;
+                self.focus_search = true;
+            }
+            if plain && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals)) {
+                self.zoom_step(5);
+            }
+            if plain && input.key_pressed(Key::Minus) {
+                self.zoom_step(-5);
+            }
+            if plain && input.key_pressed(Key::Num0) {
+                self.session.zoom = ZoomMode::FitWidth;
+            }
+            if plain && input.key_pressed(Key::T) {
+                let next = BUILTIN_NAMES
+                    .iter()
+                    .position(|name| *name == self.theme.name)
+                    .map_or(0, |idx| (idx + 1) % BUILTIN_NAMES.len());
+                self.set_theme(BUILTIN_NAMES[next]);
+            }
+            if plain && input.key_pressed(Key::Q) {
+                self.save_state();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            if input.key_pressed(Key::Escape) {
+                if self.about_open {
+                    self.about_open = false;
+                } else if self.search_open {
+                    self.search_open = false;
+                    self.search_hits = None;
+                    self.search_query.clear();
+                }
+            }
+            if plain && (input.key_pressed(Key::ArrowLeft) || input.key_pressed(Key::PageUp)) {
+                self.goto_page(self.session.page.saturating_sub(1));
+            }
+            if plain && (input.key_pressed(Key::ArrowRight) || input.key_pressed(Key::PageDown)) {
+                self.goto_page(self.session.page + 1);
+            }
+        });
     }
 }
 
 fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
-}
-
-fn stroke(width: f32, color: egui::Color32) -> egui::Stroke {
-    egui::Stroke::new(width, color)
 }
 
 fn uv_unit_rect() -> egui::Rect {
@@ -880,8 +839,8 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
     let fg = color_of(theme.ui_fg);
     let accent = color_of(theme.accent);
     let selection = color_of(theme.selection);
-    let dim_border = stroke(1.0, fg.gamma_multiply(0.25));
-    let accent_stroke = stroke(1.0, accent);
+    let dim_border = egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25));
+    let accent_stroke = egui::Stroke::new(1.0_f32, accent);
 
     ctx.style_mut(|style| {
         let visuals = &mut style.visuals;
@@ -896,15 +855,15 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
 
         let widgets = &mut visuals.widgets;
         widgets.noninteractive.bg_fill = color_of(theme.ui_bg);
-        widgets.noninteractive.fg_stroke = stroke(1.0, fg);
+        widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, fg);
         widgets.noninteractive.bg_stroke = dim_border;
-        widgets.inactive.fg_stroke = stroke(1.0, fg);
+        widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, fg);
         widgets.inactive.weak_bg_fill = color_of(theme.panel_bg);
         widgets.inactive.bg_stroke = dim_border;
-        widgets.hovered.fg_stroke = stroke(1.0, fg);
+        widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, fg);
         widgets.hovered.weak_bg_fill = selection;
         widgets.hovered.bg_stroke = accent_stroke;
-        widgets.active.fg_stroke = stroke(1.0, fg);
+        widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, fg);
         widgets.active.weak_bg_fill = selection;
         widgets.active.bg_fill = selection;
     });
@@ -917,9 +876,7 @@ impl eframe::App for ReaderApp {
             self.applied_theme.clone_from(&self.theme.name);
         }
 
-        let shortcuts = read_shortcuts(ctx);
         self.collect_results(ctx);
-
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.top_bar(ui));
         if self.sidebar_open {
             egui::SidePanel::left("sidebar")
@@ -949,7 +906,7 @@ impl eframe::App for ReaderApp {
         });
 
         self.about_window(ctx);
-        self.apply_shortcuts(ctx, shortcuts);
+        self.handle_input(ctx);
 
         // Completed renders must wake the UI even when no input arrives;
         // poll at a fixed cadence while anything is outstanding.

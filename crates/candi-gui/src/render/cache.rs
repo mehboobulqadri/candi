@@ -11,8 +11,6 @@ use std::collections::{HashMap, VecDeque};
 
 /// Default budget in bytes: 192 MB.
 pub const DEFAULT_BUDGET_BYTES: usize = 192 * 1024 * 1024;
-/// Environment override for the budget, in megabytes.
-const BUDGET_ENV: &str = "CANDI_CACHE_MB";
 
 /// Bitmap cache key: page index plus quantized render scale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -53,11 +51,6 @@ impl ImageCache {
             bytes: 0,
             budget,
         }
-    }
-
-    /// Budget from `CANDI_CACHE_MB` (invalid or zero falls back to default).
-    pub fn budget_from_env() -> usize {
-        budget_from_mb(std::env::var(BUDGET_ENV).ok().as_deref())
     }
 
     pub fn contains(&self, key: CacheKey) -> bool {
@@ -131,13 +124,6 @@ impl ImageCache {
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
-    }
-}
-
-fn budget_from_mb(env: Option<&str>) -> usize {
-    match env.and_then(|value| value.parse::<usize>().ok()) {
-        Some(mb) if mb > 0 => mb * 1024 * 1024,
-        _ => DEFAULT_BUDGET_BYTES,
     }
 }
 
@@ -225,14 +211,5 @@ mod tests {
         let mut cache = ImageCache::new(0);
         assert!(!cache.insert(key(0), 1, 1, bitmap(4)));
         assert!(cache.is_empty());
-    }
-
-    #[test]
-    fn budget_parsing_falls_back_to_default() {
-        assert_eq!(budget_from_mb(Some("64")), 64 * 1024 * 1024);
-        assert_eq!(budget_from_mb(None), DEFAULT_BUDGET_BYTES);
-        assert_eq!(budget_from_mb(Some("nope")), DEFAULT_BUDGET_BYTES);
-        assert_eq!(budget_from_mb(Some("0")), DEFAULT_BUDGET_BYTES);
-        assert_eq!(budget_from_mb(Some("-3")), DEFAULT_BUDGET_BYTES);
     }
 }
