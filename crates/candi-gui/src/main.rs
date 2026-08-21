@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 mod app;
+mod render;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use candi_cli::{open_document, parse_backend, save_reading_position};
 use clap::Parser;
+use eframe::egui;
 
 use app::ReaderApp;
 
@@ -47,7 +49,12 @@ fn main() -> ExitCode {
         }
     };
 
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([640.0, 400.0]),
+        ..Default::default()
+    };
     if let Err(err) = eframe::run_native(
         "Candi",
         options,

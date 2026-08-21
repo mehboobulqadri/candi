@@ -735,6 +735,7 @@ dependencies = [
  "candi-cli",
  "candi-core",
  "candi-pdf",
+ "candi-theme",
  "clap",
  "eframe",
  "rfd",
