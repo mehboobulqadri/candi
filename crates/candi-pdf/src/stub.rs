@@ -5,7 +5,11 @@
 //! The parity suite (01/04) and core tests (01/06–08) build on this; every
 //! behavior a backend can exhibit is scriptable here.
 
-use crate::{Backend, Document, Error, PagePositions};
+use crate::{Backend, Document, Error, PageImage, PagePositions};
+
+/// Every stub page is US Letter, 612x792 PDF points.
+const STUB_PAGE_WIDTH: f32 = 612.0;
+const STUB_PAGE_HEIGHT: f32 = 792.0;
 
 /// Scripted behavior of one page.
 #[derive(Clone, Debug)]
@@ -89,6 +93,30 @@ impl Document for StubDocument {
 
     fn page_positions(&self, page: usize) -> Result<Option<PagePositions>, Error> {
         self.page(page)?.positions.clone()
+    }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32), Error> {
+        self.page(page)?;
+        Ok((STUB_PAGE_WIDTH, STUB_PAGE_HEIGHT))
+    }
+
+    /// White background with black horizontal stripes whose period derives
+    /// from the page index — a pure function of `(page, scale)`, so repeated
+    /// calls are byte-identical and pages stay distinguishable.
+    fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error> {
+        self.page(page)?;
+        let width = (STUB_PAGE_WIDTH * scale).round() as usize;
+        let height = (STUB_PAGE_HEIGHT * scale).round() as usize;
+        let mut rgba = vec![255u8; width * height * 4];
+        let period = (page % 8 + 1) * 8;
+        for y in (0..height).step_by(period) {
+            for pixel in rgba[y * width * 4..(y + 1) * width * 4].chunks_exact_mut(4) {
+                pixel[0] = 0;
+                pixel[1] = 0;
+                pixel[2] = 0;
+            }
+        }
+        PageImage::from_rgba(width as u32, height as u32, rgba)
     }
 }
 
@@ -219,5 +247,48 @@ mod tests {
             };
             assert_eq!(got, kind);
         }
+    }
+
+    #[test]
+    fn page_size_is_letter_points_for_valid_pages_only() {
+        let doc = StubBackend::new(2).open("x.pdf", None).unwrap();
+        assert_eq!(doc.page_size(0).unwrap(), (612.0, 792.0));
+        assert_eq!(doc.page_size(1).unwrap(), (612.0, 792.0));
+        assert!(matches!(doc.page_size(2), Err(Error::Other(_))));
+    }
+
+    #[test]
+    fn render_matches_scale_and_buffer_invariant() {
+        let doc = StubBackend::new(1).open("x.pdf", None).unwrap();
+        let one = doc.render_page(0, 1.0).unwrap();
+        assert_eq!((one.width, one.height), (612, 792));
+        assert_eq!(one.rgba.len(), 612 * 792 * 4);
+
+        let two = doc.render_page(0, 2.0).unwrap();
+        assert_eq!((two.width, two.height), (1224, 1584));
+        assert_eq!(two.rgba.len(), two.width as usize * two.height as usize * 4);
+    }
+
+    #[test]
+    fn render_is_byte_identical_across_calls_and_distinct_per_page() {
+        let doc = StubBackend::new(3).open("x.pdf", None).unwrap();
+        assert_eq!(
+            doc.render_page(1, 2.0).unwrap(),
+            doc.render_page(1, 2.0).unwrap()
+        );
+        assert_ne!(
+            doc.render_page(0, 2.0).unwrap().rgba,
+            doc.render_page(1, 2.0).unwrap().rgba
+        );
+        assert_ne!(
+            doc.render_page(1, 2.0).unwrap().rgba,
+            doc.render_page(2, 2.0).unwrap().rgba
+        );
+    }
+
+    #[test]
+    fn render_out_of_range_page_is_an_error() {
+        let doc = StubBackend::new(1).open("x.pdf", None).unwrap();
+        assert!(matches!(doc.render_page(1, 1.0), Err(Error::Other(_))));
     }
 }

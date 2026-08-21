@@ -8,12 +8,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use pdfium_render::prelude::*;
 
-use crate::{Backend, Block, Document, Error, Line, PagePositions, Word};
+use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, Word};
 
 const ZERO_PAGE_MALFORMED: &str = "truncated or empty document";
 const FPDF_ERR_FILE: u32 = 2;
 const FPDF_ERR_FORMAT: u32 = 3;
 const FPDF_ERR_PASSWORD: u32 = 4;
+/// Render annotations; matches pdfium-render's default `PdfRenderConfig`.
+const FPDF_ANNOT: std::ffi::c_int = 1;
+const OPAQUE_WHITE: std::ffi::c_ulong = 0xFFFF_FFFF;
 
 static ENGINE: OnceLock<Result<Arc<Pdfium>, Error>> = OnceLock::new();
 static PDFIUM_OPS: Mutex<()> = Mutex::new(());
@@ -114,6 +117,51 @@ impl Document for PdfiumPdfDocument {
             positions
         })
         .map(Some)
+    }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32), Error> {
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            Ok((
+                bindings.FPDF_GetPageWidthF(page_handle),
+                bindings.FPDF_GetPageHeightF(page_handle),
+            ))
+        })
+    }
+
+    // `FPDFBitmap_Create` always yields a 4-bytes-per-pixel BGRx/BGRA buffer
+    // (see the pdfium-render bindings docs), so normalization to RGBA is a
+    // channel swap plus forced opacity.
+    fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error> {
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            let width_pt = bindings.FPDF_GetPageWidthF(page_handle);
+            let height_pt = bindings.FPDF_GetPageHeightF(page_handle);
+            let width = (width_pt * scale).round() as i32;
+            let height = (height_pt * scale).round() as i32;
+
+            let bitmap = bindings.FPDFBitmap_Create(width, height, 0);
+            if bitmap.is_null() {
+                return Err(Error::Other(format!(
+                    "could not allocate {width}x{height} render bitmap"
+                )));
+            }
+
+            bindings.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, OPAQUE_WHITE);
+            bindings.FPDF_RenderPageBitmap(bitmap, page_handle, 0, 0, width, height, 0, FPDF_ANNOT);
+
+            let mut buffer = bindings.FPDFBitmap_GetBuffer_as_vec(bitmap);
+            bindings.FPDFBitmap_Destroy(bitmap);
+
+            for pixel in buffer.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+                pixel[3] = u8::MAX;
+            }
+
+            PageImage::from_rgba(width as u32, height as u32, buffer)
+        })
     }
 }
 

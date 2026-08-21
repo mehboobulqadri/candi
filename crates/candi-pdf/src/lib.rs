@@ -45,6 +45,58 @@ pub struct Word {
     pub font_size: f32,
 }
 
+/// A rendered page: RGBA8, row-major, top-left origin, fully opaque.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageImage {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Exactly `width * height * 4` bytes.
+    pub rgba: Vec<u8>,
+}
+
+impl PageImage {
+    /// Builds from a tightly packed RGBA buffer. Errors when the buffer does
+    /// not match the dimensions, so every [`PageImage`] honors its length
+    /// invariant.
+    pub fn from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self, Error> {
+        let expected = width as usize * height as usize * 4;
+        if rgba.len() != expected {
+            return Err(Error::Other(format!(
+                "image buffer holds {} bytes, expected {expected} for {width}x{height}",
+                rgba.len()
+            )));
+        }
+        Ok(PageImage {
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    /// Builds from tightly packed RGB samples, expanding to RGBA in one pass
+    /// with full opacity. Errors when the buffer does not match the dimensions.
+    pub fn from_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Self, Error> {
+        let expected = width as usize * height as usize * 3;
+        if rgb.len() != expected {
+            return Err(Error::Other(format!(
+                "RGB buffer holds {} bytes, expected {expected} for {width}x{height}",
+                rgb.len()
+            )));
+        }
+        let mut rgba = Vec::with_capacity(expected / 3 * 4);
+        for pixel in rgb.chunks_exact(3) {
+            rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], u8::MAX]);
+        }
+        Ok(PageImage {
+            width,
+            height,
+            rgba,
+        })
+    }
+}
+
 /// An opened document. All methods are thread-safe (`Send + Sync`).
 ///
 /// `open()` parses and validates, caches `page_count`, and loads no text;
@@ -57,6 +109,10 @@ pub trait Document: Send + Sync {
     /// Word positions for one page; `Ok(None)` only when the backend has no
     /// positional API. Real errors propagate as `Err`.
     fn page_positions(&self, page: usize) -> Result<Option<PagePositions>, Error>;
+    /// Page dimensions in PDF points (1/72 inch), as `(width, height)`.
+    fn page_size(&self, page: usize) -> Result<(f32, f32), Error>;
+    /// Render one page at `scale` pixels per point into an RGBA image.
+    fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error>;
 }
 
 /// A document backend. Implementations must be cheap to construct and hold no
@@ -67,4 +123,32 @@ pub trait Backend: Send + Sync {
     /// Parse and validate the file at `path`, cache its page count, load no
     /// text. A password is only passed when the CLI has one to give.
     fn open(&self, path: &str, password: Option<&str>) -> Result<Box<dyn Document>, Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_rgb_expands_to_opaque_rgba_in_one_pass() {
+        let image = PageImage::from_rgb(2, 1, &[1, 2, 3, 4, 5, 6]).unwrap();
+        assert_eq!(image.width, 2);
+        assert_eq!(image.height, 1);
+        assert_eq!(image.rgba, vec![1, 2, 3, 255, 4, 5, 6, 255]);
+    }
+
+    #[test]
+    fn from_rgb_rejects_buffer_that_does_not_match_dimensions() {
+        let err = PageImage::from_rgb(2, 2, &[0; 11]).unwrap_err();
+        assert!(matches!(err, Error::Other(_)));
+    }
+
+    #[test]
+    fn from_rgba_rejects_buffer_that_does_not_match_dimensions() {
+        let err = PageImage::from_rgba(2, 2, vec![0; 15]).unwrap_err();
+        assert!(matches!(err, Error::Other(_)));
+
+        let ok = PageImage::from_rgba(2, 2, vec![7; 16]).unwrap();
+        assert_eq!(ok.rgba.len(), 16);
+    }
 }

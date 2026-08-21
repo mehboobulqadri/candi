@@ -5,9 +5,12 @@
 use std::io;
 use std::sync::Mutex;
 
-use mupdf::{Document as MupdfDocument, Error as MupdfError, TextExtractOptions, TextPageFlags};
+use mupdf::{
+    Colorspace, Document as MupdfDocument, Error as MupdfError, Matrix, TextExtractOptions,
+    TextPageFlags,
+};
 
-use crate::{Backend, Block, Document, Error, Line, PagePositions, Word};
+use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, Word};
 
 const FZ_ERROR_FORMAT: i32 = 7;
 const FZ_ERROR_SYNTAX: i32 = 8;
@@ -101,6 +104,32 @@ impl Document for MupdfPdfDocument {
             .to_text_page(TextPageFlags::empty())
             .map_err(map_mupdf_error)?;
         Ok(Some(positions_from_text_page(&text_page)))
+    }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32), Error> {
+        let page_no = page_index(page, self.page_count)?;
+        let inner = self.inner.lock().expect("mupdf document mutex poisoned");
+        let mupdf_page = inner.doc.load_page(page_no).map_err(map_mupdf_error)?;
+        let bounds = mupdf_page.bounds().map_err(map_mupdf_error)?;
+        Ok((
+            (bounds.x1 - bounds.x0).max(0.0),
+            (bounds.y1 - bounds.y0).max(0.0),
+        ))
+    }
+
+    fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error> {
+        let page_no = page_index(page, self.page_count)?;
+        let inner = self.inner.lock().expect("mupdf document mutex poisoned");
+        let mupdf_page = inner.doc.load_page(page_no).map_err(map_mupdf_error)?;
+        let pixmap = mupdf_page
+            .to_pixmap(
+                &Matrix::new_scale(scale, scale),
+                &Colorspace::device_rgb(),
+                false,
+                true,
+            )
+            .map_err(map_mupdf_error)?;
+        PageImage::from_rgb(pixmap.width(), pixmap.height(), pixmap.samples())
     }
 }
 

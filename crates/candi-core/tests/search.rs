@@ -36,6 +36,14 @@ impl Document for FakeDoc {
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
     }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
+    }
 }
 
 struct ErrorOnPageDoc {
@@ -57,6 +65,14 @@ impl Document for ErrorOnPageDoc {
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
     }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
+    }
 }
 
 static ERROR_DOC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -75,6 +91,14 @@ impl Document for CountingErrorDoc {
 
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
+    }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
     }
 }
 
@@ -265,6 +289,14 @@ fn search_matches_normalized_ligatures() {
 
         fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
             Ok(None)
+        }
+
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Unsupported("test double cannot render".into()))
         }
     }
 
