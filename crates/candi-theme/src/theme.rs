@@ -68,3 +68,27 @@ pub fn parse(input: &str) -> Result<Theme, ThemeError> {
     let value = serde_yaml::from_str(input).map_err(|e| ThemeError::Yaml(e.to_string()))?;
     serde_yaml::from_value(value).map_err(|e| ThemeError::Schema(e.to_string()))
 }
+
+/// Serialize a theme to the canonical YAML shape: schema key order with
+/// `name` first, colors as hex. Deliberately not serde `Serialize`, so the
+/// editor buffer's formatting stays stable across versions.
+pub fn to_yaml(theme: &Theme) -> String {
+    format!(
+        "name: {}\n\
+         page_bg: \"{}\"\n\
+         page_fg: \"{}\"\n\
+         ui_bg: \"{}\"\n\
+         panel_bg: \"{}\"\n\
+         ui_fg: \"{}\"\n\
+         accent: \"{}\"\n\
+         selection: \"{}\"\n",
+        theme.name,
+        theme.page_bg,
+        theme.page_fg,
+        theme.ui_bg,
+        theme.panel_bg,
+        theme.ui_fg,
+        theme.accent,
+        theme.selection
+    )
+}

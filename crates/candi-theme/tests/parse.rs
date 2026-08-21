@@ -1,4 +1,4 @@
-use candi_theme::{BUILTIN_NAMES, Color, builtin, parse};
+use candi_theme::{BUILTIN_NAMES, Color, builtin, parse, to_yaml};
 
 fn theme_with(color_line: &str) -> String {
     format!("name: Probe\n{color_line}")
@@ -126,4 +126,41 @@ fn builtin_page_palettes_match_the_design() {
     assert_eq!(builtin("Warm Dark").unwrap().page_fg.to_string(), "#E8E0D4");
     assert_eq!(builtin("Dark").unwrap().page_bg.to_string(), "#16181D");
     assert_eq!(builtin("True Dark").unwrap().page_bg.to_string(), "#000000");
+}
+
+#[test]
+fn every_builtin_roundtrips_through_to_yaml() {
+    for name in BUILTIN_NAMES {
+        let t = builtin(name).unwrap_or_else(|| panic!("{name} must exist"));
+        assert_eq!(parse(&to_yaml(&t)), Ok(t.clone()), "{name}");
+    }
+}
+
+#[test]
+fn to_yaml_lists_all_schema_keys_in_order_with_name_first() {
+    let t = builtin("Sepia").expect("Sepia exists");
+    assert_eq!(
+        to_yaml(&t),
+        "\
+name: Sepia
+page_bg: \"#F4ECD8\"
+page_fg: \"#3B3228\"
+ui_bg: \"#262019\"
+panel_bg: \"#332B21\"
+ui_fg: \"#D8CFC0\"
+accent: \"#C89B3C\"
+selection: \"#A85D3C66\"
+"
+    );
+}
+
+#[test]
+fn edge_alpha_colors_roundtrip_through_to_yaml() {
+    let src = theme_with("selection: \"#00000000\"");
+    let t = parse(&src).expect("fully transparent parses");
+    assert_eq!(parse(&to_yaml(&t)), Ok(t.clone()));
+
+    let src = theme_with("page_bg: \"#FFFFFFFF\"");
+    let t = parse(&src).expect("explicit opaque alpha parses");
+    assert_eq!(parse(&to_yaml(&t)), Ok(t));
 }
