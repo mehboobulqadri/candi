@@ -25,13 +25,12 @@ jobs:
 
   rust-checks:
     strategy:
+      # One entry per feature mode: default (both backends) and the
+      # permissive pdfium-only build (zero AGPL third-party code). The empty
+      # string keeps default features; the second entry drops them.
       matrix:
-        os: [ubuntu-latest]
-        # One entry per feature mode: default (both backends) and the
-        # permissive pdfium-only build (zero AGPL third-party code). The empty
-        # string keeps default features; the second entry drops them.
         features: ["", "--no-default-features --features pdfium-backend"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
