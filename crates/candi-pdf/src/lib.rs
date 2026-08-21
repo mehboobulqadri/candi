@@ -97,6 +97,14 @@ impl PageImage {
     }
 }
 
+/// One table-of-contents entry; `page` is 1-based.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TocItem {
+    pub title: String,
+    pub page: usize,
+    pub children: Vec<TocItem>,
+}
+
 /// An opened document. All methods are thread-safe (`Send + Sync`).
 ///
 /// `open()` parses and validates, caches `page_count`, and loads no text;
@@ -113,6 +121,11 @@ pub trait Document: Send + Sync {
     fn page_size(&self, page: usize) -> Result<(f32, f32), Error>;
     /// Render one page at `scale` pixels per point into an RGBA image.
     fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error>;
+    /// Document outline (table of contents) as a tree of 1-based pages;
+    /// empty when the document has none. Entries whose destination is
+    /// external or unresolvable are dropped, so a present-but-unusable
+    /// outline can come back empty.
+    fn outline(&self) -> Result<Vec<TocItem>, Error>;
 }
 
 /// A document backend. Implementations must be cheap to construct and hold no

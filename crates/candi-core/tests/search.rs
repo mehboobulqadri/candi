@@ -44,6 +44,10 @@ impl Document for FakeDoc {
     fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
         Err(Error::Unsupported("test double cannot render".into()))
     }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 struct ErrorOnPageDoc {
@@ -73,6 +77,10 @@ impl Document for ErrorOnPageDoc {
     fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
         Err(Error::Unsupported("test double cannot render".into()))
     }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 static ERROR_DOC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -99,6 +107,10 @@ impl Document for CountingErrorDoc {
 
     fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
         Err(Error::Unsupported("test double cannot render".into()))
+    }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
     }
 }
 
@@ -297,6 +309,10 @@ fn search_matches_normalized_ligatures() {
 
         fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
             Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
         }
     }
 

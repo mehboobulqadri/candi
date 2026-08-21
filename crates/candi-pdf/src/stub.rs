@@ -5,7 +5,7 @@
 //! The parity suite (01/04) and core tests (01/06–08) build on this; every
 //! behavior a backend can exhibit is scriptable here.
 
-use crate::{Backend, Document, Error, PageImage, PagePositions};
+use crate::{Backend, Document, Error, PageImage, PagePositions, TocItem};
 
 /// Every stub page is US Letter, 612x792 PDF points.
 const STUB_PAGE_WIDTH: f32 = 612.0;
@@ -117,6 +117,32 @@ impl Document for StubDocument {
             }
         }
         PageImage::from_rgba(width as u32, height as u32, rgba)
+    }
+
+    /// Fixed three-entry tree with one nested child on the first entry, so
+    /// consumers always have structure to render.
+    fn outline(&self) -> Result<Vec<TocItem>, Error> {
+        Ok(vec![
+            TocItem {
+                title: "Part One".into(),
+                page: 1,
+                children: vec![TocItem {
+                    title: "Chapter 1".into(),
+                    page: 2,
+                    children: Vec::new(),
+                }],
+            },
+            TocItem {
+                title: "Part Two".into(),
+                page: 3,
+                children: Vec::new(),
+            },
+            TocItem {
+                title: "Part Three".into(),
+                page: 4,
+                children: Vec::new(),
+            },
+        ])
     }
 }
 
@@ -290,5 +316,23 @@ mod tests {
     fn render_out_of_range_page_is_an_error() {
         let doc = StubBackend::new(1).open("x.pdf", None).unwrap();
         assert!(matches!(doc.render_page(1, 1.0), Err(Error::Other(_))));
+    }
+
+    #[test]
+    fn outline_is_fixed_three_entry_tree_with_nested_child() {
+        let doc = StubBackend::new(4).open("x.pdf", None).unwrap();
+        let toc = doc.outline().unwrap();
+        assert_eq!(toc.len(), 3);
+        assert_eq!(toc[0].title, "Part One");
+        assert_eq!(toc[0].page, 1);
+        assert_eq!(toc[0].children.len(), 1);
+        assert_eq!(toc[0].children[0].title, "Chapter 1");
+        assert_eq!(toc[0].children[0].page, 2);
+        assert_eq!(toc[1].title, "Part Two");
+        assert_eq!(toc[1].page, 3);
+        assert!(toc[1].children.is_empty());
+        assert_eq!(toc[2].title, "Part Three");
+        assert_eq!(toc[2].page, 4);
+        assert!(toc[2].children.is_empty());
     }
 }

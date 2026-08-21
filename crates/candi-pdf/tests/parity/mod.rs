@@ -29,6 +29,7 @@ pub fn run_suite(open_fn: OpenFn) {
     hardening_unsupported(open_fn);
     hardening_zero_pages_malformed(open_fn);
     parity_tiny_opens_with_text(open_fn);
+    parity_tiny_outline_is_empty(open_fn);
     parity_blank_first_page_not_no_text_layer(open_fn);
     parity_positions_sanity(open_fn);
     parity_page_size_matches_mediabox(open_fn);
@@ -178,6 +179,16 @@ pub fn parity_tiny_opens_with_text(open_fn: OpenFn) {
         let doc = open_fn(&path, None).expect("tiny.pdf should open");
         assert_eq!(doc.page_count(), 1);
         assert!(doc.page_text(0).unwrap().contains("Hello Candi"));
+    });
+}
+
+/// tiny.pdf carries no `/Outlines` dictionary; both engines must report an
+/// empty outline rather than an error.
+pub fn parity_tiny_outline_is_empty(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("tiny_outline_is_empty", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        assert_eq!(doc.outline().unwrap(), Vec::new());
     });
 }
 

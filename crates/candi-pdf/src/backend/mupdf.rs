@@ -10,7 +10,7 @@ use mupdf::{
     TextPageFlags,
 };
 
-use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, Word};
+use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, TocItem, Word};
 
 const FZ_ERROR_FORMAT: i32 = 7;
 const FZ_ERROR_SYNTAX: i32 = 8;
@@ -131,6 +131,28 @@ impl Document for MupdfPdfDocument {
             .map_err(map_mupdf_error)?;
         PageImage::from_rgb(pixmap.width(), pixmap.height(), pixmap.samples())
     }
+
+    fn outline(&self) -> Result<Vec<TocItem>, Error> {
+        let inner = self.inner.lock().expect("mupdf document mutex poisoned");
+        let outlines = inner.doc.outlines().map_err(map_mupdf_error)?;
+        Ok(toc_from_outlines(&outlines))
+    }
+}
+
+/// `LinkDestination::page_number` is the 0-based absolute page; entries with
+/// no destination (external links, unresolvable URIs) are dropped.
+fn toc_from_outlines(outlines: &[mupdf::Outline]) -> Vec<TocItem> {
+    outlines
+        .iter()
+        .filter_map(|outline| {
+            let page = outline.dest.as_ref()?.loc.page_number as usize + 1;
+            Some(TocItem {
+                title: outline.title.clone(),
+                page,
+                children: toc_from_outlines(&outline.down),
+            })
+        })
+        .collect()
 }
 
 fn page_index(page: usize, page_count: usize) -> Result<i32, Error> {

@@ -2,13 +2,14 @@
 
 //! PDFium engine behind the `pdfium-backend` feature.
 
+use std::collections::HashSet;
 use std::io;
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use pdfium_render::prelude::*;
 
-use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, Word};
+use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, TocItem, Word};
 
 const ZERO_PAGE_MALFORMED: &str = "truncated or empty document";
 const FPDF_ERR_FILE: u32 = 2;
@@ -163,6 +164,85 @@ impl Document for PdfiumPdfDocument {
             PageImage::from_rgba(width as u32, height as u32, buffer)
         })
     }
+
+    fn outline(&self) -> Result<Vec<TocItem>, Error> {
+        let _guard = pdfium_lock();
+        let mut seen = HashSet::new();
+        Ok(bookmark_children(
+            self.handle,
+            null_mut(),
+            self.pdfium.bindings(),
+            &mut seen,
+        ))
+    }
+}
+
+/// Converts the bookmark tree rooted at `parent` (`null` for the document
+/// root). Pdfium's bookmark API signals failure only through null handles and
+/// `-1` page indexes, so entries without a usable internal destination are
+/// skipped; there is no error channel that could carry a whole-tree failure.
+/// The visited set terminates cycles, which malformed documents can form
+/// through repeated `/Next` or `/First` references.
+fn bookmark_children(
+    doc: FPDF_DOCUMENT,
+    parent: FPDF_BOOKMARK,
+    bindings: &dyn PdfiumLibraryBindings,
+    seen: &mut HashSet<usize>,
+) -> Vec<TocItem> {
+    let mut items = Vec::new();
+    let mut next = bindings.FPDFBookmark_GetFirstChild(doc, parent);
+    while !next.is_null() && seen.insert(next as usize) {
+        if let (Some(title), Some(page)) = (
+            bookmark_title(bindings, next),
+            bookmark_page(doc, next, bindings),
+        ) {
+            items.push(TocItem {
+                title,
+                page,
+                children: bookmark_children(doc, next, bindings, seen),
+            });
+        }
+        next = bindings.FPDFBookmark_GetNextSibling(doc, next);
+    }
+    items
+}
+
+fn bookmark_title(bindings: &dyn PdfiumLibraryBindings, bookmark: FPDF_BOOKMARK) -> Option<String> {
+    let buffer_length = bindings.FPDFBookmark_GetTitle(bookmark, null_mut(), 0);
+    if buffer_length == 0 {
+        return None;
+    }
+
+    let mut buffer = vec![0u8; buffer_length as usize];
+    bindings.FPDFBookmark_GetTitle(bookmark, buffer.as_mut_ptr().cast(), buffer_length);
+    Some(decode_utf16_bytes(&buffer))
+}
+
+/// Resolves a bookmark's target as a 1-based page number. Bookmarks either
+/// carry a direct `/Dest` or a `/A` action; hyperref-generated documents use
+/// GoTo actions almost exclusively.
+fn bookmark_page(
+    doc: FPDF_DOCUMENT,
+    bookmark: FPDF_BOOKMARK,
+    bindings: &dyn PdfiumLibraryBindings,
+) -> Option<usize> {
+    let mut dest = bindings.FPDFBookmark_GetDest(doc, bookmark);
+    if dest.is_null() {
+        let action = bindings.FPDFBookmark_GetAction(bookmark);
+        if !action.is_null()
+            && bindings.FPDFAction_GetType(action)
+                == PdfActionType::GoToDestinationInSameDocument as std::ffi::c_ulong
+        {
+            dest = bindings.FPDFAction_GetDest(doc, action);
+        }
+    }
+
+    if dest.is_null() {
+        return None;
+    }
+    usize::try_from(bindings.FPDFDest_GetDestPageIndex(doc, dest))
+        .ok()
+        .map(|index| index + 1)
 }
 
 fn pdfium_lock() -> std::sync::MutexGuard<'static, ()> {

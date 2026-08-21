@@ -435,6 +435,10 @@ mod tests {
         fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
             Err(Error::Unsupported("test double cannot render".into()))
         }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
     }
 
     struct BlankFirstPageDoc;
@@ -463,6 +467,10 @@ mod tests {
         fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
             Err(Error::Unsupported("test double cannot render".into()))
         }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
     }
 
     struct LigatureDoc;
@@ -486,6 +494,10 @@ mod tests {
 
         fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
             Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
         }
     }
 }
