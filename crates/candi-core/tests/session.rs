@@ -162,6 +162,18 @@ theme = "Light"
 }
 
 #[test]
+fn absurd_schema_version_reports_the_written_value() {
+    let dir = temp_fixture_dir("schema-huge");
+    let pdf = pdf_path(&dir);
+    write_sidecar(&pdf, "schema_version = 4294967296\n");
+
+    match load_session(&pdf) {
+        Err(Error::UnsupportedSchema { found: 4294967296 }) => {}
+        other => panic!("expected UnsupportedSchema {{ found: 4294967296 }}, got {other:?}"),
+    }
+}
+
+#[test]
 fn negative_schema_version_is_corrupt() {
     let dir = temp_fixture_dir("negative-version");
     let pdf = pdf_path(&dir);
@@ -235,6 +247,52 @@ fn clamp_to_bounds_page_and_fraction() {
     }
     .clamp_to(10);
     assert_eq!(non_finite.scroll_frac, 0.0);
+}
+
+#[test]
+fn clamp_to_drops_bookmarks_past_the_document() {
+    let mut session = SessionState::new(10);
+    session.add_bookmark(1);
+    session.add_bookmark(9);
+
+    let clamped = session.clamp_to(4);
+    assert_eq!(
+        clamped.bookmarks.iter().map(|b| b.page).collect::<Vec<_>>(),
+        vec![1],
+        "bookmarks past the last page are dropped"
+    );
+    assert!(SessionState::new(10).clamp_to(0).bookmarks.is_empty());
+}
+
+#[test]
+fn absurd_zoom_percent_clamps_into_supported_range() {
+    let dir = temp_fixture_dir("zoom-clamp");
+    let pdf = pdf_path(&dir);
+
+    for (stored, expected) in [
+        ("5000", ZoomMode::Percent(candi_core::MAX_ZOOM_PERCENT)),
+        ("1", ZoomMode::Percent(candi_core::MIN_ZOOM_PERCENT)),
+        ("120", ZoomMode::Percent(120)),
+    ] {
+        write_sidecar(
+            &pdf,
+            &format!(
+                r#"schema_version = 2
+updated_at = "2026-08-20T12:00:00Z"
+[reading]
+page = 0
+scroll_frac = 0.0
+zoom = {stored}
+theme = "Light"
+"#
+            ),
+        );
+        assert_eq!(
+            loaded(load_session(&pdf).unwrap()).zoom,
+            expected,
+            "{stored}"
+        );
+    }
 }
 
 #[test]

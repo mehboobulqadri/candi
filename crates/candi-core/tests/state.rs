@@ -238,6 +238,14 @@ updated_at = "2026-08-20T12:00:00Z"
 
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(fs::read_to_string(&sidecar).unwrap(), original);
+        for entry in fs::read_dir(&dir).unwrap() {
+            let name = entry.unwrap().file_name();
+            let name = name.to_string_lossy();
+            assert!(
+                !name.ends_with(".tmp"),
+                "failed save left a temp file behind: {name}"
+            );
+        }
     }
 
     #[cfg(not(unix))]

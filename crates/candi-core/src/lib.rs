@@ -14,7 +14,7 @@ mod text;
 pub use navigation::ViewState;
 pub use search::SearchSession;
 pub use state::{
-    Bookmark, Error, Load, Position, SessionLoad, SessionState, ZoomMode, load, load_session, save,
-    save_session, sidecar_path,
+    Bookmark, Error, Load, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, Position, SessionLoad, SessionState,
+    ZoomMode, load, load_session, save, save_session, sidecar_path,
 };
 pub use text::normalize_reader_text;

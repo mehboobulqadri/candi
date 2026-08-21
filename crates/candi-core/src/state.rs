@@ -23,6 +23,11 @@ const SESSION_SCHEMA: u32 = 2;
 /// Theme applied to fresh sessions and v1 migrations.
 const DEFAULT_THEME: &str = "Light";
 
+/// Lowest and highest supported zoom percent, shared with the GUI's
+/// quantizer so sidecar values and live zoom stay consistent.
+pub const MIN_ZOOM_PERCENT: u16 = 25;
+pub const MAX_ZOOM_PERCENT: u16 = 800;
+
 /// Persisted reading position (schema v1). Page indices are **0-based**.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Position {
@@ -108,8 +113,9 @@ impl SessionState {
     }
 
     /// Clamp out-of-range values to the document, mirroring [`crate::ViewState`]
-    /// rules: pages clamp to the last index (empty documents stay on page 0)
-    /// and `scroll_frac` clamps to `[0.0, 1.0]` (non-finite becomes 0.0).
+    /// rules: pages clamp to the last index (empty documents stay on page 0),
+    /// `scroll_frac` clamps to `[0.0, 1.0]` (non-finite becomes 0.0), and
+    /// bookmarks pointing past the document are dropped.
     pub fn clamp_to(mut self, page_count: usize) -> Self {
         self.page = self.page.min(page_count.saturating_sub(1));
         self.scroll_frac = if self.scroll_frac.is_finite() {
@@ -117,6 +123,7 @@ impl SessionState {
         } else {
             0.0
         };
+        self.bookmarks.retain(|bookmark| bookmark.page < page_count);
         self
     }
 
@@ -168,7 +175,11 @@ pub enum Load {
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
-    UnsupportedSchema { found: u32 },
+    /// The sidecar declares a schema version above [`POSITION_SCHEMA`] /
+    /// [`SESSION_SCHEMA`]; `found` is the version as written.
+    UnsupportedSchema {
+        found: i64,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -253,11 +264,11 @@ fn write_atomically(sidecar: &Path, body: &str) -> Result<(), Error> {
     temp.push(".tmp");
     let temp_path = PathBuf::from(temp);
 
-    {
-        let mut file = File::create(&temp_path).map_err(Error::Io)?;
-        file.write_all(body.as_bytes()).map_err(Error::Io)?;
-        file.sync_all().map_err(Error::Io)?;
+    let written = write_temp(&temp_path, body);
+    if written.is_err() {
+        let _ = fs::remove_file(&temp_path);
     }
+    written?;
 
     if let Err(err) = fs::rename(&temp_path, sidecar) {
         let _ = fs::remove_file(&temp_path);
@@ -269,6 +280,12 @@ fn write_atomically(sidecar: &Path, body: &str) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn write_temp(temp_path: &Path, body: &str) -> Result<(), Error> {
+    let mut file = File::create(temp_path).map_err(Error::Io)?;
+    file.write_all(body.as_bytes()).map_err(Error::Io)?;
+    file.sync_all().map_err(Error::Io)
 }
 
 /// Internal parse failure: recoverable corruption or a hard error.
@@ -285,11 +302,10 @@ fn parse_toml(contents: &str) -> Result<toml::Value, String> {
 fn schema_version_of(value: &toml::Value, max: u32) -> Result<u32, Failure> {
     match value.get("schema_version") {
         Some(toml::Value::Integer(version)) if *version >= 0 => {
-            let found = u32::try_from(*version).unwrap_or(u32::MAX);
-            if found > max {
-                return Err(Failure::Hard(Error::UnsupportedSchema { found }));
+            if *version > i64::from(max) {
+                return Err(Failure::Hard(Error::UnsupportedSchema { found: *version }));
             }
-            Ok(found)
+            Ok(*version as u32)
         }
         Some(toml::Value::Integer(_)) => Err(Failure::Corrupt("negative schema_version".into())),
         Some(_) => Err(Failure::Corrupt("invalid schema_version type".into())),
@@ -429,9 +445,13 @@ fn zoom_field(field: Option<&toml::Value>) -> Result<ZoomMode, String> {
     match field {
         Some(toml::Value::String(mode)) if mode == "fit-width" => Ok(ZoomMode::FitWidth),
         Some(toml::Value::String(_)) => Err("unknown zoom mode".into()),
-        Some(toml::Value::Integer(percent)) if *percent >= 0 => u16::try_from(*percent)
-            .map(ZoomMode::Percent)
-            .map_err(|_| "zoom percent out of range".into()),
+        // Absurd values clamp into the supported range, consistent with the
+        // GUI's quantizer bounds.
+        Some(toml::Value::Integer(percent)) if *percent >= 0 => {
+            let percent =
+                (*percent).clamp(i64::from(MIN_ZOOM_PERCENT), i64::from(MAX_ZOOM_PERCENT));
+            Ok(ZoomMode::Percent(percent as u16))
+        }
         Some(toml::Value::Integer(_)) => Err("negative zoom".into()),
         Some(_) => Err("invalid zoom type".into()),
         None => Err("missing zoom".into()),
