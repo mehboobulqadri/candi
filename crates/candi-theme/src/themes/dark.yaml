@@ -1,0 +1,9 @@
+name: Dark
+page_bg: "#16181D"
+page_fg: "#E6E6E6"
+ui_bg: "#1D2026"
+panel_bg: "#26292F"
+ui_fg: "#CCCCCC"
+accent: "#4C8DF6"
+selection: "#4C8DF666"
+search: "#FBBF24"

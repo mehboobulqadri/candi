@@ -1,0 +1,9 @@
+name: Light
+page_bg: "#FFFFFF"
+page_fg: "#1A1A1A"
+ui_bg: "#F5F5F4"
+panel_bg: "#ECECEB"
+ui_fg: "#262626"
+accent: "#2563EB"
+selection: "#2563EB40"
+search: "#FBBF24"
