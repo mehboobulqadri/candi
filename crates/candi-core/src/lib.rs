@@ -13,5 +13,8 @@ mod text;
 
 pub use navigation::ViewState;
 pub use search::SearchSession;
-pub use state::{Error, Load, Position, load, save, sidecar_path};
+pub use state::{
+    Bookmark, Error, Load, Position, SessionLoad, SessionState, ZoomMode, load, load_session, save,
+    save_session, sidecar_path,
+};
 pub use text::normalize_reader_text;

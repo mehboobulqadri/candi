@@ -4,7 +4,10 @@
 
 use std::path::Path;
 
-use candi_core::{Load, Position, ViewState, load, save};
+use candi_core::{
+    Load, Position, SessionLoad, SessionState, ViewState, load, load_session, save,
+    save_session as save_session_file,
+};
 use candi_pdf::{BackendKind, Document, Error as PdfError, open};
 
 /// Scroll cap before the UI knows wrap height; page max scroll is unknown until then.
@@ -13,6 +16,12 @@ pub const UNBOUND_SCROLL: usize = usize::MAX;
 pub struct OpenDocument {
     pub document: Box<dyn Document>,
     pub view: ViewState,
+}
+
+/// An open document paired with its full reading session (schema v2 sidecar).
+pub struct OpenSession {
+    pub document: Box<dyn Document>,
+    pub session: SessionState,
 }
 
 #[derive(Debug)]
@@ -67,4 +76,31 @@ pub fn view_from_load(pdf: &dyn Document, load: Load) -> ViewState {
 
 pub fn save_reading_position(path: &Path, view: ViewState) -> Result<(), candi_core::Error> {
     save(path, &Position::new(view.page(), view.scroll_offset(), ""))
+}
+
+/// Open a document and its reading session, migrating v1 sidecars on the way.
+///
+/// Missing or corrupt sidecars start a fresh default session (corruption is
+/// reported as a warning); pages and scroll fraction are clamped to the
+/// document. Unsupported schema versions are a hard error.
+pub fn open_session(path: &Path, kind: BackendKind) -> Result<OpenSession, OpenError> {
+    let pdf = open(kind, path.to_string_lossy().as_ref(), None).map_err(OpenError::Pdf)?;
+    let session = match load_session(path) {
+        Ok(SessionLoad::Loaded(session)) => session.clamp_to(pdf.page_count()),
+        Ok(SessionLoad::Corrupt(message)) => {
+            eprintln!("warning: corrupt sidecar: {message}");
+            SessionState::new(pdf.page_count())
+        }
+        Ok(SessionLoad::Missing) => SessionState::new(pdf.page_count()),
+        Err(err) => return Err(OpenError::Core(err)),
+    };
+    Ok(OpenSession {
+        document: pdf,
+        session,
+    })
+}
+
+/// Atomically persist a reading session next to the PDF.
+pub fn save_session(path: &Path, session: &SessionState) -> Result<(), candi_core::Error> {
+    save_session_file(path, session)
 }

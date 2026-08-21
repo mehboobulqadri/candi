@@ -84,6 +84,32 @@ updated_at = "2026-08-20T12:00:00Z"
 }
 
 #[test]
+fn v1_parser_tolerates_extra_unknown_keys() {
+    let dir = temp_fixture_dir("extra-keys");
+    let pdf = pdf_path(&dir, b"%PDF-1.4");
+    fs::write(
+        sidecar_path(&pdf),
+        r#"schema_version = 1
+future_field = "ignored"
+[reading]
+page = 7
+scroll = 3
+updated_at = "2026-08-20T12:00:00Z"
+zoom = 150
+"#,
+    )
+    .unwrap();
+
+    match load(&pdf).unwrap() {
+        Load::Loaded(position) => {
+            assert_eq!(position.page(), 7);
+            assert_eq!(position.scroll(), 3);
+        }
+        other => panic!("expected Loaded, got {other:?}"),
+    }
+}
+
+#[test]
 fn missing_sidecar_returns_missing() {
     let dir = temp_fixture_dir("missing");
     let pdf = pdf_path(&dir, b"%PDF-1.4");
