@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use candi_cli::{open_session, save_session};
-use candi_core::{SearchSession, SessionState, ZoomMode};
+use candi_core::{SearchSession, SessionState, ZoomMode, normalize_reader_text};
 use candi_pdf::{BackendKind, Document, Error as PdfError, PageImage};
 use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, to_yaml};
 use eframe::egui;
@@ -20,25 +20,20 @@ use egui::Key;
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
+use crate::sidebar::{SearchHit, SidebarSection, TocRow, date_only, extract_snippet, flatten_toc};
 
 /// Pages kept as textures around the current page; texture memory outside this
 /// window is released while the original bitmaps stay cached.
 const TEXTURE_KEEP_AROUND: usize = 6;
 const SIDEBAR_WIDTH: f32 = 260.0;
-const SEARCH_FIELD_WIDTH: f32 = 180.0;
+/// Sidebar contents indentation per outline nesting level.
+const INDENT_PER_LEVEL: f32 = 12.0;
 const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x48, 0x4D);
 
 /// A promoted GPU texture for one page plus the scale it was rendered at.
 struct PageTexture {
     scale_q: u16,
     handle: egui::TextureHandle,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum SidebarSection {
-    Contents,
-    Bookmarks,
-    Search,
 }
 
 /// Center-pane theme editor state: the YAML buffer plus its last parse
@@ -106,10 +101,11 @@ pub struct ReaderApp {
 
     sidebar_open: bool,
     section: SidebarSection,
-    search_open: bool,
     focus_search: bool,
     search_query: String,
-    search_hits: Option<Vec<usize>>,
+    search_hits: Option<Vec<SearchHit>>,
+    /// Flattened table of contents, loaded once per open; empty = none.
+    toc_rows: Vec<TocRow>,
     about_open: bool,
     /// Live theme editor; `Some` while the center pane shows it.
     editor: Option<ThemeEditor>,
@@ -148,10 +144,10 @@ impl ReaderApp {
             zoom_pct: layout::MIN_ZOOM_PERCENT,
             sidebar_open: false,
             section: SidebarSection::Contents,
-            search_open: false,
             focus_search: false,
             search_query: String::new(),
             search_hits: None,
+            toc_rows: Vec::new(),
             about_open: false,
             editor: None,
             restore_frac: None,
@@ -169,6 +165,7 @@ impl ReaderApp {
         self.error = None;
         self.search_hits = None;
         self.search_query.clear();
+        self.toc_rows.clear();
         match open_session(&path, self.backend) {
             Ok(opened) => {
                 self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
@@ -195,6 +192,7 @@ impl ReaderApp {
                 }
                 self.restore_frac = Some(self.session.scroll_frac);
                 self.load_page_sizes();
+                self.load_outline();
             }
             Err(err) => {
                 self.error = Some(err.to_string());
@@ -278,7 +276,7 @@ impl ReaderApp {
         match self.collect_matches(&query) {
             Ok(hits) => {
                 if let Some(first) = hits.first() {
-                    self.goto_page(*first);
+                    self.goto_page(first.page);
                 }
                 self.search_hits = Some(hits);
             }
@@ -286,27 +284,39 @@ impl ReaderApp {
         }
     }
 
-    /// All pages containing the query, in document order starting from the
-    /// current page (wrapping once).
-    fn collect_matches(&self, query: &str) -> Result<Vec<usize>, PdfError> {
+    /// Every match in the document as a result row, in document order.
+    /// `SearchSession` cycles its cursor once the scan is complete, so the
+    /// collection stops when the first hit comes around again.
+    fn collect_matches(&self, query: &str) -> Result<Vec<SearchHit>, PdfError> {
         let Some(document) = self.document.as_ref() else {
             return Ok(Vec::new());
         };
-        let mut session = SearchSession::new(document.as_ref(), query, self.session.page);
-        let mut seen = Vec::new();
+        let mut session = SearchSession::new(document.as_ref(), query, 0);
+        let mut first: Option<(usize, usize)> = None;
         while let Some(hit) = session.next()? {
-            if seen.contains(&hit) {
+            if first.is_none() {
+                first = Some(hit);
+            } else if first == Some(hit) {
                 break;
             }
-            seen.push(hit);
         }
-        let mut pages = Vec::new();
-        for (page, _) in seen {
-            if pages.last() != Some(&page) {
-                pages.push(page);
+
+        // Hits arrive grouped by page in ascending order; the page text is
+        // fetched once per group. Offsets index into exactly this
+        // normalized+lowercased form of the page text.
+        let needle_len = query.to_lowercase().len();
+        let mut hits = Vec::new();
+        for group in session.results().chunk_by(|a, b| a.0 == b.0) {
+            let page = group[0].0;
+            let text = normalize_reader_text(&document.page_text(page)?).to_lowercase();
+            for &(_, offset) in group {
+                hits.push(SearchHit {
+                    page,
+                    snippet: extract_snippet(&text, offset, needle_len),
+                });
             }
         }
-        Ok(pages)
+        Ok(hits)
     }
 
     // --- rendering -------------------------------------------------------
@@ -392,6 +402,20 @@ impl ReaderApp {
             }
         }
         self.page_sizes = sizes;
+    }
+
+    /// Fetch the outline once per open. An empty result means the document
+    /// has no usable table of contents; a backend failure surfaces as an
+    /// error banner with the sidebar falling back to its empty state.
+    fn load_outline(&mut self) {
+        self.toc_rows.clear();
+        let Some(document) = self.document.as_ref() else {
+            return;
+        };
+        match document.outline() {
+            Ok(items) => self.toc_rows = flatten_toc(&items),
+            Err(err) => self.error = Some(format!("table of contents: {err}")),
+        }
     }
 
     /// Render the current page synchronously so opening never shows a blank
@@ -742,29 +766,6 @@ impl ReaderApp {
             {
                 self.goto_page(current + 1);
             }
-
-            if ui.selectable_label(self.search_open, "Search").clicked() {
-                self.search_open = !self.search_open;
-                self.focus_search = self.search_open;
-            }
-            if self.search_open {
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut self.search_query)
-                        .desired_width(SEARCH_FIELD_WIDTH)
-                        .hint_text("Find in document"),
-                );
-                if self.focus_search {
-                    field.request_focus();
-                    self.focus_search = false;
-                }
-                if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    self.run_search();
-                }
-                match &self.search_hits {
-                    Some(hits) => ui.label(format!("{} matches", hits.len())),
-                    None => ui.label("(Enter)"),
-                };
-            }
         });
     }
 
@@ -789,36 +790,142 @@ impl ReaderApp {
         ui.label(egui::RichText::new(&self.filename).strong());
         ui.separator();
 
+        let contents_count = (!self.toc_rows.is_empty()).then_some(self.toc_rows.len());
+        let bookmark_count =
+            (!self.session.bookmarks.is_empty()).then_some(self.session.bookmarks.len());
+        let search_count = self.search_hits.as_deref().map(<[SearchHit]>::len);
         let rows = [
-            (SidebarSection::Contents, "Contents", None),
-            (
-                SidebarSection::Bookmarks,
-                "Bookmarks",
-                Some(self.session.bookmarks.len()),
-            ),
-            (
-                SidebarSection::Search,
-                "Search",
-                self.search_hits.as_deref().map(<[usize]>::len),
-            ),
+            (SidebarSection::Contents, "Contents", contents_count),
+            (SidebarSection::Bookmarks, "Bookmarks", bookmark_count),
+            (SidebarSection::Search, "Search", search_count),
         ];
         for (section, label, count) in rows {
+            let active = self.section == section;
             let text = match count {
                 Some(n) => format!("{label} ({n})"),
                 None => label.to_owned(),
             };
-            if ui.selectable_label(self.section == section, text).clicked() {
+            let mut rich = egui::RichText::new(text);
+            if active {
+                rich = rich.color(color_of(self.theme.accent)).strong();
+            }
+            if ui.selectable_label(active, rich).clicked() {
                 self.section = section;
+                if section == SidebarSection::Search {
+                    self.focus_search = true;
+                }
             }
         }
         ui.separator();
 
-        let note = match self.section {
-            SidebarSection::Contents => "Contents arrive in a later slice.",
-            SidebarSection::Bookmarks => "Bookmark management arrives in a later slice.",
-            SidebarSection::Search => "Use the search field in the top bar (Ctrl+F).",
+        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+        match self.section {
+            SidebarSection::Contents => {
+                area.id_salt("sidebar_contents")
+                    .show(ui, |ui| self.show_contents(ui));
+            }
+            SidebarSection::Bookmarks => {
+                area.id_salt("sidebar_bookmarks")
+                    .show(ui, |ui| self.show_bookmarks(ui));
+            }
+            SidebarSection::Search => {
+                area.id_salt("sidebar_search")
+                    .show(ui, |ui| self.show_search(ui));
+            }
         };
-        ui.label(egui::RichText::new(note).weak());
+    }
+
+    fn show_contents(&mut self, ui: &mut egui::Ui) {
+        if self.toc_rows.is_empty() {
+            ui.label(egui::RichText::new("No table of contents").weak());
+            return;
+        }
+        let mut jump = None;
+        for row in &self.toc_rows {
+            if toc_row_ui(ui, row).clicked() {
+                jump = Some(row.page);
+            }
+        }
+        if let Some(page) = jump {
+            self.goto_page(page);
+        }
+    }
+
+    fn show_bookmarks(&mut self, ui: &mut egui::Ui) {
+        if self.page_count() > 0 && ui.button("Add bookmark").clicked() {
+            self.session.add_bookmark(self.session.page);
+        }
+        if self.session.bookmarks.is_empty() {
+            let hint = if self.page_count() > 0 {
+                "No bookmarks — press B to mark this page"
+            } else {
+                "No bookmarks"
+            };
+            ui.label(egui::RichText::new(hint).weak());
+            return;
+        }
+        let mut jump = None;
+        let mut remove = None;
+        for bookmark in &self.session.bookmarks {
+            ui.horizontal(|ui| {
+                if click_row(
+                    ui,
+                    format!(
+                        "p. {} · {}",
+                        bookmark.page + 1,
+                        date_only(&bookmark.created_at)
+                    ),
+                )
+                .clicked()
+                {
+                    jump = Some(bookmark.page);
+                }
+                if ui.small_button("✕").clicked() {
+                    remove = Some(bookmark.page);
+                }
+            });
+        }
+        if let Some(page) = jump {
+            self.goto_page(page);
+        }
+        if let Some(page) = remove {
+            self.session.remove_bookmark(page);
+        }
+    }
+
+    fn show_search(&mut self, ui: &mut egui::Ui) {
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut self.search_query)
+                .hint_text("Find in document")
+                .desired_width(f32::INFINITY),
+        );
+        if self.focus_search {
+            field.request_focus();
+            self.focus_search = false;
+        }
+        if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+            self.run_search();
+        }
+
+        let mut jump = None;
+        match self.search_hits.as_deref() {
+            None => {
+                ui.label(egui::RichText::new("Type a query and press Enter").weak());
+            }
+            Some([]) => {
+                ui.label(egui::RichText::new("No matches").weak());
+            }
+            Some(hits) => {
+                for hit in hits {
+                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet)).clicked() {
+                        jump = Some(hit.page);
+                    }
+                }
+            }
+        };
+        if let Some(page) = jump {
+            self.goto_page(page);
+        }
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
@@ -885,7 +992,8 @@ impl ReaderApp {
                 self.sidebar_open = !self.sidebar_open;
             }
             if ctrl && input.key_pressed(Key::F) {
-                self.search_open = true;
+                self.sidebar_open = true;
+                self.section = SidebarSection::Search;
                 self.focus_search = true;
             }
             if ctrl && input.key_pressed(Key::E) {
@@ -911,6 +1019,9 @@ impl ReaderApp {
                     .map_or(0, |idx| (idx + 1) % BUILTIN_NAMES.len());
                 self.set_theme(BUILTIN_NAMES[next]);
             }
+            if plain && input.key_pressed(Key::B) && self.page_count() > 0 {
+                self.session.toggle_bookmark(self.session.page);
+            }
             if plain && input.key_pressed(Key::Q) {
                 self.save_state();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -920,8 +1031,10 @@ impl ReaderApp {
                     self.about_open = false;
                 } else if self.editor.is_some() {
                     self.editor = None;
-                } else if self.search_open {
-                    self.search_open = false;
+                } else if self.sidebar_open
+                    && self.section == SidebarSection::Search
+                    && !self.search_query.is_empty()
+                {
                     self.search_hits = None;
                     self.search_query.clear();
                 }
@@ -938,6 +1051,26 @@ impl ReaderApp {
 
 fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
+}
+
+/// One contents row: full-width clickable title indented 12 pt per outline
+/// level, truncated when too long.
+fn toc_row_ui(ui: &mut egui::Ui, row: &TocRow) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.add_space(INDENT_PER_LEVEL * row.depth as f32);
+        click_row(ui, format!("{}   p. {}", row.title, row.page + 1))
+    })
+    .inner
+}
+
+/// Full-width single-line label that truncates instead of wrapping.
+fn click_row(ui: &mut egui::Ui, text: String) -> egui::Response {
+    ui.add(
+        egui::Label::new(egui::RichText::new(text))
+            .truncate()
+            .sense(egui::Sense::click()),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 fn uv_unit_rect() -> egui::Rect {

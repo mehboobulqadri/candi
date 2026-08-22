@@ -2,6 +2,7 @@
 
 mod app;
 mod render;
+mod sidebar;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
