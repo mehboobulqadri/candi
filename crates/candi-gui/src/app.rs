@@ -1079,13 +1079,16 @@ impl ReaderApp {
                     self.open_theme_editor();
                 }
             }
-            if plain && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals)) {
+            if plain
+                && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals))
+                && self.page_count() > 0
+            {
                 self.zoom_step(5);
             }
-            if plain && input.key_pressed(Key::Minus) {
+            if plain && input.key_pressed(Key::Minus) && self.page_count() > 0 {
                 self.zoom_step(-5);
             }
-            if plain && input.key_pressed(Key::Num0) {
+            if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
                 self.session.zoom = ZoomMode::FitWidth;
             }
             if plain && input.key_pressed(Key::T) {
