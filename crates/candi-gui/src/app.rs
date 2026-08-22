@@ -27,6 +27,8 @@ use crate::sidebar::{SearchHit, SidebarSection, TocRow, date_only, extract_snipp
 /// window is released while the original bitmaps stay cached.
 const TEXTURE_KEEP_AROUND: usize = 6;
 const SIDEBAR_WIDTH: f32 = 260.0;
+/// Window width below which the brand tagline hides (design spec §4).
+const TAGLINE_MIN_WINDOW_WIDTH: f32 = 900.0;
 /// Corner rounding shared by page shadow, placeholder fill, and border.
 const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
@@ -105,11 +107,18 @@ pub struct ReaderApp {
     sidebar_open: bool,
     section: SidebarSection,
     focus_search: bool,
+    /// Inline page-jump buffer; `Some` while the counter is an input field.
+    page_jump: Option<String>,
+    page_jump_focus: bool,
+    /// Last jump attempt failed validation; tints the input until edited.
+    jump_invalid: bool,
     search_query: String,
     search_hits: Option<Vec<SearchHit>>,
     /// Flattened table of contents, loaded once per open; empty = none.
     toc_rows: Vec<TocRow>,
     about_open: bool,
+    info_open: bool,
+    shortcuts_open: bool,
     /// Live theme editor; `Some` while the center pane shows it.
     editor: Option<ThemeEditor>,
 
@@ -148,10 +157,15 @@ impl ReaderApp {
             sidebar_open: false,
             section: SidebarSection::Contents,
             focus_search: false,
+            page_jump: None,
+            page_jump_focus: false,
+            jump_invalid: false,
             search_query: String::new(),
             search_hits: None,
             toc_rows: Vec::new(),
             about_open: false,
+            info_open: false,
+            shortcuts_open: false,
             editor: None,
             restore_frac: None,
             pending_scroll: None,
@@ -742,107 +756,168 @@ impl ReaderApp {
     // --- chrome ----------------------------------------------------------
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        // Roomier buttons: the hamburger and page-nav arrows were cramped at
-        // the default padding.
-        ui.style_mut().spacing.button_padding = egui::vec2(10.0, 4.0);
-        let row_w = ui.available_width();
+        ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
         ui.columns(3, |columns| {
             columns[0].horizontal(|ui| {
                 ui.menu_button(egui::RichText::new("☰").size(16.0), |ui| {
-                    if ui.button("Open File…   Ctrl+O").clicked() {
-                        ui.close_menu();
-                        self.open_dialog();
-                    }
-                    if ui.button("Save State   Ctrl+S").clicked() {
-                        ui.close_menu();
-                        self.save_state();
-                    }
-                    self.theme_menu(ui);
-                    if ui.button("Edit theme YAML…   Ctrl+E").clicked() {
-                        ui.close_menu();
-                        self.open_theme_editor();
-                    }
-                    if ui.button("About Candi").clicked() {
-                        ui.close_menu();
-                        self.about_open = true;
-                    }
+                    self.file_menu(ui)
                 });
 
-                // Title sits next to the burger and truncates with an
-                // ellipsis instead of consuming the row.
-                if !self.filename.is_empty() {
-                    let title_max = ui.available_width().min(row_w * 0.25);
-                    let title =
-                        egui::Label::new(egui::RichText::new(&self.filename).strong()).truncate();
-                    ui.add_sized([title_max, 20.0], title);
+                let brand = egui::RichText::new("Candi")
+                    .strong()
+                    .size(17.0)
+                    .color(color_of(self.theme.accent));
+                ui.label(brand);
+                if ui.ctx().screen_rect().width() >= TAGLINE_MIN_WINDOW_WIDTH {
+                    ui.label(
+                        egui::RichText::new("Clean · Minimal · Distraction-Free · Fast")
+                            .weak()
+                            .small(),
+                    );
                 }
             });
 
-            columns[1].horizontal(|ui| {
-                let count = self.page_count();
-                let current = self.session.page;
-                let counter = if count > 0 {
-                    format!("{} / {}", current + 1, count)
-                } else {
-                    "–".to_owned()
-                };
-                // Center the cluster by its measured width; a justified
-                // layout would stretch the buttons into bars.
-                let font = egui::FontId::proportional(14.0);
-                let advance = |text: &str| {
-                    ui.painter()
-                        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
-                        .size()
-                        .x
-                };
-                let pad = ui.spacing().button_padding.x * 2.0;
-                let gap = ui.spacing().item_spacing.x;
-                let cluster_w =
-                    pad + advance("‹") + pad + advance("›") + advance(&counter) + gap * 2.0;
-                ui.add_space(((ui.available_width() - cluster_w) * 0.5).max(0.0));
-
-                if ui
-                    .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
-                    .clicked()
-                {
-                    self.goto_page(current - 1);
-                }
-                ui.label(egui::RichText::new(counter).font(font));
-                if ui
-                    .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
-                    .clicked()
-                {
-                    self.goto_page(current + 1);
-                }
-            });
+            columns[1].add_sized(
+                [columns[1].available_width(), 20.0],
+                egui::Label::new(egui::RichText::new(&self.filename).strong())
+                    .truncate()
+                    .halign(egui::Align::Center),
+            );
 
             columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let sidebar_label = if self.sidebar_open { "◧" } else { "▤" };
+                ui.menu_button(egui::RichText::new("⋮").size(16.0), |ui| {
+                    self.app_menu(ui)
+                });
                 if ui
-                    .button(sidebar_label)
+                    .button(if self.sidebar_open { "◧" } else { "▤" })
                     .on_hover_text("Toggle sidebar (Ctrl+B)")
                     .clicked()
                 {
                     self.sidebar_open = !self.sidebar_open;
                 }
+                let search_glyph = egui::RichText::new("🔍").size(15.0);
+                let search_glyph = if self.sidebar_open && self.section == SidebarSection::Search {
+                    search_glyph.color(color_of(self.theme.accent))
+                } else {
+                    search_glyph
+                };
+                if ui
+                    .button(search_glyph)
+                    .on_hover_text("Search (Ctrl+F)")
+                    .clicked()
+                {
+                    self.sidebar_open = true;
+                    self.section = SidebarSection::Search;
+                    self.focus_search = true;
+                }
+                self.nav_cluster(ui);
             });
         });
     }
 
-    fn theme_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Theme", |ui| {
-            for name in BUILTIN_NAMES {
-                let label = if self.theme.name == *name {
-                    format!("✓ {name}")
-                } else {
-                    format!("   {name}")
-                };
-                if ui.button(label).clicked() {
-                    ui.close_menu();
-                    self.set_theme(name);
+    /// File operations menu (hamburger): open and session save.
+    fn file_menu(&mut self, ui: &mut egui::Ui) {
+        if ui.button("Open File…   Ctrl+O").clicked() {
+            ui.close_menu();
+            self.open_dialog();
+        }
+        if ui.button("Save State   Ctrl+S").clicked() {
+            ui.close_menu();
+            self.save_state();
+        }
+    }
+
+    /// Secondary actions menu (⋮): open, document info, settings, help, about.
+    fn app_menu(&mut self, ui: &mut egui::Ui) {
+        if ui.button("Open…   Ctrl+O").clicked() {
+            ui.close_menu();
+            self.open_dialog();
+        }
+        if ui.button("Document Information…").clicked() {
+            ui.close_menu();
+            self.info_open = true;
+        }
+        if ui.button("Settings — Theme Editor…   Ctrl+E").clicked() {
+            ui.close_menu();
+            self.open_theme_editor();
+        }
+        if ui.button("Keyboard Shortcuts").clicked() {
+            ui.close_menu();
+            self.shortcuts_open = true;
+        }
+        if ui.button("About Candi").clicked() {
+            ui.close_menu();
+            self.about_open = true;
+        }
+    }
+
+    /// `‹ n/N ›` cluster, leftmost of the right-hand icon group; clicking the
+    /// counter turns it into an inline page input.
+    fn nav_cluster(&mut self, ui: &mut egui::Ui) {
+        let count = self.page_count();
+        let current = self.session.page;
+        let mut done = false;
+
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
+                .on_hover_text("Previous page (←)")
+                .clicked()
+            {
+                self.goto_page(current - 1);
+            }
+            match self.page_jump.as_mut() {
+                Some(buffer) => {
+                    let outcome = jump_input(
+                        ui,
+                        buffer,
+                        count,
+                        &mut self.page_jump_focus,
+                        &mut self.jump_invalid,
+                    );
+                    match outcome {
+                        JumpOutcome::Commit(page) => {
+                            self.goto_page(page);
+                            done = true;
+                        }
+                        JumpOutcome::Cancel => done = true,
+                        JumpOutcome::Idle => {}
+                    }
+                }
+                None => {
+                    let counter = if count > 0 {
+                        format!("{} / {}", current + 1, count)
+                    } else {
+                        "–".to_owned()
+                    };
+                    let counter = egui::Label::new(
+                        egui::RichText::new(counter).font(egui::FontId::proportional(14.0)),
+                    )
+                    .sense(egui::Sense::click());
+                    if ui
+                        .add(counter)
+                        .on_hover_text("Jump to page (Ctrl+G)")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                        && count > 0
+                    {
+                        self.page_jump = Some((current + 1).to_string());
+                        self.page_jump_focus = true;
+                        self.jump_invalid = false;
+                    }
                 }
             }
+            if ui
+                .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
+                .on_hover_text("Next page (→)")
+                .clicked()
+            {
+                self.goto_page(current + 1);
+            }
         });
+        if done {
+            self.page_jump = None;
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -1058,6 +1133,64 @@ impl ReaderApp {
                 ui.label(format!("v{} — AGPL-3.0", env!("CARGO_PKG_VERSION")));
             });
     }
+
+    fn info_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.info_open;
+        egui::Window::new("Document Information")
+            .open(&mut open)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                egui::Grid::new("doc_info")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Title");
+                        ui.label(&self.filename);
+                        ui.end_row();
+                        ui.label("Pages");
+                        ui.label(self.page_count().to_string());
+                        ui.end_row();
+                        ui.label("Backend");
+                        ui.label(format!("{:?}", self.backend).to_lowercase());
+                        ui.end_row();
+                    });
+            });
+        self.info_open = open;
+    }
+
+    fn shortcuts_window(&mut self, ctx: &egui::Context) {
+        const SHORTCUTS: [(&str, &str); 14] = [
+            ("Ctrl+O", "Open file"),
+            ("Ctrl+S", "Save state"),
+            ("Ctrl+F", "Search"),
+            ("Ctrl+B", "Toggle sidebar"),
+            ("Ctrl+E", "Edit theme YAML"),
+            ("Ctrl+G", "Go to page"),
+            ("F11", "Focus mode"),
+            ("+ / −", "Zoom in / out"),
+            ("0", "Fit-width zoom"),
+            ("← → / PgUp PgDn", "Previous / next page"),
+            ("T", "Cycle themes"),
+            ("B", "Bookmark page"),
+            ("Esc", "Close overlay"),
+            ("Q", "Quit"),
+        ];
+        egui::Window::new("Keyboard Shortcuts")
+            .open(&mut self.shortcuts_open)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                egui::Grid::new("shortcuts_grid")
+                    .num_columns(2)
+                    .spacing([16.0, 2.0])
+                    .show(ui, |ui| {
+                        for (keys, action) in SHORTCUTS {
+                            ui.strong(keys);
+                            ui.label(action);
+                            ui.end_row();
+                        }
+                    });
+            });
+    }
 }
 
 impl ReaderApp {
@@ -1080,6 +1213,11 @@ impl ReaderApp {
                 self.sidebar_open = true;
                 self.section = SidebarSection::Search;
                 self.focus_search = true;
+            }
+            if ctrl && input.key_pressed(Key::G) && self.page_count() > 0 {
+                self.page_jump = Some((self.session.page + 1).to_string());
+                self.page_jump_focus = true;
+                self.jump_invalid = false;
             }
             if ctrl && input.key_pressed(Key::E) {
                 if self.editor.is_some() {
@@ -1139,6 +1277,73 @@ impl ReaderApp {
 
 fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
+}
+
+/// What became of one frame's page-jump input field.
+enum JumpOutcome {
+    /// Keep editing.
+    Idle,
+    /// Enter on a valid page number; the payload is zero-based.
+    Commit(usize),
+    /// Esc or focus lost — restore the plain counter.
+    Cancel,
+}
+
+/// Turn a 1-based page string into a zero-based page index, or `None` when it
+/// is not a whole number inside `1..=count`.
+fn validate_jump(text: &str, count: usize) -> Option<usize> {
+    let Ok(page) = text.trim().parse::<usize>() else {
+        return None;
+    };
+    if page == 0 || page > count {
+        return None;
+    }
+    Some(page - 1)
+}
+
+/// The inline page-jump field shown in place of the `n / N` counter. Enter
+/// commits a valid page, an invalid entry tints red and keeps editing, and
+/// Esc or clicking away cancels back to the counter.
+fn jump_input(
+    ui: &mut egui::Ui,
+    buffer: &mut String,
+    count: usize,
+    focus: &mut bool,
+    invalid: &mut bool,
+) -> JumpOutcome {
+    let mut edit = egui::TextEdit::singleline(buffer)
+        .desired_width(64.0)
+        .font(egui::TextStyle::Monospace);
+    if *invalid {
+        edit = edit.text_color(ERROR_RED);
+    }
+    let field = ui.add(edit);
+    if *focus {
+        field.request_focus();
+        *focus = false;
+    }
+    if !field.lost_focus() {
+        if ui.input(|i| i.key_pressed(Key::Escape)) {
+            return JumpOutcome::Cancel;
+        }
+        if field.changed() {
+            *invalid = false;
+        }
+        return JumpOutcome::Idle;
+    }
+    // Single-line fields release focus on Enter; anything else that stole
+    // focus counts as a cancel.
+    if ui.input(|i| i.key_pressed(Key::Enter)) {
+        match validate_jump(buffer, count) {
+            Some(page) => return JumpOutcome::Commit(page),
+            None => {
+                *invalid = true;
+                field.request_focus();
+                return JumpOutcome::Idle;
+            }
+        }
+    }
+    JumpOutcome::Cancel
 }
 
 /// One contents row: full-width clickable title indented 12 pt per outline
@@ -1246,6 +1451,8 @@ impl eframe::App for ReaderApp {
         });
 
         self.about_window(ctx);
+        self.info_window(ctx);
+        self.shortcuts_window(ctx);
         self.handle_input(ctx);
 
         // Completed renders must wake the UI even when no input arrives;
@@ -1320,5 +1527,32 @@ mod tests {
         let applied = editor.edit(to_yaml(&theme)).expect("recovers");
         assert_eq!(applied, theme);
         assert_eq!(editor.error, None);
+    }
+
+    #[test]
+    fn jump_accepts_pages_inside_the_document() {
+        assert_eq!(validate_jump("1", 672), Some(0));
+        assert_eq!(validate_jump("17", 672), Some(16));
+        assert_eq!(validate_jump("672", 672), Some(671), "last page");
+    }
+
+    #[test]
+    fn jump_trims_surrounding_whitespace() {
+        assert_eq!(validate_jump(" 42 ", 100), Some(41));
+    }
+
+    #[test]
+    fn jump_rejects_zero_out_of_range_and_garbage() {
+        let count = 5;
+        assert_eq!(validate_jump("", count), None);
+        assert_eq!(validate_jump("abc", count), None);
+        assert_eq!(validate_jump("0", count), None, "pages are 1-based");
+        assert_eq!(validate_jump("6", count), None);
+        assert_eq!(validate_jump("-1", count), None);
+        assert_eq!(
+            validate_jump("99999999999999999999999", count),
+            None,
+            "parse overflow"
+        );
     }
 }
