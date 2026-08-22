@@ -111,14 +111,22 @@ stable (dtolnay); this is accepted deliberately. Revisit only if it breaks.
 Inspired by zathura's fast path plus Dark Reader's neutrality thresholds. Pure
 integer math, single u8 pass per pixel, no floats:
 
-1. Luma: integer Rec.601, `l = (299r + 587g + 114b) >> 10`.
-2. Saturation guard: if `max(r,g,b) − min(r,g,b) > 48`, leave the pixel
-   untouched. This protects figures and images from being flattened.
+1. Luma: integer Rec.601, `l = (77r + 151g + 28b) >> 8` (coefficients sum to
+   256, so white maps to exactly 255 and paper can land exactly on `page_bg`).
+2. Saturation guard on `max(r,g,b) − min(r,g,b)`:
+   - `≥ 96`: fully saturated (figures, images) — pixel untouched.
+   - `≤ 48`: neutral enough for the full remap below.
+   - in between: linear integer blend from the mapped color toward the original
+     as saturation rises, so anti-aliased edges of colored text follow the
+     theme instead of leaving bright halos on dark backgrounds.
 3. Three 256-entry channel lookup tables map luma →
    `lerp(fg, bg, t)` where `t = clamp((v − p2) / (p95 − p2))`.
 4. `p2` / `p95` come from a sampled 256-bin histogram (every 4th pixel). When
-   the domain is already near-black-on-white (`p95 ≥ 235 && p2 ≤ 20`) the
-   identity mapping applies.
+   the page is already dark-text-on-light-paper (`p95 ≥ 235 && p2 ≤ 20`) the
+   identity mapping applies. A degenerate domain (`p95 ≤ p2`, seen with sparse
+   ink under ~2% of samples) stretches the full range too — otherwise every
+   neutral pixel would collapse onto `page_bg`, erasing what little content
+   the page has.
 
 The texture cache stores **original** (unrecolorized) bitmaps. Recoloring runs
 when promoting a cached bitmap to a GPU texture, so switching themes re-runs
