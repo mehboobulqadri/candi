@@ -33,6 +33,9 @@ const TAGLINE_MIN_WINDOW_WIDTH: f32 = 900.0;
 const RAIL_WIDTH: f32 = 48.0;
 /// Square hit target of a rail icon.
 const RAIL_BUTTON_HEIGHT: f32 = 30.0;
+/// Upper end of the zoom slider; keyboard steps may still go higher, up to
+/// candi-core's own limit (design spec §9).
+const SLIDER_MAX_PERCENT: u16 = 400;
 /// Corner rounding shared by page shadow, placeholder fill, and border.
 const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
@@ -101,12 +104,15 @@ pub struct ReaderApp {
     textures: HashMap<usize, PageTexture>,
 
     layout: Layout,
-    /// `(avail_width, zoom)` the current layout was built for.
-    layout_key: Option<(f32, ZoomMode)>,
+    /// `(avail_w, avail_h, zoom)` the current layout was built for.
+    layout_key: Option<(f32, f32, ZoomMode)>,
     /// Per-page `(width, height)` in points, fetched once at open.
     page_sizes: Vec<(f32, f32)>,
     /// Effective quantized zoom percent; resolved from fit-width on relayout.
     zoom_pct: u16,
+    /// Fit-page is active; the percent zoom is re-derived on every relayout
+    /// so window resizes keep the page fully visible. A manual zoom clears it.
+    fit_page: bool,
 
     sidebar_open: bool,
     section: SidebarSection,
@@ -158,6 +164,7 @@ impl ReaderApp {
             layout_key: None,
             page_sizes: Vec::new(),
             zoom_pct: layout::MIN_ZOOM_PERCENT,
+            fit_page: false,
             sidebar_open: false,
             section: SidebarSection::Contents,
             focus_search: false,
@@ -200,6 +207,7 @@ impl ReaderApp {
                 self.pending_scroll = None;
                 self.primed = false;
                 self.sidebar_open = true;
+                self.fit_page = false;
 
                 let theme_name = opened.session.theme.clone();
                 self.session = opened.session;
@@ -270,8 +278,24 @@ impl ReaderApp {
     }
 
     fn zoom_step(&mut self, delta_percent: i16) {
+        self.fit_page = false;
         let pct = i32::from(self.zoom_pct) + i32::from(delta_percent);
         self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(pct as f32));
+    }
+
+    /// Leave any percent zoom and refit the document to the window width.
+    fn zoom_fit_width(&mut self) {
+        self.fit_page = false;
+        self.session.zoom = ZoomMode::FitWidth;
+    }
+
+    /// Advance through the built-in themes in cycling order.
+    fn cycle_theme(&mut self) {
+        let next = BUILTIN_NAMES
+            .iter()
+            .position(|name| *name == self.theme.name)
+            .map_or(0, |idx| (idx + 1) % BUILTIN_NAMES.len());
+        self.set_theme(BUILTIN_NAMES[next]);
     }
 
     fn save_state(&mut self) {
@@ -388,11 +412,16 @@ impl ReaderApp {
         (self.current_scale(ctx.pixels_per_point()) * 100.0).round() as u16
     }
 
-    /// Rebuild the layout when the available width or zoom preference changed.
+    /// Rebuild the layout when the available size or zoom preference changed.
     /// Page sizes are immutable per document, so they are fetched once at open
-    /// and reused across relayouts.
-    fn ensure_layout(&mut self, avail_w: f32) -> bool {
-        let key = (avail_w, self.session.zoom);
+    /// and reused across relayouts. Fit-page re-derives its percent from the
+    /// current viewport on every rebuild.
+    fn ensure_layout(&mut self, avail_w: f32, avail_h: f32) -> bool {
+        if self.fit_page && !self.page_sizes.is_empty() {
+            let pct = layout::fit_page_percent(&self.page_sizes, avail_w, avail_h);
+            self.session.zoom = ZoomMode::Percent(pct);
+        }
+        let key = (avail_w, avail_h, self.session.zoom);
         if self.layout_key == Some(key) {
             return true;
         }
@@ -637,7 +666,7 @@ impl ReaderApp {
     }
 
     fn show_canvas(&mut self, ui: &mut egui::Ui) {
-        if !self.ensure_layout(ui.available_width()) {
+        if !self.ensure_layout(ui.available_width(), ui.available_height()) {
             return;
         }
         let ctx = ui.ctx().clone();
@@ -1121,63 +1150,114 @@ impl ReaderApp {
     }
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            // Label first, then the value it names.
-            ui.label("Theme");
-            egui::ComboBox::from_id_salt("theme_combo")
-                .selected_text(&self.theme.name)
-                .show_ui(ui, |ui| {
-                    for name in BUILTIN_NAMES {
-                        if ui
-                            .selectable_label(self.theme.name == *name, name)
-                            .clicked()
-                        {
-                            self.set_theme(name);
-                        }
-                    }
-                });
-            if ui.button("Edit…").clicked() {
-                self.open_theme_editor();
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let can_zoom = self.page_count() > 0;
-                if ui.add_enabled(can_zoom, egui::Button::new("+")).clicked() {
-                    self.zoom_step(5);
-                }
-                // "Fit" while fit-width is active; clicking returns to it from
-                // a percent zoom. − / + always step from the effective zoom
-                // and land in percent mode.
-                let zoom_label = match self.session.zoom {
-                    ZoomMode::FitWidth => "Fit".to_owned(),
-                    ZoomMode::Percent(_) => format!("{}%", self.zoom_pct),
-                };
-                if ui
-                    .add_enabled(can_zoom, egui::Button::new(zoom_label))
-                    .clicked()
-                {
-                    self.session.zoom = ZoomMode::FitWidth;
-                }
-                if ui.add_enabled(can_zoom, egui::Button::new("−")).clicked() {
-                    self.zoom_step(-5);
-                }
-                let marked = self
-                    .session
-                    .bookmarks
-                    .iter()
-                    .any(|bookmark| bookmark.page == self.session.page);
-                if ui
-                    .add_enabled(
-                        self.page_count() > 0,
-                        egui::Button::new(if marked { "★" } else { "☆" }),
-                    )
-                    .on_hover_text("Bookmark this page (B)")
-                    .clicked()
-                {
-                    self.session.toggle_bookmark(self.session.page);
-                }
+        ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
+        ui.columns(3, |columns| {
+            columns[0].horizontal(|ui| self.theme_controls(ui));
+            columns[1].with_layout(
+                egui::Layout::left_to_right(egui::Align::Center)
+                    .with_main_align(egui::Align::Center),
+                |ui| self.zoom_controls(ui),
+            );
+            columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.fit_controls(ui)
             });
         });
+    }
+
+    /// Theme cluster (design spec §21): an accent-tinted light/dark glyph
+    /// that cycles, a dropdown that picks exactly, and Edit… for YAML.
+    fn theme_controls(&mut self, ui: &mut egui::Ui) {
+        let glyph = egui::RichText::new(theme_icon(&self.theme)).color(color_of(self.theme.accent));
+        if ui.button(glyph).on_hover_text("Cycle themes (T)").clicked() {
+            self.cycle_theme();
+        }
+        egui::ComboBox::from_id_salt("theme_combo")
+            .selected_text(&self.theme.name)
+            .show_ui(ui, |ui| {
+                for name in BUILTIN_NAMES {
+                    if ui
+                        .selectable_label(self.theme.name == *name, name)
+                        .clicked()
+                    {
+                        self.set_theme(name);
+                    }
+                }
+            });
+        if ui
+            .button("Edit…")
+            .on_hover_text("Edit theme YAML (Ctrl+E)")
+            .clicked()
+        {
+            self.open_theme_editor();
+        }
+    }
+
+    /// Zoom cluster (design spec §9/§20): − / percent display / + plus a thin
+    /// quantized slider. The display is not clickable; Fit resets.
+    fn zoom_controls(&mut self, ui: &mut egui::Ui) {
+        let can_zoom = self.page_count() > 0;
+        if ui.add_enabled(can_zoom, egui::Button::new("−")).clicked() {
+            self.zoom_step(-5);
+        }
+        ui.label(
+            egui::RichText::new(format!("{}%", self.zoom_pct))
+                .font(egui::FontId::proportional(14.0)),
+        )
+        .on_hover_text("Zoom");
+        if ui.add_enabled(can_zoom, egui::Button::new("+")).clicked() {
+            self.zoom_step(5);
+        }
+
+        let mut pct = i32::from(self.zoom_pct);
+        let accent = color_of(self.theme.accent);
+        let slider = ui.scope(|ui| {
+            // Accent handle and filled rail (design spec §24).
+            let visuals = ui.visuals_mut();
+            visuals.selection.bg_fill = accent;
+            visuals.widgets.inactive.bg_fill = accent;
+            visuals.widgets.hovered.bg_fill = accent;
+            visuals.widgets.active.bg_fill = accent;
+            ui.spacing_mut().interact_size.y = 12.0;
+            ui.add_enabled(
+                can_zoom,
+                egui::Slider::new(
+                    &mut pct,
+                    i32::from(layout::MIN_ZOOM_PERCENT)..=i32::from(SLIDER_MAX_PERCENT),
+                )
+                .step_by(5.0)
+                .show_value(false),
+            )
+        });
+        if slider.inner.changed() {
+            self.fit_page = false;
+            self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(pct as f32));
+        }
+    }
+
+    /// Fit toggles on the right of the bottom bar. Exactly one is active:
+    /// fit-width tracks window resizes; fit-page also accounts for height.
+    fn fit_controls(&mut self, ui: &mut egui::Ui) {
+        let can_fit = self.page_count() > 0;
+        let width_active = !self.fit_page && self.session.zoom == ZoomMode::FitWidth;
+        let page_active = self.fit_page;
+        // right_to_left layout: added first shows rightmost.
+        if ui
+            .add_enabled(can_fit, egui::Button::new("Fit page").selected(page_active))
+            .on_hover_text("Zoom so the whole page fits the viewport")
+            .clicked()
+        {
+            self.fit_page = true;
+        }
+        if ui
+            .add_enabled(
+                can_fit,
+                egui::Button::new("Fit width").selected(width_active),
+            )
+            .on_hover_text("Zoom to fill the window width (0)")
+            .clicked()
+        {
+            self.zoom_fit_width();
+        }
     }
 
     fn about_window(&mut self, ctx: &egui::Context) {
@@ -1293,14 +1373,10 @@ impl ReaderApp {
                 self.zoom_step(-5);
             }
             if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
-                self.session.zoom = ZoomMode::FitWidth;
+                self.zoom_fit_width();
             }
             if plain && input.key_pressed(Key::T) {
-                let next = BUILTIN_NAMES
-                    .iter()
-                    .position(|name| *name == self.theme.name)
-                    .map_or(0, |idx| (idx + 1) % BUILTIN_NAMES.len());
-                self.set_theme(BUILTIN_NAMES[next]);
+                self.cycle_theme();
             }
             if plain && input.key_pressed(Key::B) && self.page_count() > 0 {
                 self.session.toggle_bookmark(self.session.page);
@@ -1370,6 +1446,15 @@ fn section_header(section: SidebarSection, count: Option<usize>) -> String {
         Some(n) => format!("{name} · {n}"),
         None => name.to_owned(),
     }
+}
+
+/// ☀ or 🌙 by the UI background's luma — an icon for what is active now, not
+/// a toggle promise (design spec §21).
+fn theme_icon(theme: &Theme) -> &'static str {
+    let bg = theme.ui_bg;
+    // Integer Rec.601, matching candi-theme's recolor pass.
+    let luma = (77u32 * u32::from(bg.r()) + 151 * u32::from(bg.g()) + 28 * u32::from(bg.b())) >> 8;
+    if luma >= 128 { "☀" } else { "🌙" }
 }
 
 /// The inline page-jump field shown in place of the `n / N` counter. Enter
@@ -1643,5 +1728,22 @@ mod tests {
             section_header(SidebarSection::Search, Some(0)),
             "Search · 0"
         );
+    }
+
+    #[test]
+    fn theme_icon_follows_the_ui_background_luma() {
+        for name in BUILTIN_NAMES {
+            let icon = theme_icon(&builtin_theme(name));
+            assert!(icon == "☀" || icon == "🌙", "{name} produced {icon:?}");
+        }
+        assert_eq!(theme_icon(&builtin_theme("Light")), "☀");
+        assert_eq!(
+            theme_icon(&builtin_theme("Sepia")),
+            "🌙",
+            "sepia warms the page, its chrome stays dark"
+        );
+        assert_eq!(theme_icon(&builtin_theme("Dark")), "🌙");
+        assert_eq!(theme_icon(&builtin_theme("Warm Dark")), "🌙");
+        assert_eq!(theme_icon(&builtin_theme("True Dark")), "🌙");
     }
 }

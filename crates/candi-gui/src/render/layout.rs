@@ -119,6 +119,16 @@ fn fit_width_percent(sizes: &[(f32, f32)], avail_w: f32) -> u16 {
     quantize_floor(usable_width(avail_w) / widest_page(sizes) * 100.0)
 }
 
+/// Fit-page zoom percent: whichever of fit-width and fit-height is smaller,
+/// floored to a quantized step so no axis overflows after rounding. Height
+/// resolves against the tallest page.
+pub fn fit_page_percent(sizes: &[(f32, f32)], avail_w: f32, avail_h: f32) -> u16 {
+    let width_pct = usable_width(avail_w) / widest_page(sizes) * 100.0;
+    let tallest = sizes.iter().map(|&(_, h)| h.max(1.0)).fold(1.0, f32::max);
+    let height_pct = (avail_h.max(1.0)) / tallest * 100.0;
+    quantize_floor(width_pct.min(height_pct))
+}
+
 /// Round `percent` to the nearest quantized step, clamped to the supported
 /// range. Float error from the step math is absorbed by rounding to `u16`.
 pub fn quantize_nearest(percent: f32) -> u16 {
@@ -252,5 +262,43 @@ mod tests {
         // Usable = 800 - 24 = 776; 776/612 = 126.79…% → floor to 125.
         assert_eq!(fit_width_percent(&[LETTER], 800.0), 125);
         assert_eq!(fit_width_percent(&[LETTER, (300.0, 500.0)], 800.0), 125);
+    }
+
+    #[test]
+    fn fit_page_is_capped_by_height_in_a_short_window() {
+        // Width alone would allow 125%; height 600/792 = 75.7% wins.
+        assert_eq!(fit_page_percent(&[LETTER], 800.0, 600.0), 75);
+        assert_eq!(fit_page_percent(&[LETTER], 1600.0, 600.0), 75);
+    }
+
+    #[test]
+    fn fit_page_is_capped_by_width_in_a_narrow_window() {
+        // Height alone would allow ~101%; width floors to 100.
+        assert_eq!(fit_page_percent(&[LETTER], 800.0, 800.0), 100);
+    }
+
+    #[test]
+    fn fit_page_resolves_against_the_tallest_page() {
+        let sizes = [LETTER, (300.0, 1200.0)];
+        // Tallest page: height 500/1200 = 41.6% → floor to 40.
+        assert_eq!(fit_page_percent(&sizes, 2000.0, 500.0), 40);
+    }
+
+    #[test]
+    fn fit_page_never_exceeds_fit_width_and_stays_bounded() {
+        for &(w, h) in &[(300.0, 300.0), (800.0, 600.0), (2000.0, 1500.0)] {
+            let page = fit_page_percent(&[LETTER], w, h);
+            let layout = letter_layout(ZoomMode::Percent(page), w.max(24.0), 1);
+            assert!(layout.rects[0].w <= w.max(2.0 * MARGIN) + 1.0, "{w}");
+            assert!(
+                (MIN_ZOOM_PERCENT..=MAX_ZOOM_PERCENT).contains(&page),
+                "{page}"
+            );
+        }
+    }
+
+    #[test]
+    fn fit_page_clamps_a_tiny_viewport_to_the_minimum_zoom() {
+        assert_eq!(fit_page_percent(&[LETTER], 30.0, 30.0), MIN_ZOOM_PERCENT);
     }
 }
