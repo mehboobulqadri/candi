@@ -29,6 +29,10 @@ const TEXTURE_KEEP_AROUND: usize = 6;
 const SIDEBAR_WIDTH: f32 = 260.0;
 /// Window width below which the brand tagline hides (design spec §4).
 const TAGLINE_MIN_WINDOW_WIDTH: f32 = 900.0;
+/// Sidebar icon rail width (design spec §11).
+const RAIL_WIDTH: f32 = 48.0;
+/// Square hit target of a rail icon.
+const RAIL_BUTTON_HEIGHT: f32 = 30.0;
 /// Corner rounding shared by page shadow, placeholder fill, and border.
 const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
@@ -921,37 +925,90 @@ impl ReaderApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("DOCUMENT").weak().small());
-        ui.label(egui::RichText::new(&self.filename).strong());
-        ui.separator();
+        ui.horizontal(|ui| {
+            self.icon_rail(ui);
+            ui.separator();
+            self.section_panel(ui);
+        });
+    }
 
+    /// The ~48 pt navigation rail (design spec §11): section icons top-down,
+    /// settings pinned at the bottom. The active icon is accent-tinted with a
+    /// small indicator bar on the rail's edge.
+    fn icon_rail(&mut self, ui: &mut egui::Ui) {
+        let accent = color_of(self.theme.accent);
+        ui.vertical(|ui| {
+            ui.set_width(RAIL_WIDTH);
+            let sections = [
+                (SidebarSection::Contents, "≣", "Contents"),
+                (SidebarSection::Bookmarks, "⚑", "Bookmarks"),
+                (SidebarSection::Search, "🔍", "Search"),
+            ];
+            for (section, glyph, name) in sections {
+                let active = self.section == section;
+                let mut rich = egui::RichText::new(glyph).size(17.0);
+                if active {
+                    rich = rich.color(accent);
+                }
+                let button = ui
+                    .add_sized(
+                        [RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT],
+                        egui::Button::new(rich),
+                    )
+                    .on_hover_text(name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if active {
+                    // Indicator bar hugging the window's left edge next to
+                    // the active icon.
+                    let bar_h = button.rect.height() * 0.6;
+                    ui.painter().rect_filled(
+                        egui::Rect::from_center_size(
+                            egui::pos2(button.rect.left(), button.rect.center().y),
+                            egui::vec2(3.0, bar_h),
+                        ),
+                        1.5,
+                        accent,
+                    );
+                }
+                if button.clicked() {
+                    self.section = section;
+                    if section == SidebarSection::Search {
+                        self.focus_search = true;
+                    }
+                }
+            }
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                if ui
+                    .add_sized(
+                        [RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT],
+                        egui::Button::new(egui::RichText::new("⚙").size(17.0)),
+                    )
+                    .on_hover_text("Theme editor")
+                    .clicked()
+                {
+                    self.open_theme_editor();
+                }
+            });
+        });
+    }
+
+    /// Section content beside the rail: a small header with the item count,
+    /// then the active panel's scrollable body.
+    fn section_panel(&mut self, ui: &mut egui::Ui) {
         let contents_count = (!self.toc_rows.is_empty()).then_some(self.toc_rows.len());
         let bookmark_count =
             (!self.session.bookmarks.is_empty()).then_some(self.session.bookmarks.len());
         let search_count = self.search_hits.as_deref().map(<[SearchHit]>::len);
-        let rows = [
-            (SidebarSection::Contents, "Contents", contents_count),
-            (SidebarSection::Bookmarks, "Bookmarks", bookmark_count),
-            (SidebarSection::Search, "Search", search_count),
-        ];
-        for (section, label, count) in rows {
-            let active = self.section == section;
-            let text = match count {
-                Some(n) => format!("{label} ({n})"),
-                None => label.to_owned(),
-            };
-            let mut rich = egui::RichText::new(text);
-            if active {
-                rich = rich.color(color_of(self.theme.accent)).strong();
-            }
-            if ui.selectable_label(active, rich).clicked() {
-                self.section = section;
-                if section == SidebarSection::Search {
-                    self.focus_search = true;
-                }
-            }
-        }
-        ui.separator();
+        let count = match self.section {
+            SidebarSection::Contents => contents_count,
+            SidebarSection::Bookmarks => bookmark_count,
+            SidebarSection::Search => search_count,
+        };
+        ui.label(
+            egui::RichText::new(section_header(self.section, count))
+                .weak()
+                .small(),
+        );
 
         let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         match self.section {
@@ -1301,6 +1358,20 @@ fn validate_jump(text: &str, count: usize) -> Option<usize> {
     Some(page - 1)
 }
 
+/// Header line of the sidebar's section panel. A `None` count (nothing
+/// collected yet) omits it entirely; an explicit zero still shows as "· 0".
+fn section_header(section: SidebarSection, count: Option<usize>) -> String {
+    let name = match section {
+        SidebarSection::Contents => "Contents",
+        SidebarSection::Bookmarks => "Bookmarks",
+        SidebarSection::Search => "Search",
+    };
+    match count {
+        Some(n) => format!("{name} · {n}"),
+        None => name.to_owned(),
+    }
+}
+
 /// The inline page-jump field shown in place of the `n / N` counter. Enter
 /// commits a valid page, an invalid entry tints red and keeps editing, and
 /// Esc or clicking away cancels back to the counter.
@@ -1553,6 +1624,24 @@ mod tests {
             validate_jump("99999999999999999999999", count),
             None,
             "parse overflow"
+        );
+    }
+
+    #[test]
+    fn section_headers_show_counts_when_present() {
+        assert_eq!(
+            section_header(SidebarSection::Bookmarks, Some(3)),
+            "Bookmarks · 3"
+        );
+    }
+
+    #[test]
+    fn section_header_distinguishes_no_data_from_an_empty_result() {
+        // No hits collected yet vs a finished search with zero matches.
+        assert_eq!(section_header(SidebarSection::Search, None), "Search");
+        assert_eq!(
+            section_header(SidebarSection::Search, Some(0)),
+            "Search · 0"
         );
     }
 }
