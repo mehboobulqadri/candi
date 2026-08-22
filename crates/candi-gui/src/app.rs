@@ -779,18 +779,17 @@ impl ReaderApp {
                 };
                 // Center the cluster by its measured width; a justified
                 // layout would stretch the buttons into bars.
-                let counter_w = ui
-                    .painter()
-                    .layout_no_wrap(
-                        counter.clone(),
-                        egui::FontId::proportional(14.0),
-                        egui::Color32::WHITE,
-                    )
-                    .size()
-                    .x;
-                let arrow_w = ui.spacing().button_padding.x * 2.0 + 12.0;
+                let font = egui::FontId::proportional(14.0);
+                let advance = |text: &str| {
+                    ui.painter()
+                        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+                        .size()
+                        .x
+                };
+                let pad = ui.spacing().button_padding.x * 2.0;
                 let gap = ui.spacing().item_spacing.x;
-                let cluster_w = arrow_w * 2.0 + counter_w + gap * 2.0;
+                let cluster_w =
+                    pad + advance("‹") + pad + advance("›") + advance(&counter) + gap * 2.0;
                 ui.add_space(((ui.available_width() - cluster_w) * 0.5).max(0.0));
 
                 if ui
@@ -799,7 +798,7 @@ impl ReaderApp {
                 {
                     self.goto_page(current - 1);
                 }
-                ui.label(counter);
+                ui.label(egui::RichText::new(counter).font(font));
                 if ui
                     .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
                     .clicked()
@@ -1001,7 +1000,8 @@ impl ReaderApp {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("+").clicked() {
+                let can_zoom = self.page_count() > 0;
+                if ui.add_enabled(can_zoom, egui::Button::new("+")).clicked() {
                     self.zoom_step(5);
                 }
                 // "Fit" while fit-width is active; clicking returns to it from
@@ -1011,10 +1011,13 @@ impl ReaderApp {
                     ZoomMode::FitWidth => "Fit".to_owned(),
                     ZoomMode::Percent(_) => format!("{}%", self.zoom_pct),
                 };
-                if ui.button(zoom_label).clicked() {
+                if ui
+                    .add_enabled(can_zoom, egui::Button::new(zoom_label))
+                    .clicked()
+                {
                     self.session.zoom = ZoomMode::FitWidth;
                 }
-                if ui.button("−").clicked() {
+                if ui.add_enabled(can_zoom, egui::Button::new("−")).clicked() {
                     self.zoom_step(-5);
                 }
                 let marked = self
