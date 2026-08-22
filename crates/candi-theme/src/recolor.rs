@@ -45,6 +45,13 @@ pub fn recolor(rgba: &mut [u8], page_bg: Color, page_fg: Color) {
         lo = 0;
         hi = 255;
     }
+    // Sparse ink (< 2% of samples): p2 lands on paper white itself, so the
+    // stretch range is empty and every neutral pixel would map to `page_bg`,
+    // erasing what little content the page has. Map the full range instead.
+    if hi <= lo {
+        lo = 0;
+        hi = 255;
+    }
 
     let luts = build_luts(lo, hi, page_bg, page_fg);
 

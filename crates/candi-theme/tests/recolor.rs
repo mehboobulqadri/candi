@@ -106,6 +106,43 @@ fn single_pixel_page_recolors() {
     assert_eq!(&buf[..3], &[0x16, 0x18, 0x1D]);
 }
 
+/// A page whose ink is under 2% of sampled pixels: p2 lands on paper white,
+/// which used to collapse the stretch range and erase all content.
+fn sparse_page(len: usize) -> Vec<u8> {
+    let mut buf = vec![255u8; len * 4];
+    // One ink pixel in 256 keeps coverage below the p2 threshold while still
+    // being hit by the every-4th-pixel histogram.
+    buf[128 * 4..128 * 4 + 3].fill(0);
+    buf
+}
+
+#[test]
+fn sparse_ink_survives_a_mostly_white_page() {
+    let mut buf = sparse_page(256);
+    recolor(&mut buf, dark_bg(), dark_fg());
+    let px = &buf[128 * 4..128 * 4 + 4];
+    assert_eq!(
+        (px[0], px[1], px[2]),
+        (dark_fg().r(), dark_fg().g(), dark_fg().b())
+    );
+}
+
+#[test]
+fn sparse_paper_stays_page_bg() {
+    let mut buf = sparse_page(256);
+    recolor(&mut buf, dark_bg(), dark_fg());
+    let px = &buf[..4];
+    assert_eq!((px[0], px[1], px[2]), (0x16, 0x18, 0x1D));
+}
+
+#[test]
+fn single_black_pixel_maps_to_fg() {
+    // Degenerate range again: the only sampled luma is the ink itself.
+    let mut buf = vec![0u8; 4];
+    recolor(&mut buf, dark_bg(), dark_fg());
+    assert_eq!(&buf[..3], &[0xE6, 0xE6, 0xE6]);
+}
+
 #[test]
 fn empty_buffer_is_a_no_op() {
     let mut buf: Vec<u8> = Vec::new();
