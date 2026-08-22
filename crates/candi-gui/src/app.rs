@@ -670,15 +670,30 @@ impl ReaderApp {
             view.clip_h = clip.height();
 
             let panel = color_of(self.theme.panel_bg);
+            let paper = color_of(self.theme.page_bg);
             let fg = color_of(self.theme.ui_fg);
             let border = egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25));
+            // Soft drop shadow so pages read as sheets of paper on the
+            // panel-colored backdrop, even when page and backdrop are close
+            // (Light).
+            let mut shadow = egui::epaint::RectShape::filled(
+                egui::Rect::ZERO,
+                egui::Rounding::same(3.0),
+                egui::Color32::from_black_alpha(56),
+            );
+            shadow.blur_width = 9.0;
             let hint_font = egui::FontId::proportional(14.0);
+            painter.rect_filled(content_rect, 0.0, panel);
             for page in view.visible.clone() {
                 let rect = self.layout.rects[page];
                 let screen = egui::Rect::from_min_size(
                     content_rect.min + egui::vec2(rect.x, rect.y),
                     egui::vec2(rect.w, rect.h),
                 );
+                painter.add(egui::epaint::RectShape {
+                    rect: screen.expand2(egui::vec2(3.0, 5.0)),
+                    ..shadow
+                });
                 match self.textures.get(&page) {
                     Some(texture) => {
                         painter.image(
@@ -689,7 +704,7 @@ impl ReaderApp {
                         );
                     }
                     None => {
-                        painter.rect_filled(screen, 4.0, panel);
+                        painter.rect_filled(screen, 4.0, paper);
                         painter.text(
                             screen.center(),
                             egui::Align2::CENTER_CENTER,
@@ -972,17 +987,36 @@ impl ReaderApp {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Fit width").clicked() {
-                    self.session.zoom = ZoomMode::FitWidth;
-                }
                 if ui.button("+").clicked() {
                     self.zoom_step(5);
                 }
-                if ui.button(format!("{}%", self.zoom_pct)).clicked() {
+                // "Fit" while fit-width is active; clicking returns to it from
+                // a percent zoom. − / + always step from the effective zoom
+                // and land in percent mode.
+                let zoom_label = match self.session.zoom {
+                    ZoomMode::FitWidth => "Fit".to_owned(),
+                    ZoomMode::Percent(_) => format!("{}%", self.zoom_pct),
+                };
+                if ui.button(zoom_label).clicked() {
                     self.session.zoom = ZoomMode::FitWidth;
                 }
                 if ui.button("−").clicked() {
                     self.zoom_step(-5);
+                }
+                let marked = self
+                    .session
+                    .bookmarks
+                    .iter()
+                    .any(|bookmark| bookmark.page == self.session.page);
+                if ui
+                    .add_enabled(
+                        self.page_count() > 0,
+                        egui::Button::new(if marked { "★" } else { "☆" }),
+                    )
+                    .on_hover_text("Bookmark this page (B)")
+                    .clicked()
+                {
+                    self.session.toggle_bookmark(self.session.page);
                 }
             });
         });
