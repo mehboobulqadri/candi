@@ -117,6 +117,8 @@ pub struct ReaderApp {
     sidebar_open: bool,
     section: SidebarSection,
     focus_search: bool,
+    /// Focus mode (design spec §8): chrome hidden, document only.
+    focus_mode: bool,
     /// Inline page-jump buffer; `Some` while the counter is an input field.
     page_jump: Option<String>,
     page_jump_focus: bool,
@@ -168,6 +170,7 @@ impl ReaderApp {
             sidebar_open: false,
             section: SidebarSection::Contents,
             focus_search: false,
+            focus_mode: false,
             page_jump: None,
             page_jump_focus: false,
             jump_invalid: false,
@@ -843,6 +846,13 @@ impl ReaderApp {
                     self.section = SidebarSection::Search;
                     self.focus_search = true;
                 }
+                if ui
+                    .button(egui::RichText::new("⛶").size(15.0))
+                    .on_hover_text("Focus mode (F11)")
+                    .clicked()
+                {
+                    self.focus_mode = !self.focus_mode;
+                }
                 self.nav_cluster(ui);
             });
         });
@@ -877,6 +887,17 @@ impl ReaderApp {
         if ui.button("Keyboard Shortcuts").clicked() {
             ui.close_menu();
             self.shortcuts_open = true;
+        }
+        if ui
+            .button(if self.focus_mode {
+                "Exit Focus Mode   F11"
+            } else {
+                "Focus Mode   F11"
+            })
+            .clicked()
+        {
+            ui.close_menu();
+            self.focus_mode = !self.focus_mode;
         }
         if ui.button("About Candi").clicked() {
             ui.close_menu();
@@ -1260,6 +1281,59 @@ impl ReaderApp {
         }
     }
 
+    /// §40 empty state: brand, one call to action, and the drag-drop hint —
+    /// nothing else.
+    fn empty_state(&mut self, ui: &mut egui::Ui) {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            let h = ui.available_height();
+            ui.add_space(h * 0.28);
+            ui.label(
+                egui::RichText::new("Candi")
+                    .strong()
+                    .size(34.0)
+                    .color(color_of(self.theme.accent)),
+            );
+            ui.add_space(6.0);
+            ui.label("Open a PDF to begin");
+            ui.add_space(4.0);
+            if ui.button("Open File").clicked() {
+                self.open_dialog();
+            }
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("or drag and drop a PDF here")
+                    .weak()
+                    .small(),
+            );
+        });
+    }
+
+    /// §42 open-failure state: a human sentence up front, the raw backend
+    /// error behind a Details disclosure, and a way forward.
+    fn open_error_view(&mut self, ui: &mut egui::Ui) {
+        let raw = self.error.clone().unwrap_or_default();
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            let h = ui.available_height();
+            ui.add_space(h * 0.30);
+            ui.label(
+                egui::RichText::new("Unable to open this PDF.")
+                    .strong()
+                    .size(18.0),
+            );
+            ui.label(egui::RichText::new(humanize_reason(&raw)).weak());
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new("Details")
+                .id_salt("open_error_details")
+                .show_unindented(ui, |ui| {
+                    ui.monospace(&raw);
+                });
+            ui.add_space(4.0);
+            if ui.button("Open another file").clicked() {
+                self.open_dialog();
+            }
+        });
+    }
+
     fn about_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("About Candi")
             .open(&mut self.about_open)
@@ -1385,11 +1459,20 @@ impl ReaderApp {
                 self.save_state();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            if input.key_pressed(Key::F11) {
+                self.focus_mode = !self.focus_mode;
+            }
             if input.key_pressed(Key::Escape) {
                 if self.about_open {
                     self.about_open = false;
                 } else if self.editor.is_some() {
                     self.editor = None;
+                } else if self.info_open {
+                    self.info_open = false;
+                } else if self.shortcuts_open {
+                    self.shortcuts_open = false;
+                } else if self.focus_mode {
+                    self.focus_mode = false;
                 } else if self.sidebar_open
                     && self.section == SidebarSection::Search
                     && !self.search_query.is_empty()
@@ -1455,6 +1538,35 @@ fn theme_icon(theme: &Theme) -> &'static str {
     // Integer Rec.601, matching candi-theme's recolor pass.
     let luma = (77u32 * u32::from(bg.r()) + 151 * u32::from(bg.g()) + 28 * u32::from(bg.b())) >> 8;
     if luma >= 128 { "☀" } else { "🌙" }
+}
+
+/// What the center pane shows this frame. The theme editor wins over
+/// everything; an open failure replaces the welcome state; runtime errors on
+/// a live document stay a banner over the canvas.
+#[derive(Debug, PartialEq, Eq)]
+enum CenterPane {
+    Editor,
+    Canvas,
+    OpenError,
+    Empty,
+}
+
+fn center_pane(editor_open: bool, has_document: bool, has_error: bool) -> CenterPane {
+    if editor_open {
+        CenterPane::Editor
+    } else if has_document {
+        CenterPane::Canvas
+    } else if has_error {
+        CenterPane::OpenError
+    } else {
+        CenterPane::Empty
+    }
+}
+
+/// Short cause for the open-failure card: the first line of the backend
+/// error. The full text stays behind the Details disclosure.
+fn humanize_reason(raw: &str) -> &str {
+    raw.lines().next().unwrap_or(raw)
 }
 
 /// The inline page-jump field shown in place of the `n / N` counter. Enter
@@ -1576,33 +1688,44 @@ impl eframe::App for ReaderApp {
         }
 
         self.collect_results(ctx);
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.top_bar(ui));
-        if self.sidebar_open {
-            egui::SidePanel::left("sidebar")
-                .default_width(SIDEBAR_WIDTH)
-                .resizable(false)
-                .show(ctx, |ui| self.sidebar(ui));
+        // A file dropped onto the window opens like any other (design spec
+        // §35); wrong types fail through the normal error path.
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if let Some(file) = dropped.iter().find_map(|f| f.path.clone()) {
+            self.open_path(file);
         }
-        egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| self.bottom_bar(ui));
+        if !self.focus_mode {
+            egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.top_bar(ui));
+            if self.sidebar_open {
+                egui::SidePanel::left("sidebar")
+                    .default_width(SIDEBAR_WIDTH)
+                    .resizable(false)
+                    .show(ctx, |ui| self.sidebar(ui));
+            }
+            egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| self.bottom_bar(ui));
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(error) = self.error.clone() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(ERROR_RED, error);
-                    if ui.small_button("dismiss").clicked() {
-                        self.error = None;
+            match center_pane(
+                self.editor.is_some(),
+                self.document.is_some(),
+                self.error.is_some(),
+            ) {
+                CenterPane::Editor => self.show_theme_editor(ui),
+                CenterPane::Canvas => {
+                    if let Some(error) = self.error.clone() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.colored_label(ERROR_RED, error);
+                            if ui.small_button("dismiss").clicked() {
+                                self.error = None;
+                            }
+                        });
+                        ui.separator();
                     }
-                });
-                ui.separator();
-            }
-            if self.editor.is_some() {
-                self.show_theme_editor(ui);
-            } else if self.document.is_some() {
-                self.show_canvas(ui);
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label("Open a PDF to start reading (Ctrl+O).");
-                });
+                    self.show_canvas(ui);
+                }
+                CenterPane::OpenError => self.open_error_view(ui),
+                CenterPane::Empty => self.empty_state(ui),
             }
         });
 
@@ -1745,5 +1868,26 @@ mod tests {
         assert_eq!(theme_icon(&builtin_theme("Dark")), "🌙");
         assert_eq!(theme_icon(&builtin_theme("Warm Dark")), "🌙");
         assert_eq!(theme_icon(&builtin_theme("True Dark")), "🌙");
+    }
+
+    #[test]
+    fn center_pane_precedence_is_editor_then_document_then_error() {
+        assert_eq!(center_pane(true, true, true), CenterPane::Editor);
+        assert_eq!(center_pane(true, false, false), CenterPane::Editor);
+        assert_eq!(center_pane(false, true, false), CenterPane::Canvas);
+        // A runtime error on a live document keeps the canvas (banner).
+        assert_eq!(center_pane(false, true, true), CenterPane::Canvas);
+        assert_eq!(center_pane(false, false, true), CenterPane::OpenError);
+        assert_eq!(center_pane(false, false, false), CenterPane::Empty);
+    }
+
+    #[test]
+    fn humanized_reason_takes_the_first_error_line() {
+        assert_eq!(
+            humanize_reason("mupdf: cannot open\n  cause: nope"),
+            "mupdf: cannot open"
+        );
+        assert_eq!(humanize_reason("single line"), "single line");
+        assert_eq!(humanize_reason(""), "");
     }
 }
