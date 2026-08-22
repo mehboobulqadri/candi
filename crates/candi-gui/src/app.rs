@@ -26,6 +26,8 @@ use crate::sidebar::{SearchHit, SidebarSection, TocRow, date_only, extract_snipp
 /// window is released while the original bitmaps stay cached.
 const TEXTURE_KEEP_AROUND: usize = 6;
 const SIDEBAR_WIDTH: f32 = 260.0;
+/// Corner rounding shared by page shadow, placeholder fill, and border.
+const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
 const INDENT_PER_LEVEL: f32 = 12.0;
 const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x48, 0x4D);
@@ -678,7 +680,7 @@ impl ReaderApp {
             // (Light).
             let mut shadow = egui::epaint::RectShape::filled(
                 egui::Rect::ZERO,
-                egui::Rounding::same(3.0),
+                egui::Rounding::same(PAGE_ROUNDING),
                 egui::Color32::from_black_alpha(56),
             );
             shadow.blur_width = 9.0;
@@ -704,7 +706,7 @@ impl ReaderApp {
                         );
                     }
                     None => {
-                        painter.rect_filled(screen, 4.0, paper);
+                        painter.rect_filled(screen, PAGE_ROUNDING, paper);
                         painter.text(
                             screen.center(),
                             egui::Align2::CENTER_CENTER,
@@ -714,7 +716,7 @@ impl ReaderApp {
                         );
                     }
                 }
-                painter.rect_stroke(screen, 2.0, border);
+                painter.rect_stroke(screen, PAGE_ROUNDING, border);
             }
         });
 
