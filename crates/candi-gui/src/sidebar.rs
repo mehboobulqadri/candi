@@ -41,6 +41,26 @@ fn walk(items: &[TocItem], depth: u32, rows: &mut Vec<TocRow>) {
     }
 }
 
+/// Row indices of the outline entries containing `page`: reading order makes
+/// start pages non-decreasing, so for every nesting depth the last entry that
+/// started at or before `page` is an ancestor of the reading position. Empty
+/// when the position precedes the first heading.
+pub(crate) fn active_toc_rows(rows: &[TocRow], page: usize) -> Vec<usize> {
+    let mut chain: Vec<Option<usize>> = Vec::new();
+    for (idx, row) in rows.iter().enumerate() {
+        if row.page > page {
+            break;
+        }
+        if chain.len() <= row.depth as usize {
+            chain.resize(row.depth as usize + 1, None);
+        }
+        chain[row.depth as usize] = Some(idx);
+    }
+    let mut active: Vec<usize> = chain.into_iter().flatten().collect();
+    active.sort_unstable();
+    active
+}
+
 /// One search result: the page it points at plus an excerpt of the page's
 /// normalized text around the match.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +171,39 @@ mod tests {
     #[test]
     fn flatten_of_an_empty_outline_is_empty() {
         assert!(flatten_toc(&[]).is_empty());
+    }
+
+    #[test]
+    fn active_toc_rows_trace_the_containing_section_chain() {
+        let rows = flatten_toc(&[
+            toc(
+                "Part I",
+                1,
+                vec![toc("1. Intro", 2, vec![]), toc("2. Data", 5, vec![])],
+            ),
+            toc("Part II", 9, vec![]),
+        ]);
+        // Reading page 6 (0-based 5): inside Part I → 2. Data; the superseded
+        // 1. Intro and not-yet-reached Part II stay inactive.
+        assert_eq!(active_toc_rows(&rows, 5), vec![0, 2]);
+        // Past every heading: Part II plus its deepest ancestor.
+        assert_eq!(active_toc_rows(&rows, 100), vec![2, 3]);
+    }
+
+    #[test]
+    fn active_toc_rows_is_empty_before_the_first_heading() {
+        let rows = flatten_toc(&[toc("Chapter 1", 4, vec![])]);
+        assert!(active_toc_rows(&rows, 0).is_empty());
+    }
+
+    #[test]
+    fn active_toc_rows_holds_one_entry_per_nesting_level() {
+        let rows = flatten_toc(&[toc(
+            "Part I",
+            1,
+            vec![toc("Ch. 1", 2, vec![toc("1.1", 3, vec![])])],
+        )]);
+        assert_eq!(active_toc_rows(&rows, 3), vec![0, 1, 2]);
     }
 
     #[test]

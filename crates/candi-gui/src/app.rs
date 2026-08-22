@@ -21,7 +21,9 @@ use crate::highlight::yaml_job;
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
-use crate::sidebar::{SearchHit, SidebarSection, TocRow, date_only, extract_snippet, flatten_toc};
+use crate::sidebar::{
+    SearchHit, SidebarSection, TocRow, active_toc_rows, date_only, extract_snippet, flatten_toc,
+};
 
 /// Pages kept as textures around the current page; texture memory outside this
 /// window is released while the original bitmaps stay cached.
@@ -1082,9 +1084,11 @@ impl ReaderApp {
             ui.label(egui::RichText::new("No table of contents").weak());
             return;
         }
+        let active = active_toc_rows(&self.toc_rows, self.session.page);
+        let accent = color_of(self.theme.accent);
         let mut jump = None;
-        for row in &self.toc_rows {
-            if toc_row_ui(ui, row).clicked() {
+        for (idx, row) in self.toc_rows.iter().enumerate() {
+            if toc_row_ui(ui, row, active.contains(&idx), accent).clicked() {
                 jump = Some(row.page);
             }
         }
@@ -1116,7 +1120,8 @@ impl ReaderApp {
                         "p. {} · {}",
                         bookmark.page + 1,
                         date_only(&bookmark.created_at)
-                    ),
+                    )
+                    .into(),
                 )
                 .clicked()
                 {
@@ -1159,7 +1164,9 @@ impl ReaderApp {
             }
             Some(hits) => {
                 for hit in hits {
-                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet)).clicked() {
+                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet).into())
+                        .clicked()
+                    {
                         jump = Some(hit.page);
                     }
                 }
@@ -1615,19 +1622,30 @@ fn jump_input(
 }
 
 /// One contents row: full-width clickable title indented 12 pt per outline
-/// level, truncated when too long.
-fn toc_row_ui(ui: &mut egui::Ui, row: &TocRow) -> egui::Response {
+/// level, truncated when too long. Rows containing the reading position are
+/// accent-tinted (design spec §12/§24).
+fn toc_row_ui(
+    ui: &mut egui::Ui,
+    row: &TocRow,
+    active: bool,
+    accent: egui::Color32,
+) -> egui::Response {
     ui.horizontal(|ui| {
         ui.add_space(INDENT_PER_LEVEL * row.depth as f32);
-        click_row(ui, format!("{}   p. {}", row.title, row.page + 1))
+        let text = format!("{}   p. {}", row.title, row.page + 1);
+        let mut rich = egui::RichText::new(text);
+        if active {
+            rich = rich.color(accent);
+        }
+        click_row(ui, rich)
     })
     .inner
 }
 
 /// Full-width single-line label that truncates instead of wrapping.
-fn click_row(ui: &mut egui::Ui, text: String) -> egui::Response {
+fn click_row(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
     ui.add(
-        egui::Label::new(egui::RichText::new(text))
+        egui::Label::new(text)
             .truncate()
             .sense(egui::Sense::click()),
     )
