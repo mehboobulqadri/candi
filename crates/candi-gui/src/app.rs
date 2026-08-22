@@ -178,6 +178,7 @@ impl ReaderApp {
                 self.page_sizes.clear();
                 self.pending_scroll = None;
                 self.primed = false;
+                self.sidebar_open = true;
 
                 let theme_name = opened.session.theme.clone();
                 self.session = opened.session;
@@ -717,55 +718,77 @@ impl ReaderApp {
     // --- chrome ----------------------------------------------------------
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.menu_button("☰", |ui| {
-                if ui.button("Open File…   Ctrl+O").clicked() {
-                    ui.close_menu();
-                    self.open_dialog();
-                }
-                if ui.button("Save State   Ctrl+S").clicked() {
-                    ui.close_menu();
-                    self.save_state();
-                }
-                self.theme_menu(ui);
-                if ui.button("Edit theme YAML…   Ctrl+E").clicked() {
-                    ui.close_menu();
-                    self.open_theme_editor();
-                }
-                if ui.button("About Candi").clicked() {
-                    ui.close_menu();
-                    self.about_open = true;
+        // Roomier buttons: the hamburger and page-nav arrows were cramped at
+        // the default padding.
+        ui.style_mut().spacing.button_padding = egui::vec2(10.0, 4.0);
+        let row_w = ui.available_width();
+        ui.columns(3, |columns| {
+            columns[0].horizontal(|ui| {
+                ui.menu_button(egui::RichText::new("☰").size(16.0), |ui| {
+                    if ui.button("Open File…   Ctrl+O").clicked() {
+                        ui.close_menu();
+                        self.open_dialog();
+                    }
+                    if ui.button("Save State   Ctrl+S").clicked() {
+                        ui.close_menu();
+                        self.save_state();
+                    }
+                    self.theme_menu(ui);
+                    if ui.button("Edit theme YAML…   Ctrl+E").clicked() {
+                        ui.close_menu();
+                        self.open_theme_editor();
+                    }
+                    if ui.button("About Candi").clicked() {
+                        ui.close_menu();
+                        self.about_open = true;
+                    }
+                });
+
+                // Title sits next to the burger and truncates with an
+                // ellipsis instead of consuming the row.
+                if !self.filename.is_empty() {
+                    let title_max = ui.available_width().min(row_w * 0.25);
+                    let title =
+                        egui::Label::new(egui::RichText::new(&self.filename).strong()).truncate();
+                    ui.add_sized([title_max, 20.0], title);
                 }
             });
 
-            ui.with_layout(
+            columns[1].with_layout(
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    if !self.filename.is_empty() {
-                        ui.strong(&self.filename);
+                    let count = self.page_count();
+                    let current = self.session.page;
+                    if ui
+                        .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
+                        .clicked()
+                    {
+                        self.goto_page(current - 1);
+                    }
+                    if count > 0 {
+                        ui.label(format!("{} / {}", current + 1, count));
+                    } else {
+                        ui.label("–");
+                    }
+                    if ui
+                        .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
+                        .clicked()
+                    {
+                        self.goto_page(current + 1);
                     }
                 },
             );
 
-            let count = self.page_count();
-            let current = self.session.page;
-            if ui
-                .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
-                .clicked()
-            {
-                self.goto_page(current - 1);
-            }
-            if count > 0 {
-                ui.label(format!("{} / {}", current + 1, count));
-            } else {
-                ui.label("–");
-            }
-            if ui
-                .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
-                .clicked()
-            {
-                self.goto_page(current + 1);
-            }
+            columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let sidebar_label = if self.sidebar_open { "◧" } else { "▤" };
+                if ui
+                    .button(sidebar_label)
+                    .on_hover_text("Toggle sidebar (Ctrl+B)")
+                    .clicked()
+                {
+                    self.sidebar_open = !self.sidebar_open;
+                }
+            });
         });
     }
 
@@ -930,7 +953,9 @@ impl ReaderApp {
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            egui::ComboBox::from_label("Theme")
+            // Label first, then the value it names.
+            ui.label("Theme");
+            egui::ComboBox::from_id_salt("theme_combo")
                 .selected_text(&self.theme.name)
                 .show_ui(ui, |ui| {
                     for name in BUILTIN_NAMES {
