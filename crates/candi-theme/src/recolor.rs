@@ -3,11 +3,19 @@
 //! Guarded luminance LUT recolor pass.
 //!
 //! Maps a page bitmap's neutral tones onto a theme's `page_fg`/`page_bg`
-//! (dark text → fg, paper → bg) while leaving saturated pixels — figures,
-//! images — untouched. Pure integer math, one pass over the pixels; the only
-//! allocations are stack arrays.
+//! (dark text → fg, paper → bg) while protecting saturated pixels — figures,
+//! images. Fully saturated pixels pass through untouched; partially
+//! saturated ones (anti-aliased edges of colored text) blend linearly toward
+//! their mapped color so they do not leave bright halos on dark themes.
+//! Pure integer math, one pass over the pixels; the only allocations are
+//! stack arrays.
 
 use crate::color::Color;
+
+/// ΔRGB above which a pixel counts as fully saturated and is left alone.
+const SAT_SKIP: u8 = 96;
+/// ΔRGB up to which a pixel is neutral enough for the full remap.
+const SAT_MAP: u8 = 48;
 
 /// Recolor an RGBA8 buffer in place.
 ///
@@ -57,13 +65,27 @@ pub fn recolor(rgba: &mut [u8], page_bg: Color, page_fg: Color) {
 
     for px in rgba.chunks_exact_mut(4) {
         let (r, g, b) = (px[0], px[1], px[2]);
-        if r.max(g).max(b) - r.min(g).min(b) > 48 {
+        let sat = r.max(g).max(b) - r.min(g).min(b);
+        if sat >= SAT_SKIP {
             continue;
         }
         let l = luma(r, g, b) as usize;
-        px[0] = luts[0][l];
-        px[1] = luts[1][l];
-        px[2] = luts[2][l];
+        if sat <= SAT_MAP {
+            px[0] = luts[0][l];
+            px[1] = luts[1][l];
+            px[2] = luts[2][l];
+            continue;
+        }
+        // Between the thresholds: blend mapped toward original as saturation
+        // rises, so red text's anti-aliased edges follow the theme instead of
+        // staying harsh on dark backgrounds.
+        let t = u32::from(sat - SAT_MAP) * 255 / u32::from(SAT_SKIP - SAT_MAP);
+        let mix = |mapped: u8, orig: u8| -> u8 {
+            ((u32::from(mapped) * (255 - t) + u32::from(orig) * t + 127) / 255) as u8
+        };
+        px[0] = mix(luts[0][l], r);
+        px[1] = mix(luts[1][l], g);
+        px[2] = mix(luts[2][l], b);
     }
 }
 

@@ -54,16 +54,69 @@ fn gray_ramp_is_monotonic_per_channel() {
     }
 }
 
-#[test]
-fn saturated_pixels_are_untouched() {
+/// Rec.601 integer luma, mirroring the pass's own formula.
+fn luma_of(c: [u8; 3]) -> u8 {
+    ((77 * c[0] as u32 + 151 * c[1] as u32 + 28 * c[2] as u32) >> 8) as u8
+}
+
+/// A percentile-clean page with `px` as its first pixel, so the pixel's
+/// mapping is decided by the LUT rather than by the histogram.
+fn page_with_pixel(px: [u8; 3]) -> Vec<u8> {
     let mut buf = scan_page(32);
-    let red = [255u8, 0, 0, 255];
-    buf[..4].copy_from_slice(&red);
-    let amber = [200u8, 100, 80, 255];
-    buf[4..8].copy_from_slice(&amber);
+    buf[..3].copy_from_slice(&px);
+    buf
+}
+
+#[test]
+fn fully_saturated_pixels_are_untouched() {
+    // Pure red and a muted figure amber both sit at ΔRGB ≥ 96.
+    let mut red = page_with_pixel([255, 0, 0]);
+    recolor(&mut red, dark_bg(), dark_fg());
+    assert_eq!(&red[..4], &[255, 0, 0, 255]);
+
+    let mut amber = page_with_pixel([200, 100, 80]);
+    recolor(&mut amber, dark_bg(), dark_fg());
+    assert_eq!(&amber[..4], &[200, 100, 80, 255]);
+}
+
+#[test]
+fn neutral_ceiling_maps_fully_and_saturation_floor_is_untouched() {
+    // ΔRGB == 48 remaps exactly like the pixel's gray twin.
+    let edge = [176u8, 128, 128];
+    let l = luma_of(edge);
+    let mut buf = page_with_pixel(edge);
+    let mut twin = page_with_pixel([l, l, l]);
     recolor(&mut buf, dark_bg(), dark_fg());
-    assert_eq!(&buf[..4], &red);
-    assert_eq!(&buf[4..8], &amber);
+    recolor(&mut twin, dark_bg(), dark_fg());
+    assert_eq!(&buf[..3], &twin[..3]);
+
+    // ΔRGB == 96 is already fully saturated and stays put.
+    let mut sat = page_with_pixel([224, 128, 128]);
+    recolor(&mut sat, dark_bg(), dark_fg());
+    assert_eq!(&sat[..4], &[224, 128, 128, 255]);
+}
+
+#[test]
+fn mid_saturation_blends_between_mapped_and_original() {
+    // ΔRGB = 72: halfway through the blend band, so every channel must land
+    // strictly between the original and the fully mapped gray twin. Red text's
+    // anti-aliased edges follow the theme instead of leaving harsh halos.
+    let px = [200u8, 128, 128];
+    let l = luma_of(px);
+    let mut blended = page_with_pixel(px);
+    let mut twin = page_with_pixel([l, l, l]);
+    recolor(&mut blended, dark_bg(), dark_fg());
+    recolor(&mut twin, dark_bg(), dark_fg());
+    for i in 0..3 {
+        let lo = px[i].min(twin[i]);
+        let hi = px[i].max(twin[i]);
+        assert!(
+            blended[i] > lo && blended[i] < hi,
+            "channel {i}: {} not between {lo} and {hi}",
+            blended[i]
+        );
+        assert_ne!(blended[i], px[i], "channel {i} must move off the original");
+    }
 }
 
 #[test]
