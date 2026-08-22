@@ -769,30 +769,44 @@ impl ReaderApp {
                 }
             });
 
-            columns[1].with_layout(
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    let count = self.page_count();
-                    let current = self.session.page;
-                    if ui
-                        .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
-                        .clicked()
-                    {
-                        self.goto_page(current - 1);
-                    }
-                    if count > 0 {
-                        ui.label(format!("{} / {}", current + 1, count));
-                    } else {
-                        ui.label("–");
-                    }
-                    if ui
-                        .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
-                        .clicked()
-                    {
-                        self.goto_page(current + 1);
-                    }
-                },
-            );
+            columns[1].horizontal(|ui| {
+                let count = self.page_count();
+                let current = self.session.page;
+                let counter = if count > 0 {
+                    format!("{} / {}", current + 1, count)
+                } else {
+                    "–".to_owned()
+                };
+                // Center the cluster by its measured width; a justified
+                // layout would stretch the buttons into bars.
+                let counter_w = ui
+                    .painter()
+                    .layout_no_wrap(
+                        counter.clone(),
+                        egui::FontId::proportional(14.0),
+                        egui::Color32::WHITE,
+                    )
+                    .size()
+                    .x;
+                let arrow_w = ui.spacing().button_padding.x * 2.0 + 12.0;
+                let gap = ui.spacing().item_spacing.x;
+                let cluster_w = arrow_w * 2.0 + counter_w + gap * 2.0;
+                ui.add_space(((ui.available_width() - cluster_w) * 0.5).max(0.0));
+
+                if ui
+                    .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
+                    .clicked()
+                {
+                    self.goto_page(current - 1);
+                }
+                ui.label(counter);
+                if ui
+                    .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
+                    .clicked()
+                {
+                    self.goto_page(current + 1);
+                }
+            });
 
             columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let sidebar_label = if self.sidebar_open { "◧" } else { "▤" };
