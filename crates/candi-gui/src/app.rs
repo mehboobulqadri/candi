@@ -17,6 +17,7 @@ use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, to_yaml}
 use eframe::egui;
 use egui::Key;
 
+use crate::highlight::yaml_job;
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
@@ -597,7 +598,13 @@ impl ReaderApp {
                 ui.colored_label(ERROR_RED, err);
             }
             let mut buffer = std::mem::take(&mut editor.buffer);
-            let edit_box = egui::TextEdit::multiline(&mut buffer).code_editor();
+            let mut layouter = |ui: &egui::Ui, text: &str, _wrap_width: f32| {
+                let job = yaml_job(text, &self.theme);
+                ui.fonts(|f| f.layout_job(job))
+            };
+            let edit_box = egui::TextEdit::multiline(&mut buffer)
+                .font(egui::TextStyle::Monospace)
+                .layouter(&mut layouter);
             let response = ui.add_sized([ui.available_width(), ui.available_height()], edit_box);
             if response.changed() {
                 editor.edit(buffer)

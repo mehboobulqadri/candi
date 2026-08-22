@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 mod app;
+mod highlight;
 mod render;
 mod sidebar;
 
