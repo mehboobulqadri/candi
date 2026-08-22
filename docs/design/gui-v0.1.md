@@ -1,10 +1,13 @@
 # Candi GUI v0.1 — Design Guide
 
-This document is the authoritative design specification for the Candi desktop
-GUI (`candi`) at v0.1. Reference mockups:
+This document is the implementation design guide for the Candi desktop GUI
+(`candi`) at v0.1. The visual/interaction specification lives in
+[CANDI_GUI_DESIGN_SPEC.md](CANDI_GUI_DESIGN_SPEC.md); where they disagree,
+the spec wins. Reference mockups:
 
-- `docs/design/mockups/ideal-ui-dark.png` — target aesthetic
-- `docs/design/mockups/ideal-ui-light.png` — alternate theme
+- `mockups/reference-menu-open.png` — v0.1 UX-alignment reference (menu open)
+- `mockups/ideal-ui-dark.png` — target aesthetic
+- `mockups/ideal-ui-light.png` — alternate theme
 
 ## 1. Goal
 
