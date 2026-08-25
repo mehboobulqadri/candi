@@ -1093,37 +1093,39 @@ impl ReaderApp {
     /// Section content beside the rail: a small header with the item count,
     /// then the active panel's scrollable body.
     fn section_panel(&mut self, ui: &mut egui::Ui) {
-        let contents_count = (!self.toc_rows.is_empty()).then_some(self.toc_rows.len());
-        let bookmark_count =
-            (!self.session.bookmarks.is_empty()).then_some(self.session.bookmarks.len());
-        let search_count = self.search_hits.as_deref().map(<[SearchHit]>::len);
-        let count = match self.section {
-            SidebarSection::Contents => contents_count,
-            SidebarSection::Bookmarks => bookmark_count,
-            SidebarSection::Search => search_count,
-        };
-        ui.label(
-            egui::RichText::new(section_header(self.section, count))
-                .weak()
-                .small(),
-        );
-        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            let contents_count = (!self.toc_rows.is_empty()).then_some(self.toc_rows.len());
+            let bookmark_count =
+                (!self.session.bookmarks.is_empty()).then_some(self.session.bookmarks.len());
+            let search_count = self.search_hits.as_deref().map(<[SearchHit]>::len);
+            let count = match self.section {
+                SidebarSection::Contents => contents_count,
+                SidebarSection::Bookmarks => bookmark_count,
+                SidebarSection::Search => search_count,
+            };
+            ui.label(
+                egui::RichText::new(section_header(self.section, count))
+                    .weak()
+                    .small(),
+            );
+            ui.add_space(6.0);
 
-        let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
-        match self.section {
-            SidebarSection::Contents => {
-                area.id_salt("sidebar_contents")
-                    .show(ui, |ui| self.show_contents(ui));
-            }
-            SidebarSection::Bookmarks => {
-                area.id_salt("sidebar_bookmarks")
-                    .show(ui, |ui| self.show_bookmarks(ui));
-            }
-            SidebarSection::Search => {
-                area.id_salt("sidebar_search")
-                    .show(ui, |ui| self.show_search(ui));
-            }
-        };
+            let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+            match self.section {
+                SidebarSection::Contents => {
+                    area.id_salt("sidebar_contents")
+                        .show(ui, |ui| self.show_contents(ui));
+                }
+                SidebarSection::Bookmarks => {
+                    area.id_salt("sidebar_bookmarks")
+                        .show(ui, |ui| self.show_bookmarks(ui));
+                }
+                SidebarSection::Search => {
+                    area.id_salt("sidebar_search")
+                        .show(ui, |ui| self.show_search(ui));
+                }
+            };
+        });
     }
 
     fn show_contents(&mut self, ui: &mut egui::Ui) {
