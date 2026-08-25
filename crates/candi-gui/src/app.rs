@@ -1032,7 +1032,8 @@ impl ReaderApp {
         ui.vertical(|ui| {
             ui.set_width(RAIL_WIDTH);
             chrome_style(ui);
-            ui.set_min_height(ui.available_height());
+            let rail_height = ui.available_height();
+            ui.set_min_height(rail_height);
             let sections = [
                 (SidebarSection::Contents, Icon::List, "Contents"),
                 (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
@@ -1313,6 +1314,7 @@ impl ReaderApp {
             visuals.widgets.inactive.bg_fill = accent;
             visuals.widgets.hovered.bg_fill = accent;
             visuals.widgets.active.bg_fill = accent;
+            ui.spacing_mut().slider_width = 180.0;
             ui.spacing_mut().interact_size.y = 12.0;
             ui.add_enabled(
                 can_zoom,
@@ -1710,12 +1712,28 @@ fn toc_row_ui(
 ) -> egui::Response {
     ui.horizontal(|ui| {
         ui.add_space(INDENT_PER_LEVEL * row.depth as f32);
-        let text = format!("{}   p. {}", row.title, row.page + 1);
-        let mut rich = egui::RichText::new(text);
+        let mut title = egui::RichText::new(&row.title);
+        let mut page = egui::RichText::new(format!("p. {}", row.page + 1)).weak();
         if active {
-            rich = rich.color(accent);
+            title = title.color(accent);
+            page = page.color(accent);
         }
-        click_row(ui, rich)
+        // Right-to-left: the page number hugs the row's right edge (design
+        // spec §12); the title fills the rest and truncates.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let page_resp = ui
+                .add(egui::Label::new(page).sense(egui::Sense::click()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let title_resp = ui
+                .add(
+                    egui::Label::new(title)
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            title_resp.union(page_resp)
+        })
+        .inner
     })
     .inner
 }
