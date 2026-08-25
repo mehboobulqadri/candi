@@ -35,7 +35,7 @@ const TAGLINE_MIN_WINDOW_WIDTH: f32 = 900.0;
 /// Sidebar icon rail width (design spec §11).
 const RAIL_WIDTH: f32 = 56.0;
 /// Square hit target of a rail icon.
-const RAIL_BUTTON_HEIGHT: f32 = 30.0;
+const RAIL_BUTTON_HEIGHT: f32 = 38.0;
 /// Upper end of the zoom slider; keyboard steps may still go higher, up to
 /// candi-core's own limit (design spec §9).
 const SLIDER_MAX_PERCENT: u16 = 400;
@@ -799,8 +799,9 @@ impl ReaderApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
+        chrome_style(ui);
         ui.columns(3, |columns| {
-            columns[0].horizontal(|ui| {
+            columns[0].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 self.icon_menu(ui, Icon::Menu, "Menu — file actions", Self::file_menu);
 
                 let brand = egui::RichText::new("Candi")
@@ -1030,6 +1031,7 @@ impl ReaderApp {
         let fg = color_of(self.theme.ui_fg);
         ui.vertical(|ui| {
             ui.set_width(RAIL_WIDTH);
+            chrome_style(ui);
             let sections = [
                 (SidebarSection::Contents, Icon::List, "Contents"),
                 (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
@@ -1067,8 +1069,10 @@ impl ReaderApp {
                         self.focus_search = true;
                     }
                 }
+                ui.add_space(6.0);
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                ui.add_space(10.0);
                 if self
                     .icons
                     .sized(
@@ -1103,6 +1107,7 @@ impl ReaderApp {
                 .weak()
                 .small(),
         );
+        ui.add_space(6.0);
 
         let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
         match self.section {
@@ -1222,8 +1227,11 @@ impl ReaderApp {
 
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
         ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
+        chrome_style(ui);
         ui.columns(3, |columns| {
-            columns[0].horizontal(|ui| self.theme_controls(ui));
+            columns[0].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                self.theme_controls(ui)
+            });
             columns[1].with_layout(
                 egui::Layout::left_to_right(egui::Align::Center)
                     .with_main_align(egui::Align::Center),
@@ -1555,6 +1563,16 @@ impl ReaderApp {
     }
 }
 
+/// Flat chrome: borderless idle/hover widgets, transparent idle fill — the
+/// mockup's borderless icon look.
+fn chrome_style(ui: &mut egui::Ui) {
+    let widgets = &mut ui.style_mut().visuals.widgets;
+    widgets.inactive.bg_stroke = egui::Stroke::NONE;
+    widgets.hovered.bg_stroke = egui::Stroke::NONE;
+    widgets.active.bg_stroke = egui::Stroke::NONE;
+    widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+}
+
 fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
 }
@@ -1770,14 +1788,18 @@ impl eframe::App for ReaderApp {
             self.open_path(file);
         }
         if !self.focus_mode {
-            egui::TopBottomPanel::top("top_bar").show(ctx, |ui| self.top_bar(ui));
+            egui::TopBottomPanel::top("top_bar")
+                .exact_height(46.0)
+                .show(ctx, |ui| self.top_bar(ui));
             if self.sidebar_open {
                 egui::SidePanel::left("sidebar")
                     .default_width(SIDEBAR_WIDTH)
                     .resizable(false)
                     .show(ctx, |ui| self.sidebar(ui));
             }
-            egui::TopBottomPanel::bottom("bottom_bar").show(ctx, |ui| self.bottom_bar(ui));
+            egui::TopBottomPanel::bottom("bottom_bar")
+                .exact_height(42.0)
+                .show(ctx, |ui| self.bottom_bar(ui));
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {

@@ -12,9 +12,9 @@ use std::ops::Range;
 use candi_core::ZoomMode;
 
 /// Vertical gap between consecutive pages, in logical points.
-pub const GAP: f32 = 8.0;
+pub const GAP: f32 = 16.0;
 /// Margin around the content block on every side, in logical points.
-pub const MARGIN: f32 = 12.0;
+pub const MARGIN: f32 = 20.0;
 /// Zoom quantization step, in percent.
 const ZOOM_STEP: f32 = 5.0;
 
@@ -173,39 +173,45 @@ mod tests {
         assert_eq!(layout.zoom, 0.5);
         assert!((rect.w - 306.0).abs() < 1e-3);
         assert!((rect.h - 396.0).abs() < 1e-3);
-        // Content width is 800 - 24 = 776; centered: x = 12 + (776-306)/2.
-        assert!((rect.x - (MARGIN + (776.0 - rect.w) / 2.0)).abs() < 1e-3);
+        // Content width is 800 - 2*MARGIN = 760; centered: x = MARGIN + (760-w)/2.
+        let usable = 800.0 - 2.0 * MARGIN;
+        assert!((rect.x - (MARGIN + (usable - rect.w) / 2.0)).abs() < 1e-3);
 
         let wide = Layout::build(&[(1200.0, 400.0)], ZoomMode::Percent(100), 800.0);
         // Overflowing pages stay horizontally centered around the usable area
         // (both edges clip symmetrically, as in SumatraPDF).
         let rect = wide.rects[0];
-        let content_center = MARGIN + (776.0 / 2.0);
+        let content_center = MARGIN + (usable / 2.0);
         assert!((rect.x + rect.w / 2.0 - content_center).abs() < 1e-3);
     }
 
     #[test]
     fn fit_width_fills_widest_page_without_overflowing() {
-        // 640 window: usable 616; 616/612 = 100.65% → floor to 100%.
+        // 640 window: usable 600; 600/612 = 98.04% → floor to 95%.
         let layout = letter_layout(ZoomMode::FitWidth, 640.0, 1);
-        assert_eq!(layout.zoom, 1.0);
+        assert_eq!(layout.zoom, 0.95);
         assert!(layout.rects[0].w <= 640.0 - 2.0 * MARGIN);
 
         // Mixed sizes resolve against the widest page so both fit.
         let sizes = vec![LETTER, (300.0, 500.0)];
         let mixed = Layout::build(&sizes, ZoomMode::FitWidth, 640.0);
-        assert_eq!(mixed.zoom, 1.0);
-        assert!((mixed.rects[1].w - 300.0).abs() < 1e-3);
+        assert_eq!(mixed.zoom, 0.95);
+        assert!((mixed.rects[1].w - 300.0 * mixed.zoom).abs() < 1e-3);
         assert!(mixed.rects[1].x > mixed.rects[0].x, "narrower page centers");
     }
 
     #[test]
     fn visible_range_windows_the_document() {
         let layout = letter_layout(ZoomMode::Percent(100), 800.0, 10);
-        // Page height 792; gap 8; stride 800. Band fully inside page 2.
-        assert_eq!(layout.visible_range(MARGIN + 1600.0 + 100.0, 100.0), 2..3);
-        // Band straddling the page 1 → page 2 boundary (y = 12 + 800 + 792).
-        assert_eq!(layout.visible_range(1600.0, 20.0), 1..3);
+        // Page height 792; stride 792 + GAP.
+        assert_eq!(
+            layout.visible_range(MARGIN + 2.0 * (792.0 + GAP) + 100.0, 100.0),
+            2..3
+        );
+        // Band straddling the page 1 → page 2 boundary: starts inside page 1,
+        // extends past page 2's top edge across the gap.
+        let boundary = MARGIN + (792.0 + GAP) + 792.0;
+        assert_eq!(layout.visible_range(boundary - 2.0, 20.0), 1..3);
         // Whole document at once.
         let full = layout.visible_range(0.0, layout.total_height);
         assert_eq!(full, 0..10);
@@ -225,7 +231,7 @@ mod tests {
         assert_eq!(layout.page_at(MARGIN + 1.0), Some(0));
         // In the gap after page 0 resolves to page 0.
         assert_eq!(layout.page_at(MARGIN + 792.0 + GAP / 2.0), Some(0));
-        assert_eq!(layout.page_at(MARGIN + 800.0 + 1.0), Some(1));
+        assert_eq!(layout.page_at(MARGIN + (792.0 + GAP) + 1.0), Some(1));
         assert_eq!(
             layout.page_at(layout.total_height + 1.0),
             Some(2),
@@ -259,9 +265,9 @@ mod tests {
 
     #[test]
     fn fit_width_percent_uses_usable_width_over_widest_page() {
-        // Usable = 800 - 24 = 776; 776/612 = 126.79…% → floor to 125.
-        assert_eq!(fit_width_percent(&[LETTER], 800.0), 125);
-        assert_eq!(fit_width_percent(&[LETTER, (300.0, 500.0)], 800.0), 125);
+        // Usable = 800 - 2*MARGIN = 760; 760/612 = 124.18…% → floor to 120.
+        assert_eq!(fit_width_percent(&[LETTER], 800.0), 120);
+        assert_eq!(fit_width_percent(&[LETTER, (300.0, 500.0)], 800.0), 120);
     }
 
     #[test]
