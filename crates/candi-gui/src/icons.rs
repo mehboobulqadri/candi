@@ -39,6 +39,13 @@ const SOURCES: &[(Icon, &str)] = &[
     (Icon::Plus, include_str!("../assets/icons/plus.svg")),
     (Icon::Minus, include_str!("../assets/icons/minus.svg")),
     (Icon::X, include_str!("../assets/icons/x.svg")),
+    (Icon::Page, include_str!("../assets/icons/file-text.svg")),
+    (
+        Icon::MoveHorizontal,
+        include_str!("../assets/icons/move-horizontal.svg"),
+    ),
+    (Icon::Save, include_str!("../assets/icons/save.svg")),
+    (Icon::Info, include_str!("../assets/icons/info.svg")),
 ];
 
 /// A chrome icon.
@@ -59,6 +66,10 @@ pub enum Icon {
     Plus,
     Minus,
     X,
+    Page,
+    MoveHorizontal,
+    Save,
+    Info,
 }
 
 impl Icon {
@@ -108,23 +119,14 @@ impl IconRender {
         ui.add(egui::Button::image(image))
     }
 
-    /// Icon button centered in an explicit cell (the sidebar rail).
-    pub fn sized(&mut self, ui: &mut Ui, cell: Vec2, icon: Icon, color: Color32) -> egui::Response {
+    /// Paint an icon texture at an arbitrary rect (nav rows, menu items).
+    pub fn paint_at(&mut self, ui: &mut Ui, rect: egui::Rect, icon: Icon, color: Color32) {
         let tex = self.texture(ui.ctx(), icon);
-        let tint = if ui.is_enabled() {
-            color
-        } else {
-            ui.visuals().widgets.inactive.fg_stroke.color
-        };
-        let side = cell.y.min(cell.x) * 0.62;
-        let image = egui::Image::new((tex.id(), Vec2::splat(side))).tint(tint);
-        ui.allocate_ui(cell, |ui| {
-            ui.with_layout(
-                egui::Layout::top_down_justified(egui::Align::Center),
-                |ui| ui.add(egui::Button::image(image)),
-            )
-            .inner
-        })
-        .inner
+        ui.painter().image(
+            tex.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            color,
+        );
     }
 }
