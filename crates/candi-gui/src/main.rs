@@ -2,6 +2,7 @@
 
 mod app;
 mod highlight;
+mod icons;
 mod render;
 mod sidebar;
 

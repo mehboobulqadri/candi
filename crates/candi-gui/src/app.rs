@@ -18,6 +18,7 @@ use eframe::egui;
 use egui::Key;
 
 use crate::highlight::yaml_job;
+use crate::icons::{Icon, icon_button, icon_button_sized};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
@@ -32,7 +33,7 @@ const SIDEBAR_WIDTH: f32 = 260.0;
 /// Window width below which the brand tagline hides (design spec §4).
 const TAGLINE_MIN_WINDOW_WIDTH: f32 = 900.0;
 /// Sidebar icon rail width (design spec §11).
-const RAIL_WIDTH: f32 = 48.0;
+const RAIL_WIDTH: f32 = 56.0;
 /// Square hit target of a rail icon.
 const RAIL_BUTTON_HEIGHT: f32 = 30.0;
 /// Upper end of the zoom slider; keyboard steps may still go higher, up to
@@ -797,9 +798,7 @@ impl ReaderApp {
         ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
         ui.columns(3, |columns| {
             columns[0].horizontal(|ui| {
-                ui.menu_button(egui::RichText::new("☰").size(16.0), |ui| {
-                    self.file_menu(ui)
-                });
+                self.icon_menu(ui, Icon::Menu, "Menu — file actions", Self::file_menu);
 
                 let brand = egui::RichText::new("Candi")
                     .strong()
@@ -823,24 +822,21 @@ impl ReaderApp {
             );
 
             columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button(egui::RichText::new("⋮").size(16.0), |ui| {
-                    self.app_menu(ui)
-                });
-                if ui
-                    .button(if self.sidebar_open { "◧" } else { "▤" })
+                let accent = color_of(self.theme.accent);
+                let fg = color_of(self.theme.ui_fg);
+                self.icon_menu(ui, Icon::Dots, "More actions", Self::app_menu);
+                if icon_button(ui, Icon::Panel, 26.0, fg)
                     .on_hover_text("Toggle sidebar (Ctrl+B)")
                     .clicked()
                 {
                     self.sidebar_open = !self.sidebar_open;
                 }
-                let search_glyph = egui::RichText::new("🔍").size(15.0);
-                let search_glyph = if self.sidebar_open && self.section == SidebarSection::Search {
-                    search_glyph.color(color_of(self.theme.accent))
+                let search_color = if self.sidebar_open && self.section == SidebarSection::Search {
+                    accent
                 } else {
-                    search_glyph
+                    fg
                 };
-                if ui
-                    .button(search_glyph)
+                if icon_button(ui, Icon::Search, 26.0, search_color)
                     .on_hover_text("Search (Ctrl+F)")
                     .clicked()
                 {
@@ -848,26 +844,51 @@ impl ReaderApp {
                     self.section = SidebarSection::Search;
                     self.focus_search = true;
                 }
-                if ui
-                    .button(egui::RichText::new("⛶").size(15.0))
+                if icon_button(ui, Icon::Focus, 26.0, fg)
                     .on_hover_text("Focus mode (F11)")
                     .clicked()
                 {
                     self.focus_mode = !self.focus_mode;
                 }
-                self.nav_cluster(ui);
+                self.nav_cluster(ui, fg);
             });
         });
+    }
+
+    /// Icon button that opens a popup menu — the font-free replacement for
+    /// `menu_button`, which only accepts text.
+    fn icon_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        icon: Icon,
+        tip: &str,
+        contents: impl FnOnce(&mut Self, &mut egui::Ui),
+    ) {
+        let resp = icon_button(ui, icon, 26.0, color_of(self.theme.ui_fg));
+        let resp = resp.on_hover_text(tip);
+        let id = resp.id.with("popup");
+        if resp.clicked() {
+            ui.memory_mut(|mem| mem.toggle_popup(id));
+        }
+        if ui.memory(|mem| mem.is_popup_open(id)) {
+            egui::popup_below_widget(
+                ui,
+                id,
+                &resp,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| contents(self, ui),
+            );
+        }
     }
 
     /// File operations menu (hamburger): open and session save.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("Open File…   Ctrl+O").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.open_dialog();
         }
         if ui.button("Save State   Ctrl+S").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.save_state();
         }
     }
@@ -875,19 +896,19 @@ impl ReaderApp {
     /// Secondary actions menu (⋮): open, document info, settings, help, about.
     fn app_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button("Open…   Ctrl+O").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.open_dialog();
         }
         if ui.button("Document Information…").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.info_open = true;
         }
         if ui.button("Settings — Theme Editor…   Ctrl+E").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.open_theme_editor();
         }
         if ui.button("Keyboard Shortcuts").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.shortcuts_open = true;
         }
         if ui
@@ -898,30 +919,31 @@ impl ReaderApp {
             })
             .clicked()
         {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.focus_mode = !self.focus_mode;
         }
         if ui.button("About Candi").clicked() {
-            ui.close_menu();
+            ui.memory_mut(|mem| mem.close_popup());
             self.about_open = true;
         }
     }
 
     /// `‹ n/N ›` cluster, leftmost of the right-hand icon group; clicking the
     /// counter turns it into an inline page input.
-    fn nav_cluster(&mut self, ui: &mut egui::Ui) {
+    fn nav_cluster(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let count = self.page_count();
         let current = self.session.page;
         let mut done = false;
 
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(count > 0 && current > 0, egui::Button::new("‹"))
-                .on_hover_text("Previous page (←)")
-                .clicked()
-            {
-                self.goto_page(current - 1);
-            }
+            ui.add_enabled_ui(count > 0 && current > 0, |ui| {
+                if icon_button(ui, Icon::ChevronLeft, 22.0, fg)
+                    .on_hover_text("Previous page (←)")
+                    .clicked()
+                {
+                    self.goto_page(current - 1);
+                }
+            });
             match self.page_jump.as_mut() {
                 Some(buffer) => {
                     let outcome = jump_input(
@@ -963,13 +985,14 @@ impl ReaderApp {
                     }
                 }
             }
-            if ui
-                .add_enabled(count > 0 && current + 1 < count, egui::Button::new("›"))
-                .on_hover_text("Next page (→)")
-                .clicked()
-            {
-                self.goto_page(current + 1);
-            }
+            ui.add_enabled_ui(count > 0 && current + 1 < count, |ui| {
+                if icon_button(ui, Icon::ChevronRight, 22.0, fg)
+                    .on_hover_text("Next page (→)")
+                    .clicked()
+                {
+                    self.goto_page(current + 1);
+                }
+            });
         });
         if done {
             self.page_jump = None;
@@ -989,26 +1012,25 @@ impl ReaderApp {
     /// small indicator bar on the rail's edge.
     fn icon_rail(&mut self, ui: &mut egui::Ui) {
         let accent = color_of(self.theme.accent);
+        let fg = color_of(self.theme.ui_fg);
         ui.vertical(|ui| {
             ui.set_width(RAIL_WIDTH);
             let sections = [
-                (SidebarSection::Contents, "≣", "Contents"),
-                (SidebarSection::Bookmarks, "⚑", "Bookmarks"),
-                (SidebarSection::Search, "🔍", "Search"),
+                (SidebarSection::Contents, Icon::List, "Contents"),
+                (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
+                (SidebarSection::Search, Icon::Search, "Search"),
             ];
-            for (section, glyph, name) in sections {
+            for (section, icon, name) in sections {
                 let active = self.section == section;
-                let mut rich = egui::RichText::new(glyph).size(17.0);
-                if active {
-                    rich = rich.color(accent);
-                }
-                let button = ui
-                    .add_sized(
-                        [RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT],
-                        egui::Button::new(rich),
-                    )
-                    .on_hover_text(name)
-                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let color = if active { accent } else { fg };
+                let button = icon_button_sized(
+                    ui,
+                    egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
+                    icon,
+                    color,
+                )
+                .on_hover_text(name)
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if active {
                     // Indicator bar hugging the window's left edge next to
                     // the active icon.
@@ -1030,13 +1052,14 @@ impl ReaderApp {
                 }
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized(
-                        [RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT],
-                        egui::Button::new(egui::RichText::new("⚙").size(17.0)),
-                    )
-                    .on_hover_text("Theme editor")
-                    .clicked()
+                if icon_button_sized(
+                    ui,
+                    egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
+                    Icon::Gear,
+                    fg,
+                )
+                .on_hover_text("Theme editor")
+                .clicked()
                 {
                     self.open_theme_editor();
                 }
@@ -1098,6 +1121,7 @@ impl ReaderApp {
     }
 
     fn show_bookmarks(&mut self, ui: &mut egui::Ui) {
+        let fg = color_of(self.theme.ui_fg);
         if self.page_count() > 0 && ui.button("Add bookmark").clicked() {
             self.session.add_bookmark(self.session.page);
         }
@@ -1127,7 +1151,7 @@ impl ReaderApp {
                 {
                     jump = Some(bookmark.page);
                 }
-                if ui.small_button("✕").clicked() {
+                if icon_button(ui, Icon::X, 18.0, fg).clicked() {
                     remove = Some(bookmark.page);
                 }
             });
@@ -1195,8 +1219,15 @@ impl ReaderApp {
     /// Theme cluster (design spec §21): an accent-tinted light/dark glyph
     /// that cycles, a dropdown that picks exactly, and Edit… for YAML.
     fn theme_controls(&mut self, ui: &mut egui::Ui) {
-        let glyph = egui::RichText::new(theme_icon(&self.theme)).color(color_of(self.theme.accent));
-        if ui.button(glyph).on_hover_text("Cycle themes (T)").clicked() {
+        if icon_button(
+            ui,
+            theme_icon(&self.theme),
+            26.0,
+            color_of(self.theme.accent),
+        )
+        .on_hover_text("Cycle themes (T)")
+        .clicked()
+        {
             self.cycle_theme();
         }
         egui::ComboBox::from_id_salt("theme_combo")
@@ -1224,17 +1255,22 @@ impl ReaderApp {
     /// quantized slider. The display is not clickable; Fit resets.
     fn zoom_controls(&mut self, ui: &mut egui::Ui) {
         let can_zoom = self.page_count() > 0;
-        if ui.add_enabled(can_zoom, egui::Button::new("−")).clicked() {
-            self.zoom_step(-5);
-        }
+        let fg = color_of(self.theme.ui_fg);
+        ui.add_enabled_ui(can_zoom, |ui| {
+            if icon_button(ui, Icon::Minus, 22.0, fg).clicked() {
+                self.zoom_step(-5);
+            }
+        });
         ui.label(
             egui::RichText::new(format!("{}%", self.zoom_pct))
                 .font(egui::FontId::proportional(14.0)),
         )
         .on_hover_text("Zoom");
-        if ui.add_enabled(can_zoom, egui::Button::new("+")).clicked() {
-            self.zoom_step(5);
-        }
+        ui.add_enabled_ui(can_zoom, |ui| {
+            if icon_button(ui, Icon::Plus, 22.0, fg).clicked() {
+                self.zoom_step(5);
+            }
+        });
 
         let mut pct = i32::from(self.zoom_pct);
         let accent = color_of(self.theme.accent);
@@ -1540,11 +1576,11 @@ fn section_header(section: SidebarSection, count: Option<usize>) -> String {
 
 /// ☀ or 🌙 by the UI background's luma — an icon for what is active now, not
 /// a toggle promise (design spec §21).
-fn theme_icon(theme: &Theme) -> &'static str {
+fn theme_icon(theme: &Theme) -> Icon {
     let bg = theme.ui_bg;
     // Integer Rec.601, matching candi-theme's recolor pass.
     let luma = (77u32 * u32::from(bg.r()) + 151 * u32::from(bg.g()) + 28 * u32::from(bg.b())) >> 8;
-    if luma >= 128 { "☀" } else { "🌙" }
+    if luma >= 128 { Icon::Sun } else { Icon::Moon }
 }
 
 /// What the center pane shows this frame. The theme editor wins over
@@ -1875,17 +1911,20 @@ mod tests {
     fn theme_icon_follows_the_ui_background_luma() {
         for name in BUILTIN_NAMES {
             let icon = theme_icon(&builtin_theme(name));
-            assert!(icon == "☀" || icon == "🌙", "{name} produced {icon:?}");
+            assert!(
+                icon == Icon::Sun || icon == Icon::Moon,
+                "{name} produced {icon:?}"
+            );
         }
-        assert_eq!(theme_icon(&builtin_theme("Light")), "☀");
+        assert_eq!(theme_icon(&builtin_theme("Light")), Icon::Sun);
         assert_eq!(
             theme_icon(&builtin_theme("Sepia")),
-            "🌙",
+            Icon::Moon,
             "sepia warms the page, its chrome stays dark"
         );
-        assert_eq!(theme_icon(&builtin_theme("Dark")), "🌙");
-        assert_eq!(theme_icon(&builtin_theme("Warm Dark")), "🌙");
-        assert_eq!(theme_icon(&builtin_theme("True Dark")), "🌙");
+        assert_eq!(theme_icon(&builtin_theme("Dark")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Warm Dark")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("True Dark")), Icon::Moon);
     }
 
     #[test]
