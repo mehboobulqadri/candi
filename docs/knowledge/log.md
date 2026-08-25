@@ -188,3 +188,27 @@ Format per entry:
 - **Decision/Issue:** User standing rule — Mia may approve worker sandbox/network/git_write and slice PR merge to `dev` without user round-trip; destructive git and 01/11 tag/dogfood/main-merge still need user.
 - **Why:** Phase-01 cadence stalls when subagents bounce permission prompts to the human; orchestrator already owns delegation and merge sequencing.
 - **Changed:** memory, handoff, status, log updated; orchestration skill Guardrails one-liner. Post-merge CI run `32384136200` on `b9902d0` verified green (all 7 jobs) — handoff hazard cleared.
+
+## 2026-08-25 — v0.1 UX-perfection iteration (slice/02-01-gui-reader)
+
+- **What:** Lucide SVG chrome icons (egui_extras `svg`, ISC, assets
+  committed), spacing pass (bar heights, flat chrome, rail rhythm, GAP 16 /
+  MARGIN 20), and five layout bug fixes: sidebar section panel stacking,
+  nav-cluster LTR order, rail gear pinning (three attempts, settled by
+  eprintln instrumentation: horizontal uis clamp children to ~18 px), gear
+  spacer math, TOC right-aligned page numbers.
+- **Why:** font-glyph chrome rendered tofu boxes and mirrored `‹›` via font
+  fallbacks; hand-drawn painter icons failed the quality bar; spacing was
+  default-egui cramped versus the mockup.
+- **Root causes worth keeping:** (1) `ui.horizontal` clamps child height to
+  `interact_size.y` — give full-height rows an explicit `set_height`;
+  (2) `Layout::bottom_up` allocates from the cursor, not the rect bottom;
+  (3) `pkill -f` with a path regex self-matches the driving shell — the
+  long-running "stuck builder" plague; `pkill -x candi` instead;
+  (4) a missing fixture PDF shows the error card — earlier "broken UI"
+  captures were partly error states and blank synthetic pages.
+- **Process:** worked as direct dictation — exact-string python patches
+  with count asserts, build → shot.sh → visually read every PNG before the
+  next change. That loop is what found the real bugs; keep it.
+- **Release flow (user directive):** slices merge to `dev`; every 0.x tag
+  lands on `main`.

@@ -1,43 +1,40 @@
-# Handoff
+# Handoff — next agent starts here
 
-State for the next agent. Written at close-out; read at session start.
-Overwritten every session — this file is always current, never stale.
+## State (2026-08-25)
 
-## Done
+Branch `slice/02-01-gui-reader`, tip `5dbf737`, pushed. v0.1 GUI reader is
+feature-complete and visually iterated: Lucide SVG chrome icons, 46/42 px
+flat top/bottom bars, full-height icon rail (accent active + indicator, gear
+pinned bottom), vertical sidebar with right-aligned TOC page numbers, canvas
+GAP 16 / MARGIN 20, five themes, live syntax-highlighted YAML theme editor,
+inline page jump, bookmarks/search panels, focus/empty/error states,
+drag-and-drop. Committed 10-shot matrix in `docs/design/screenshots/`
+recaptured on the final UI. Gates green (fmt, clippy -D warnings, workspace
+tests with `PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` — DIRECTORY, not
+file).
 
-- **Phase 01 reader on `dev`** — slices 01/01–01/11 plus post-release TUI/GUI work
-  (PRs #4–#18). User binaries: `candi-tui` (TUI) and `candi` (GUI text). `candi-cli`
-  is a shared lib (open/sidecar); no user-facing CLI reader.
-- **PR #18 gui-text-linux** merged (`54d9f26`): egui GUI, integration tests in
-  `crates/candi-gui/tests/cli.rs` (`CANDI_NO_GUI=1` test hook only).
-- **PR #17 tui-readability** merged (`24dff95`): ligatures, centered column, scroll polish.
-- **CI:** Linux-only rust-checks matrix; Windows job removed/deferred with PR #18.
+## Next (user stop-gates — explicit authorization required)
 
-## In progress
+1. User dogfoods the binary.
+2. Tag `v0.1`.
+3. PR `slice/02-01-gui-reader` → `dev`; then `dev` → `main`.
+   Release flow per user: every 0.x version lands on `main`.
 
-Nothing active.
+## Roadmap (user-set)
 
-## Next
+- v0.2: performance/lean-out pass (memory, render pipeline).
+- v0.3: mobile + other platform ports.
+- v0.4: docs + architecture write-up, detailed implementation notes.
 
-**User-authorized release gates only** — no further engineering until user explicitly
-authorizes:
+## Hard-won environment facts
 
-1. **Dogfood gate** — daily-use evidence before tag (not met).
-2. **Tag `v0.1`** — after dogfood on `dev`.
-3. **`dev` → `main`** — after tag.
-
-Mia must not proceed on any of the above without explicit user OK.
-
-## Open questions
-
-- **Unsupported PDF-feature row** in hardening table — deferred in 01/04.
-- **MuPDF store cap / PDFium-for-full-doc-search** — deferred.
-- **GUI pixel page rendering** — later phase; Spike 3 framework choice still open.
-
-## Hazards (read before coding)
-
-| Hazard | Detail |
-|---|---|
-| **Release gates** | Dogfood, tag, and `main` merge are user stop-gates — not engineering work. |
-| **`CANDI_NO_GUI=1`** | Test/CI hook for `candi` headless spawn tests — not a user feature. |
-| **Bench corpus** | Real books in gitignored `bench/corpus-local.toml` — never commit. |
+- `pkill -f '[t]arget/release/candi'` SELF-MATCHES the driving shell's
+  cmdline and kills it (the "stuck builder" plague). Use `pkill -x candi`.
+- egui 0.30: horizontal uis clamp children to one interact row (~18 px) —
+  set explicit height; `bottom_up` flows from the cursor, pin by consuming
+  remaining space; `TopBottomPanel::exact_height`; `Slider` width via
+  `spacing.slider_width`; menus with custom widgets via
+  `popup_below_widget` + `toggle_popup`.
+- Fixture: `ghost-outline.pdf` stands in for demo books (outline + blank
+  pages); a missing PDF shows the error card — do not mistake it for a
+  layout bug.
