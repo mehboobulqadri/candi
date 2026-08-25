@@ -1016,6 +1016,7 @@ impl ReaderApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_height(ui.available_height());
         ui.horizontal(|ui| {
             self.icon_rail(ui);
             ui.separator();
