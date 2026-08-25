@@ -1016,8 +1016,12 @@ impl ReaderApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.set_min_height(ui.available_height());
+        let height = ui.available_height();
+        ui.set_min_height(height);
         ui.horizontal(|ui| {
+            // Horizontal uis constrain children to one interact row (~18 px)
+            // unless given an explicit height; the rail needs the full panel.
+            ui.set_height(height);
             self.icon_rail(ui);
             ui.separator();
             self.section_panel(ui);
