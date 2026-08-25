@@ -947,7 +947,7 @@ impl ReaderApp {
         let current = self.session.page;
         let mut done = false;
 
-        ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.add_enabled_ui(count > 0 && current > 0, |ui| {
                 if self
                     .icons
@@ -1032,6 +1032,7 @@ impl ReaderApp {
         ui.vertical(|ui| {
             ui.set_width(RAIL_WIDTH);
             chrome_style(ui);
+            ui.set_min_height(ui.available_height());
             let sections = [
                 (SidebarSection::Contents, Icon::List, "Contents"),
                 (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
