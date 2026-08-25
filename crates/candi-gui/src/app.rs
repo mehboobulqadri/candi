@@ -1037,8 +1037,7 @@ impl ReaderApp {
         ui.vertical(|ui| {
             ui.set_width(RAIL_WIDTH);
             chrome_style(ui);
-            let rail_height = ui.available_height();
-            ui.set_min_height(rail_height);
+            ui.set_min_height(ui.available_height());
             let sections = [
                 (SidebarSection::Contents, Icon::List, "Contents"),
                 (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
@@ -1079,8 +1078,9 @@ impl ReaderApp {
                 ui.add_space(6.0);
             }
             // Pin the gear to the panel bottom: egui 0.30 bottom_up flows
-            // from the cursor, so push the cursor down explicitly.
-            ui.add_space((rail_height - RAIL_BUTTON_HEIGHT - 10.0).max(0.0));
+            // from the cursor, so consume the space below the section
+            // buttons explicitly.
+            ui.add_space((ui.available_height() - RAIL_BUTTON_HEIGHT - 10.0).max(0.0));
             if self
                 .icons
                 .sized(
