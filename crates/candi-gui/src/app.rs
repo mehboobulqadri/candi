@@ -1074,22 +1074,22 @@ impl ReaderApp {
                 }
                 ui.add_space(6.0);
             }
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                ui.add_space(10.0);
-                if self
-                    .icons
-                    .sized(
-                        ui,
-                        egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
-                        Icon::Gear,
-                        fg,
-                    )
-                    .on_hover_text("Theme editor")
-                    .clicked()
-                {
-                    self.open_theme_editor();
-                }
-            });
+            // Pin the gear to the panel bottom: egui 0.30 bottom_up flows
+            // from the cursor, so push the cursor down explicitly.
+            ui.add_space((rail_height - RAIL_BUTTON_HEIGHT - 10.0).max(0.0));
+            if self
+                .icons
+                .sized(
+                    ui,
+                    egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
+                    Icon::Gear,
+                    fg,
+                )
+                .on_hover_text("Theme editor")
+                .clicked()
+            {
+                self.open_theme_editor();
+            }
         });
     }
 
