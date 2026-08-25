@@ -18,7 +18,7 @@ use eframe::egui;
 use egui::Key;
 
 use crate::highlight::yaml_job;
-use crate::icons::{Icon, icon_button, icon_button_sized};
+use crate::icons::{Icon, IconRender};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
@@ -105,6 +105,8 @@ pub struct ReaderApp {
     failed_scale_q: u16,
     /// Promoted textures keyed by page; dropped on theme switches.
     textures: HashMap<usize, PageTexture>,
+    /// Lucide icon texture cache.
+    icons: IconRender,
 
     layout: Layout,
     /// `(avail_w, avail_h, zoom)` the current layout was built for.
@@ -165,6 +167,7 @@ impl ReaderApp {
             failed: HashSet::new(),
             failed_scale_q: 0,
             textures: HashMap::new(),
+            icons: IconRender::default(),
             layout: Layout::default(),
             layout_key: None,
             page_sizes: Vec::new(),
@@ -825,7 +828,9 @@ impl ReaderApp {
                 let accent = color_of(self.theme.accent);
                 let fg = color_of(self.theme.ui_fg);
                 self.icon_menu(ui, Icon::Dots, "More actions", Self::app_menu);
-                if icon_button(ui, Icon::Panel, 26.0, fg)
+                if self
+                    .icons
+                    .button(ui, Icon::Panel, 26.0, fg)
                     .on_hover_text("Toggle sidebar (Ctrl+B)")
                     .clicked()
                 {
@@ -836,7 +841,9 @@ impl ReaderApp {
                 } else {
                     fg
                 };
-                if icon_button(ui, Icon::Search, 26.0, search_color)
+                if self
+                    .icons
+                    .button(ui, Icon::Search, 26.0, search_color)
                     .on_hover_text("Search (Ctrl+F)")
                     .clicked()
                 {
@@ -844,7 +851,9 @@ impl ReaderApp {
                     self.section = SidebarSection::Search;
                     self.focus_search = true;
                 }
-                if icon_button(ui, Icon::Focus, 26.0, fg)
+                if self
+                    .icons
+                    .button(ui, Icon::Focus, 26.0, fg)
                     .on_hover_text("Focus mode (F11)")
                     .clicked()
                 {
@@ -864,7 +873,9 @@ impl ReaderApp {
         tip: &str,
         contents: impl FnOnce(&mut Self, &mut egui::Ui),
     ) {
-        let resp = icon_button(ui, icon, 26.0, color_of(self.theme.ui_fg));
+        let resp = self
+            .icons
+            .button(ui, icon, 26.0, color_of(self.theme.ui_fg));
         let resp = resp.on_hover_text(tip);
         let id = resp.id.with("popup");
         if resp.clicked() {
@@ -937,7 +948,9 @@ impl ReaderApp {
 
         ui.horizontal(|ui| {
             ui.add_enabled_ui(count > 0 && current > 0, |ui| {
-                if icon_button(ui, Icon::ChevronLeft, 22.0, fg)
+                if self
+                    .icons
+                    .button(ui, Icon::ChevronLeft, 22.0, fg)
                     .on_hover_text("Previous page (←)")
                     .clicked()
                 {
@@ -986,7 +999,9 @@ impl ReaderApp {
                 }
             }
             ui.add_enabled_ui(count > 0 && current + 1 < count, |ui| {
-                if icon_button(ui, Icon::ChevronRight, 22.0, fg)
+                if self
+                    .icons
+                    .button(ui, Icon::ChevronRight, 22.0, fg)
                     .on_hover_text("Next page (→)")
                     .clicked()
                 {
@@ -1023,14 +1038,16 @@ impl ReaderApp {
             for (section, icon, name) in sections {
                 let active = self.section == section;
                 let color = if active { accent } else { fg };
-                let button = icon_button_sized(
-                    ui,
-                    egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
-                    icon,
-                    color,
-                )
-                .on_hover_text(name)
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let button = self
+                    .icons
+                    .sized(
+                        ui,
+                        egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
+                        icon,
+                        color,
+                    )
+                    .on_hover_text(name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if active {
                     // Indicator bar hugging the window's left edge next to
                     // the active icon.
@@ -1052,14 +1069,16 @@ impl ReaderApp {
                 }
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                if icon_button_sized(
-                    ui,
-                    egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
-                    Icon::Gear,
-                    fg,
-                )
-                .on_hover_text("Theme editor")
-                .clicked()
+                if self
+                    .icons
+                    .sized(
+                        ui,
+                        egui::vec2(RAIL_WIDTH - 4.0, RAIL_BUTTON_HEIGHT),
+                        Icon::Gear,
+                        fg,
+                    )
+                    .on_hover_text("Theme editor")
+                    .clicked()
                 {
                     self.open_theme_editor();
                 }
@@ -1151,7 +1170,7 @@ impl ReaderApp {
                 {
                     jump = Some(bookmark.page);
                 }
-                if icon_button(ui, Icon::X, 18.0, fg).clicked() {
+                if self.icons.button(ui, Icon::X, 18.0, fg).clicked() {
                     remove = Some(bookmark.page);
                 }
             });
@@ -1219,14 +1238,16 @@ impl ReaderApp {
     /// Theme cluster (design spec §21): an accent-tinted light/dark glyph
     /// that cycles, a dropdown that picks exactly, and Edit… for YAML.
     fn theme_controls(&mut self, ui: &mut egui::Ui) {
-        if icon_button(
-            ui,
-            theme_icon(&self.theme),
-            26.0,
-            color_of(self.theme.accent),
-        )
-        .on_hover_text("Cycle themes (T)")
-        .clicked()
+        if self
+            .icons
+            .button(
+                ui,
+                theme_icon(&self.theme),
+                26.0,
+                color_of(self.theme.accent),
+            )
+            .on_hover_text("Cycle themes (T)")
+            .clicked()
         {
             self.cycle_theme();
         }
@@ -1257,7 +1278,7 @@ impl ReaderApp {
         let can_zoom = self.page_count() > 0;
         let fg = color_of(self.theme.ui_fg);
         ui.add_enabled_ui(can_zoom, |ui| {
-            if icon_button(ui, Icon::Minus, 22.0, fg).clicked() {
+            if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
                 self.zoom_step(-5);
             }
         });
@@ -1267,7 +1288,7 @@ impl ReaderApp {
         )
         .on_hover_text("Zoom");
         ui.add_enabled_ui(can_zoom, |ui| {
-            if icon_button(ui, Icon::Plus, 22.0, fg).clicked() {
+            if self.icons.button(ui, Icon::Plus, 22.0, fg).clicked() {
                 self.zoom_step(5);
             }
         });

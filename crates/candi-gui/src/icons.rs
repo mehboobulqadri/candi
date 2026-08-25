@@ -1,16 +1,48 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-//! Painter-drawn chrome icons, Lucide-style strokes.
+//! Lucide chrome icons (<https://lucide.dev>, ISC license — see
+//! `assets/icons/LICENSE-NOTE`), embedded as SVG and rasterized once per
+//! icon to a texture; buttons tint them per state.
 //!
-//! Chrome never goes through text glyphs: font fallbacks render some marks
-//! as tofu boxes and mirror others (`‹`/`›`), so every icon is drawn with
-//! strokes here — crisp at any DPI, tintable by theme, no fonts involved.
+//! Chrome never goes through font glyphs: fallbacks rendered some marks as
+//! tofu boxes and mirrored the page-nav chevrons.
+
+use std::collections::HashMap;
 
 use eframe::egui;
-use egui::{Color32, CursorIcon, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, Ui, Vec2};
+use egui::{Color32, TextureHandle, Ui, Vec2};
 
-/// A chrome icon; `draw` paints it inside a square-ish cell.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Embedded Lucide SVG sources; `currentColor` is swapped for white at load
+/// so the texture multiplies cleanly with any tint.
+const SOURCES: &[(Icon, &str)] = &[
+    (Icon::Menu, include_str!("../assets/icons/menu.svg")),
+    (
+        Icon::Dots,
+        include_str!("../assets/icons/ellipsis-vertical.svg"),
+    ),
+    (Icon::Panel, include_str!("../assets/icons/panel-left.svg")),
+    (Icon::Search, include_str!("../assets/icons/search.svg")),
+    (Icon::Focus, include_str!("../assets/icons/maximize.svg")),
+    (Icon::List, include_str!("../assets/icons/list.svg")),
+    (Icon::Flag, include_str!("../assets/icons/flag.svg")),
+    (Icon::Gear, include_str!("../assets/icons/settings.svg")),
+    (Icon::Sun, include_str!("../assets/icons/sun.svg")),
+    (Icon::Moon, include_str!("../assets/icons/moon.svg")),
+    (
+        Icon::ChevronLeft,
+        include_str!("../assets/icons/chevron-left.svg"),
+    ),
+    (
+        Icon::ChevronRight,
+        include_str!("../assets/icons/chevron-right.svg"),
+    ),
+    (Icon::Plus, include_str!("../assets/icons/plus.svg")),
+    (Icon::Minus, include_str!("../assets/icons/minus.svg")),
+    (Icon::X, include_str!("../assets/icons/x.svg")),
+];
+
+/// A chrome icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
     Menu,
     Dots,
@@ -30,152 +62,69 @@ pub enum Icon {
 }
 
 impl Icon {
-    /// Stroke width scaled to the cell so icons stay airy at any size.
-    fn stroke_width(&self, cell: f32) -> f32 {
-        (cell * 0.09).clamp(1.5, 2.2)
+    fn source(self) -> &'static str {
+        SOURCES
+            .iter()
+            .find(|(candidate, _)| *candidate == self)
+            .map_or("menu", |(_, source)| source)
     }
+}
 
-    fn draw(&self, p: &Painter, cell: Rect, stroke: Stroke) {
-        let r = cell.shrink(cell.height() * 0.16);
-        let (l, t, ri, b) = (r.left(), r.top(), r.right(), r.bottom());
-        let (w, h) = (r.width(), r.height());
-        let c = r.center();
-        let m = w.min(h);
-        let pt = |fx: f32, fy: f32| Pos2::new(l + w * fx, t + h * fy);
-        let ray = |p: &Painter, i: u32, r0: f32, r1: f32| {
-            let a = std::f32::consts::TAU / 8.0 * i as f32;
-            let (dx, dy) = (a.sin(), a.cos());
-            p.line_segment(
-                [
-                    c + egui::vec2(dx * m * r0, dy * m * r0),
-                    c + egui::vec2(dx * m * r1, dy * m * r1),
-                ],
-                stroke,
-            );
-        };
-        match self {
-            Icon::Menu => {
-                for fy in [0.2, 0.5, 0.8] {
-                    p.line_segment([pt(0.0, fy), pt(1.0, fy)], stroke);
-                }
-            }
-            Icon::Dots => {
-                for fy in [0.2, 0.5, 0.8] {
-                    p.circle_filled(pt(0.5, fy), m * 0.07, stroke.color);
-                }
-            }
-            Icon::Panel => {
-                p.rect_stroke(r, 0.0, stroke);
-                let x = l + w * 0.38;
-                p.line_segment([Pos2::new(x, t), Pos2::new(x, b)], stroke);
-            }
-            Icon::Search => {
-                p.add(Shape::circle_stroke(pt(0.4, 0.4), m * 0.26, stroke));
-                p.line_segment([pt(0.6, 0.6), pt(0.88, 0.88)], stroke);
-            }
-            Icon::Focus => {
-                for (sx, sy) in [(0.0_f32, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
-                    let (x, y) = (l + w * sx, t + h * sy);
-                    let dx = if sx == 0.0 { 1.0 } else { -1.0 };
-                    let dy = if sy == 0.0 { 1.0 } else { -1.0 };
-                    p.add(Shape::line(
-                        vec![
-                            Pos2::new(x + w * 0.34 * dx, y),
-                            Pos2::new(x, y),
-                            Pos2::new(x, y + h * 0.34 * dy),
-                        ],
-                        stroke,
-                    ));
-                }
-            }
-            Icon::List => {
-                for fy in [0.2, 0.5, 0.8] {
-                    p.circle_filled(pt(0.08, fy), m * 0.05, stroke.color);
-                    p.line_segment([pt(0.26, fy), pt(0.95, fy)], stroke);
-                }
-            }
-            Icon::Flag => {
-                p.line_segment([pt(0.28, 0.12), pt(0.28, 0.9)], stroke);
-                p.add(Shape::convex_polygon(
-                    vec![pt(0.28, 0.12), pt(0.82, 0.32), pt(0.28, 0.52)],
-                    stroke.color,
-                    Stroke::NONE,
-                ));
-            }
-            Icon::Gear => {
-                p.add(Shape::circle_stroke(c, m * 0.2, stroke));
-                for i in 0..8 {
-                    ray(p, i, 0.3, 0.42);
-                }
-            }
-            Icon::Sun => {
-                p.circle_filled(c, m * 0.15, stroke.color);
-                for i in 0..8 {
-                    ray(p, i, 0.24, 0.4);
-                }
-            }
-            Icon::Moon => {
-                p.add(Shape::circle_stroke(c, m * 0.32, stroke));
-                let half: Vec<Pos2> = (0..=8)
-                    .map(|i| {
-                        let a =
-                            -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 8.0;
-                        c + egui::vec2(a.sin() * m * 0.32, a.cos() * m * 0.32)
-                    })
-                    .collect();
-                p.add(Shape::convex_polygon(half, stroke.color, Stroke::NONE));
-            }
-            Icon::ChevronLeft => {
-                p.add(Shape::line(
-                    vec![pt(0.62, 0.18), pt(0.34, 0.5), pt(0.62, 0.82)],
-                    stroke,
-                ));
-            }
-            Icon::ChevronRight => {
-                p.add(Shape::line(
-                    vec![pt(0.38, 0.18), pt(0.66, 0.5), pt(0.38, 0.82)],
-                    stroke,
-                ));
-            }
-            Icon::Plus => {
-                p.line_segment([pt(0.5, 0.15), pt(0.5, 0.85)], stroke);
-                p.line_segment([pt(0.15, 0.5), pt(0.85, 0.5)], stroke);
-            }
-            Icon::Minus => {
-                p.line_segment([pt(0.15, 0.5), pt(0.85, 0.5)], stroke);
-            }
-            Icon::X => {
-                p.line_segment([pt(0.18, 0.18), pt(0.82, 0.82)], stroke);
-                p.line_segment([pt(0.82, 0.18), pt(0.18, 0.82)], stroke);
-            }
+/// Texture cache — one rasterization per icon for the whole session.
+#[derive(Default)]
+pub struct IconRender {
+    textures: HashMap<Icon, TextureHandle>,
+}
+
+impl IconRender {
+    fn texture(&mut self, ctx: &egui::Context, icon: Icon) -> TextureHandle {
+        if let Some(tex) = self.textures.get(&icon) {
+            return tex.clone();
         }
-        let _ = (ri, b);
+        let svg = icon.source().replace("currentColor", "#ffffff");
+        let image = egui_extras::image::load_svg_bytes_with_size(
+            svg.as_bytes(),
+            Some(egui::SizeHint::Width(96)),
+        )
+        .expect("embedded Lucide SVG parses");
+        let tex = ctx.load_texture(
+            format!("lucide-{}", icon.source()),
+            image,
+            egui::TextureOptions::LINEAR,
+        );
+        self.textures.insert(icon, tex.clone());
+        tex
     }
-}
 
-/// Flat icon button: painted strokes, subtle hover wash, no borders.
-pub fn icon_button(ui: &mut Ui, icon: Icon, side: f32, color: Color32) -> Response {
-    icon_button_sized(ui, Vec2::splat(side), icon, color)
-}
-
-/// Icon button with an explicit cell size; the icon centers in the cell.
-pub fn icon_button_sized(ui: &mut Ui, size: Vec2, icon: Icon, color: Color32) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let visuals = ui.style().interact(&resp);
-    let stroke_color = if resp.enabled() {
-        color
-    } else {
-        visuals.fg_stroke.color
-    };
-    if resp.hovered() || resp.has_focus() {
-        let wash = if resp.is_pointer_button_down_on() {
-            ui.visuals().widgets.active.weak_bg_fill
+    /// Square icon button of `side` logical pixels.
+    pub fn button(&mut self, ui: &mut Ui, icon: Icon, side: f32, color: Color32) -> egui::Response {
+        let tex = self.texture(ui.ctx(), icon);
+        let tint = if ui.is_enabled() {
+            color
         } else {
-            ui.visuals().widgets.hovered.weak_bg_fill
+            ui.visuals().widgets.inactive.fg_stroke.color
         };
-        ui.painter().rect_filled(rect, visuals.rounding, wash);
+        let image = egui::Image::new((tex.id(), Vec2::splat((side - 10.0).max(8.0)))).tint(tint);
+        ui.add(egui::Button::image(image))
     }
-    let stroke = Stroke::new(icon.stroke_width(size.y), stroke_color);
-    icon.draw(&ui.painter_at(rect), rect, stroke);
-    resp.on_hover_cursor(CursorIcon::PointingHand)
+
+    /// Icon button centered in an explicit cell (the sidebar rail).
+    pub fn sized(&mut self, ui: &mut Ui, cell: Vec2, icon: Icon, color: Color32) -> egui::Response {
+        let tex = self.texture(ui.ctx(), icon);
+        let tint = if ui.is_enabled() {
+            color
+        } else {
+            ui.visuals().widgets.inactive.fg_stroke.color
+        };
+        let side = cell.y.min(cell.x) * 0.62;
+        let image = egui::Image::new((tex.id(), Vec2::splat(side))).tint(tint);
+        ui.allocate_ui(cell, |ui| {
+            ui.with_layout(
+                egui::Layout::top_down_justified(egui::Align::Center),
+                |ui| ui.add(egui::Button::image(image)),
+            )
+            .inner
+        })
+        .inner
+    }
 }
