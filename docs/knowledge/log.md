@@ -212,3 +212,24 @@ Format per entry:
   next change. That loop is what found the real bugs; keep it.
 - **Release flow (user directive):** slices merge to `dev`; every 0.x tag
   lands on `main`.
+
+## 2026-08-26 — six-state reference rebuild (slice/02-01-gui-reader)
+
+- **What:** chrome rebuilt to the user's six-state image: rail restored as
+  its own SidePanel, hamburger/wordmark back, tagline + duplicate zoom
+  stepper removed, Inter embedded, dark-first, empty state styled, Lucide
+  icons, exact_width panels, central-rect backdrop paint, PID-matched
+  shot.sh.
+- **Why:** the earlier rebuild followed the stale light mockup (nav rows, no
+  rail, no wordmark) — wrong target; the six-state image is authoritative.
+- **Root causes worth keeping:** (1) stale fixture + captured wallpaper/
+  overlay windows masqueraded as UI bugs — always verify WHAT was captured
+  (pid-matching now mandatory); (2) horizontal-layout height clamping keeps
+  biting — full-height content belongs in panels; (3) add_sized centers;
+  (4) `pkill -f` self-matches — the old "stuck builder" plague.
+- **Process:** iterate build → PID-matched capture → actually read the PNG →
+  fix. Ten-plus rounds; each visual defect (mirrored chevrons, tofu,
+  maroon band, side-by-side TOC, gear placement, centered titles, reversed
+  steppers) was caught by reading captures, not by reading code.
+- **Deferred by user:** search overlay, Appearance panel, window
+  decorations, dual/mobile modes, disk cleanup (opencode.db 26G).

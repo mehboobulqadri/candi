@@ -1,40 +1,64 @@
 # Handoff — next agent starts here
 
-## State (2026-08-25)
+## State (2026-08-26)
 
-Branch `slice/02-01-gui-reader`, tip `5dbf737`, pushed. v0.1 GUI reader is
-feature-complete and visually iterated: Lucide SVG chrome icons, 46/42 px
-flat top/bottom bars, full-height icon rail (accent active + indicator, gear
-pinned bottom), vertical sidebar with right-aligned TOC page numbers, canvas
-GAP 16 / MARGIN 20, five themes, live syntax-highlighted YAML theme editor,
-inline page jump, bookmarks/search panels, focus/empty/error states,
-drag-and-drop. Committed 10-shot matrix in `docs/design/screenshots/`
-recaptured on the final UI. Gates green (fmt, clippy -D warnings, workspace
-tests with `PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` — DIRECTORY, not
-file).
+Branch `slice/02-01-gui-reader`, tip `0d178e4`, pushed, tree clean except the
+user's reference images (`image.png`, `image copy.png` at repo root — the
+six-state design reference; do NOT commit or delete them).
+
+The GUI has been rebuilt against the user's six-state reference (root
+`image.png`): always-visible icon rail (own SidePanel, 52px) + slide-out
+section panel (Contents/Bookmarks/Search), hamburger + accent "Candi"
+wordmark top bar (tagline removed by user request), page-nav pill, zoom
+stepper deduped into the bottom bar (theme picker | − % + slider | view-mode
+toggles), Inter typography (embedded OFL TTFs), Lucide SVG icons everywhere
+(no font glyphs in chrome — fallbacks rendered tofu and mirrored ‹›), dark
+theme is the startup default, styled empty state, real-content fixture
+(arXiv 1706.03762) for captures.
+
+Gates green: fmt, clippy -D warnings, workspace tests
+(`PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` = DIRECTORY). Capture
+evidence pipeline: `scripts/shot.sh` matches the spawned window by PID now —
+older class-based matching grabbed other windows/wallpapers and produced
+fake "broken UI" evidence more than once.
+
+## Known-true facts about egui 0.30 (learned the hard way)
+
+- Horizontal uis clamp children to one interact row (~18 px). Panels do not.
+  Rail/section content lives in SidePanels for this reason; do not nest
+  full-height content back inside `ui.horizontal`.
+- `Layout::bottom_up` allocates from the cursor, not the rect bottom. Pin
+  things by consuming remaining space or `ui.put` at exact rects.
+- `add_sized` centers content — use `allocate_ui_with_layout` + halign for
+  left/right alignment.
+- `SidePanel::exact_width` beats `default_width` (state caching made widths
+  stick from frame 1).
+- RTL parents reverse child order — wrap steppers/pills in explicit
+  `left_to_right`.
+- `Slider` width is `spacing.slider_width`; fixed bars are `exact_height`.
+- Menus with custom widgets: `popup_below_widget` + `toggle_popup`.
+- `pkill -f '<path regex>'` kills your own shell; use `pkill -x candi`.
 
 ## Next (user stop-gates — explicit authorization required)
 
-1. User dogfoods the binary.
-2. Tag `v0.1`.
-3. PR `slice/02-01-gui-reader` → `dev`; then `dev` → `main`.
-   Release flow per user: every 0.x version lands on `main`.
+1. Finish the visual iteration loop: recapture s8 light/dark once the user
+   closes their wallpaper-picker overlay (it floated over the last two
+   captures), review, fix residuals.
+2. User dogfoods → tag `v0.1` → PR `slice/02-01-gui-reader` → `dev` → `main`.
+   Release flow per user: slices merge to dev; every 0.x tag lands on main.
 
 ## Roadmap (user-set)
 
-- v0.2: performance/lean-out pass (memory, render pipeline).
-- v0.3: mobile + other platform ports.
-- v0.4: docs + architecture write-up, detailed implementation notes.
+- v0.2 performance/lean pass. v0.3 mobile/other-platform ports. v0.4 docs +
+  architecture write-up.
+- Deferred UI features (user said NOT now): search top-overlay redesign,
+  visual Appearance panel (accent swatches/font-size), custom window
+  decorations (− □ ✕), dual-page/mobile view modes.
 
-## Hard-won environment facts
+## Environment notes
 
-- `pkill -f '[t]arget/release/candi'` SELF-MATCHES the driving shell's
-  cmdline and kills it (the "stuck builder" plague). Use `pkill -x candi`.
-- egui 0.30: horizontal uis clamp children to one interact row (~18 px) —
-  set explicit height; `bottom_up` flows from the cursor, pin by consuming
-  remaining space; `TopBottomPanel::exact_height`; `Slider` width via
-  `spacing.slider_width`; menus with custom widgets via
-  `popup_below_widget` + `toggle_popup`.
-- Fixture: `ghost-outline.pdf` stands in for demo books (outline + blank
-  pages); a missing PDF shows the error card — do not mistake it for a
-  layout bug.
+- The user works on this machine while agents run: expect window interference;
+  captures must be PID-matched and re-checked. User can provide fullscreen
+  views on request.
+- Disk cleanup was deferred by the user: `~/.local/share/opencode/opencode.db`
+ is 26G (session history), `target/debug` ~23G, `spikes/pdf-backend/target` 2G.
