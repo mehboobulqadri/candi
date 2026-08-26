@@ -12,6 +12,7 @@ pub(crate) enum SidebarSection {
     Contents,
     Bookmarks,
     Search,
+    Appearance,
 }
 
 /// One visible contents row; `page` is 0-based.

@@ -5,7 +5,7 @@
 //! session persistence via `candi-cli`.
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,6 +37,20 @@ const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
 const INDENT_PER_LEVEL: f32 = 12.0;
 const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x48, 0x4D);
+/// Accent choices in the appearance panel, as RGB bytes.
+const ACCENT_SWATCHES: [[u8; 3]; 8] = [
+    [0x7C, 0x5C, 0xFF],
+    [0x4C, 0x8D, 0xF6],
+    [0xE5, 0x48, 0x4D],
+    [0xF7, 0x6B, 0x15],
+    [0xFF, 0xB2, 0x24],
+    [0x46, 0xA7, 0x58],
+    [0x12, 0xA5, 0x94],
+    [0xE9, 0x3D, 0x82],
+];
+/// Bounds of the UI text-size slider.
+const UI_SCALE_RANGE: RangeInclusive<f32> = 0.80..=1.40;
+const SWATCH_SIZE: f32 = 22.0;
 
 /// A promoted GPU texture for one page plus the scale it was rendered at.
 struct PageTexture {
@@ -116,6 +130,11 @@ pub struct ReaderApp {
     /// Sidebar width for the frame; clamped to the window each pass.
     sidebar_w: f32,
     section: SidebarSection,
+    /// Slider-driven UI text scale on top of [`Self::base_ppp`].
+    ui_scale: f32,
+    /// Native pixels-per-point captured at startup; [`Self::ui_scale`]
+    /// multiplies it.
+    base_ppp: f32,
     focus_search: bool,
     /// Focus mode (design spec §8): chrome hidden, document only.
     focus_mode: bool,
@@ -192,6 +211,8 @@ impl ReaderApp {
             sidebar_open: false,
             sidebar_w: 280.0,
             section: SidebarSection::Contents,
+            ui_scale: 1.0,
+            base_ppp: cc.egui_ctx.pixels_per_point(),
             focus_search: false,
             focus_mode: false,
             page_jump: None,
@@ -240,6 +261,7 @@ impl ReaderApp {
                 self.primed = false;
                 self.sidebar_open = true;
                 self.fit_page = false;
+                self.ui_scale = 1.0;
 
                 let theme_name = opened.session.theme.clone();
                 self.session = opened.session;
@@ -708,6 +730,9 @@ impl ReaderApp {
         let ctx = ui.ctx().clone();
         if !self.primed {
             self.primed = true;
+            // Reopening restores the session-default UI scale declared by
+            // [`ReaderApp::open_path`].
+            ctx.set_pixels_per_point(self.base_ppp * self.ui_scale);
             self.prime_current_page(&ctx);
         }
         // Apply a saved position exactly once heights are known: anchor at
@@ -1101,6 +1126,11 @@ impl ReaderApp {
                             SidebarSection::Search => {
                                 ("SEARCH", "sidebar_search", ReaderApp::show_search)
                             }
+                            SidebarSection::Appearance => (
+                                "APPEARANCE",
+                                "sidebar_appearance",
+                                ReaderApp::show_appearance,
+                            ),
                         };
                     ui.label(egui::RichText::new(label).weak().small());
                     ui.add_space(4.0);
@@ -1115,7 +1145,80 @@ impl ReaderApp {
             });
     }
 
-    /// The ~52 px rail: sections top-down, theme editor pinned bottom.
+    /// Appearance panel: theme picker, accent swatches, and UI text scale.
+    /// Accent/size tweaks are session-local; the YAML editor is the way to
+    /// keep them.
+    fn show_appearance(&mut self, ui: &mut egui::Ui) {
+        let fg = color_of(self.theme.ui_fg);
+        ui.label(egui::RichText::new("Theme").weak().small());
+        self.theme_picker(ui, fg);
+        ui.add_space(12.0);
+
+        ui.label(egui::RichText::new("Accent color").weak().small());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for &rgb in &ACCENT_SWATCHES {
+                let swatch = Color::from([rgb[0], rgb[1], rgb[2], 0xFF]);
+                let selected = [
+                    self.theme.accent.r(),
+                    self.theme.accent.g(),
+                    self.theme.accent.b(),
+                ] == rgb;
+                let (rect, resp) = ui.allocate_exact_size(
+                    egui::vec2(SWATCH_SIZE, SWATCH_SIZE),
+                    egui::Sense::click(),
+                );
+                if resp.clicked() {
+                    self.theme.accent = swatch;
+                    apply_theme(ui.ctx(), &self.theme);
+                    self.applied_theme.clone_from(&self.theme.name);
+                }
+                let color = color_of(swatch);
+                let center = rect.center();
+                ui.painter().circle_filled(center, SWATCH_SIZE / 2.0, color);
+                if selected {
+                    ui.painter().circle_stroke(
+                        center,
+                        SWATCH_SIZE / 2.0 - 1.0,
+                        egui::Stroke::new(2.0_f32, color.gamma_multiply(0.5)),
+                    );
+                }
+            }
+        });
+        ui.add_space(12.0);
+
+        ui.label(egui::RichText::new("Text size").weak().small());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("A").weak());
+            let mut scale = self.ui_scale;
+            if ui
+                .add(
+                    egui::Slider::new(&mut scale, UI_SCALE_RANGE)
+                        .step_by(0.05)
+                        .show_value(false),
+                )
+                .changed()
+            {
+                self.ui_scale = scale;
+                ui.ctx().set_pixels_per_point(self.base_ppp * scale);
+            }
+            ui.label(egui::RichText::new("A").font(egui::FontId::proportional(17.0)));
+        });
+        ui.add_space(12.0);
+
+        if ui.selectable_label(false, "Edit Config (YAML)…").clicked() {
+            self.open_theme_editor();
+        }
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(
+                "Accent and text size reset when the document reopens — save them in the YAML to keep them.",
+            )
+            .weak(),
+        );
+    }
+
+    /// The ~52 px rail: sections top-down, appearance pinned bottom.
     fn rail(&mut self, ui: &mut egui::Ui) {
         let accent = color_of(self.theme.accent);
         let fg = color_of(self.theme.ui_fg);
@@ -1178,10 +1281,11 @@ impl ReaderApp {
                 egui::Button::image(self.icons.image(ui, Icon::Gear, 26.0, fg)).rounding(6.0);
             if ui
                 .put(gear_rect, gear)
-                .on_hover_text("Theme editor (Ctrl+E)")
+                .on_hover_text("Appearance")
                 .clicked()
             {
-                self.open_theme_editor();
+                self.sidebar_open = true;
+                self.section = SidebarSection::Appearance;
             }
         });
     }
