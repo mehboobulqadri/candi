@@ -233,3 +233,18 @@ Format per entry:
   steppers) was caught by reading captures, not by reading code.
 - **Deferred by user:** search overlay, Appearance panel, window
   decorations, dual/mobile modes, disk cleanup (opencode.db 26G).
+
+## 2026-08-26 (later) — seam chase + revert
+
+- **What:** five more capture-verified rounds: killed the transparent strip
+  class (central frame fill, zero-margin panel frames), restored hamburger +
+  wordmark + rail per the six-state reference, deduped zoom controls,
+  removed the tagline, tightened canvas margins, PID-hardened shot.sh.
+- **Reverted:** `2231aa8` embedded the section panel inside the central
+  surface to kill the panel seam by construction — it reintroduced the
+  horizontal height clamp (blank panel, clipped canvas). Reverted in
+  `8ee2110`; the SidePanel structure is correct, the remaining seam is a
+  ~1px divider + shadow, documented as a judgment call in the handoff.
+- **Lesson:** when a cosmetic fix requires restructuring working layout,
+  revert fast and document — three rounds of seam chasing bought two
+  regressions; the SidePanel version was one good review away from done.

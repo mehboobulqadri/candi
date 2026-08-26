@@ -2,7 +2,9 @@
 
 ## State (2026-08-26)
 
-Branch `slice/02-01-gui-reader`, tip `0d178e4`, pushed, tree clean except the
+Branch `slice/02-01-gui-reader`, tip `8ee2110` (reverted a broken
+central-embedded sidebar experiment `2231aa8` — keep the sidebar as
+SidePanels; see log), pushed, tree clean except the
 user's reference images (`image.png`, `image copy.png` at repo root — the
 six-state design reference; do NOT commit or delete them).
 
@@ -46,6 +48,15 @@ fake "broken UI" evidence more than once.
    captures), review, fix residuals.
 2. User dogfoods → tag `v0.1` → PR `slice/02-01-gui-reader` → `dev` → `main`.
    Release flow per user: slices merge to dev; every 0.x tag lands on main.
+
+## Residual polish (judgment calls, not defects)
+
+- ~1px separator + shadow line between section panel and canvas — reads as
+  an intentional divider; user has seen it.
+- Theme picker paints chevron left of the name (reference wants right).
+- Page pill sits after the wordmark, not centered over the canvas.
+- View modes are 3 honest toggles (free/fit-width/fit-page), not the
+  reference's 4 (dual/mobile are unbuilt features — do not fake).
 
 ## Roadmap (user-set)
 
