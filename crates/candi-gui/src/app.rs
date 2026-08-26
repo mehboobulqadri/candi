@@ -691,6 +691,10 @@ impl ReaderApp {
         if !self.ensure_layout(ui.available_width(), ui.available_height()) {
             return;
         }
+        // Backdrop over the entire clip rect: at high zoom the content block
+        // is narrower than the viewport and unpainted regions showed through.
+        ui.painter()
+            .rect_filled(ui.clip_rect(), 0.0, color_of(self.theme.panel_bg));
         let ctx = ui.ctx().clone();
         if !self.primed {
             self.primed = true;
@@ -1022,7 +1026,7 @@ impl ReaderApp {
         egui::Frame::default()
             .stroke(egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25)))
             .rounding(6.0)
-            .inner_margin(egui::Margin::symmetric(4.0, 2.0))
+            .inner_margin(egui::Margin::symmetric(6.0, 3.0))
             .show(ui, |ui| {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.add_enabled_ui(count > 0 && current > 0, |ui| {
@@ -1141,45 +1145,57 @@ impl ReaderApp {
                 (SidebarSection::Bookmarks, Icon::Flag, "Bookmarks"),
                 (SidebarSection::Search, Icon::Search, "Search"),
             ];
-            for (section, icon, name) in sections {
-                let active = self.sidebar_open && self.section == section;
+            let (rail_rect, _) = ui.allocate_exact_size(
+                egui::vec2(52.0, ui.available_height()),
+                egui::Sense::hover(),
+            );
+            for (index, (section, icon, name)) in sections.iter().enumerate() {
+                let active = self.sidebar_open && self.section == *section;
                 let color = if active { accent } else { fg };
-                ui.horizontal(|ui| {
-                    ui.add_space(7.0);
-                    let button = self
-                        .icons
-                        .button(ui, icon, 38.0, color)
-                        .on_hover_text(name)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        rail_rect.left() + 7.0,
+                        rail_rect.top() + 8.0 + 46.0 * index as f32,
+                    ),
+                    egui::vec2(38.0, 38.0),
+                );
+                let button =
+                    egui::Button::image(self.icons.image(ui, *icon, 26.0, color)).rounding(6.0);
+                let button = ui
+                    .put(rect, button)
+                    .on_hover_text(*name)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if active {
+                    let bar_h = rect.height() * 0.6;
+                    ui.painter().rect_filled(
+                        egui::Rect::from_center_size(
+                            egui::pos2(rail_rect.left() + 1.5, rect.center().y),
+                            egui::vec2(3.0, bar_h),
+                        ),
+                        1.5,
+                        accent,
+                    );
+                }
+                if button.clicked() {
                     if active {
-                        let bar_h = button.rect.height() * 0.6;
-                        ui.painter().rect_filled(
-                            egui::Rect::from_center_size(
-                                egui::pos2(button.rect.left() - 7.0, button.rect.center().y),
-                                egui::vec2(3.0, bar_h),
-                            ),
-                            1.5,
-                            accent,
-                        );
-                    }
-                    if button.clicked() {
-                        if active {
-                            self.sidebar_open = false;
-                        } else {
-                            self.sidebar_open = true;
-                            self.section = section;
-                            if section == SidebarSection::Search {
-                                self.focus_search = true;
-                            }
+                        self.sidebar_open = false;
+                    } else {
+                        self.sidebar_open = true;
+                        self.section = *section;
+                        if *section == SidebarSection::Search {
+                            self.focus_search = true;
                         }
                     }
-                });
-                ui.add_space(6.0);
+                }
             }
-            ui.add_space((ui.available_height() - 40.0).max(0.0));
-            if self
-                .icons
-                .button(ui, Icon::Gear, 38.0, fg)
+            let gear_rect = egui::Rect::from_min_size(
+                egui::pos2(rail_rect.left() + 7.0, rail_rect.bottom() - 46.0),
+                egui::vec2(38.0, 38.0),
+            );
+            let gear =
+                egui::Button::image(self.icons.image(ui, Icon::Gear, 26.0, fg)).rounding(6.0);
+            if ui
+                .put(gear_rect, gear)
                 .on_hover_text("Theme editor (Ctrl+E)")
                 .clicked()
             {
@@ -1840,22 +1856,25 @@ fn toc_row_ui(
             page = page.color(accent);
         }
         // Title left and truncating; the page number holds the right edge.
+        // (add_sized centers its content — explicit layouts keep alignment.)
+        let title_w = (ui.available_width() - 36.0).max(40.0);
         let title_resp = ui
-            .add_sized(
-                [(ui.available_width() - 36.0).max(40.0), 20.0],
-                egui::Label::new(title)
-                    .truncate()
-                    .halign(egui::Align::LEFT)
-                    .sense(egui::Sense::click()),
+            .allocate_ui_with_layout(
+                egui::vec2(title_w, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| ui.add(egui::Label::new(title).truncate()),
             )
+            .inner
+            .interact(egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         let page_resp = ui
-            .add_sized(
-                [34.0, 20.0],
-                egui::Label::new(page)
-                    .halign(egui::Align::RIGHT)
-                    .sense(egui::Sense::click()),
+            .allocate_ui_with_layout(
+                egui::vec2(34.0, 20.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| ui.add(egui::Label::new(page)),
             )
+            .inner
+            .interact(egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         title_resp.union(page_resp)
     })
