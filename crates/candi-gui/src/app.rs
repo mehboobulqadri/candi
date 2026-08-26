@@ -29,7 +29,6 @@ use crate::sidebar::{
 /// Pages kept as textures around the current page; texture memory outside this
 /// window is released while the original bitmaps stay cached.
 const TEXTURE_KEEP_AROUND: usize = 6;
-const SIDEBAR_WIDTH: f32 = 280.0;
 /// Upper end of the zoom slider; keyboard steps may still go higher, up to
 /// candi-core's own limit (design spec §9).
 const SLIDER_MAX_PERCENT: u16 = 400;
@@ -114,6 +113,8 @@ pub struct ReaderApp {
     fit_page: bool,
 
     sidebar_open: bool,
+    /// Sidebar width for the frame; clamped to the window each pass.
+    sidebar_w: f32,
     section: SidebarSection,
     focus_search: bool,
     /// Focus mode (design spec §8): chrome hidden, document only.
@@ -143,10 +144,27 @@ pub struct ReaderApp {
 
 impl ReaderApp {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         initial: Option<PathBuf>,
         backend: BackendKind,
     ) -> Self {
+        // Inter as the UI face (mockup typography); the semibold weight sits
+        // second in the family so strong text can pick it up.
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "inter".into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/Inter-Regular.ttf")).into(),
+        );
+        fonts.font_data.insert(
+            "inter-semibold".into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/Inter-SemiBold.ttf"))
+                .into(),
+        );
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            family.insert(0, "inter".into());
+            family.insert(1, "inter-semibold".into());
+        }
+        cc.egui_ctx.set_fonts(fonts);
         let mut app = Self {
             backend,
             path: None,
@@ -168,6 +186,7 @@ impl ReaderApp {
             zoom_pct: layout::MIN_ZOOM_PERCENT,
             fit_page: false,
             sidebar_open: false,
+            sidebar_w: 280.0,
             section: SidebarSection::Contents,
             focus_search: false,
             focus_mode: false,
@@ -799,19 +818,22 @@ impl ReaderApp {
             ui.set_height(ui.available_height());
             if self.sidebar_open {
                 // DOCUMENT block, aligned over the sidebar column (mockup §4).
-                ui.allocate_ui(egui::vec2(SIDEBAR_WIDTH, ui.available_height()), |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        ui.add_space(5.0);
-                        ui.label(egui::RichText::new("DOCUMENT").weak().small());
-                        let doc = if self.filename.is_empty() {
-                            "Candi".into()
-                        } else {
-                            self.filename.clone()
-                        };
-                        ui.add_sized(
-                            [ui.available_width(), 18.0],
-                            egui::Label::new(egui::RichText::new(doc).strong()).truncate(),
-                        );
+                ui.allocate_ui(egui::vec2(self.sidebar_w, ui.available_height()), |ui| {
+                    ui.add_space(5.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("DOCUMENT").weak().small());
+                            let doc = if self.filename.is_empty() {
+                                "Candi".into()
+                            } else {
+                                self.filename.clone()
+                            };
+                            ui.add_sized(
+                                [self.sidebar_w - 44.0, 18.0],
+                                egui::Label::new(egui::RichText::new(doc).strong()).truncate(),
+                            );
+                        });
                     });
                 });
                 ui.separator();
@@ -1035,12 +1057,8 @@ impl ReaderApp {
                                 JumpOutcome::Idle => {}
                             }
                         }
-                        None => {
-                            let counter = if count > 0 {
-                                format!("{} / {}", current + 1, count)
-                            } else {
-                                "–".to_owned()
-                            };
+                        None if count > 0 => {
+                            let counter = format!("{} / {}", current + 1, count);
                             let counter = egui::Label::new(
                                 egui::RichText::new(counter).font(egui::FontId::proportional(13.0)),
                             )
@@ -1057,6 +1075,7 @@ impl ReaderApp {
                                 self.jump_invalid = false;
                             }
                         }
+                        None => {}
                     }
                     ui.add_enabled_ui(count > 0 && current + 1 < count, |ui| {
                         if self
@@ -1076,49 +1095,55 @@ impl ReaderApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.vertical(|ui| {
-            ui.add_space(6.0);
-            let bm_count =
-                (!self.session.bookmarks.is_empty()).then_some(self.session.bookmarks.len());
-            let search_count = self
-                .search_hits
-                .as_deref()
-                .and_then(|hits| (!hits.is_empty()).then_some(hits.len()));
-            self.nav_row(ui, SidebarSection::Contents, Icon::List, "Contents", None);
-            self.nav_row(
-                ui,
-                SidebarSection::Bookmarks,
-                Icon::Flag,
-                "Bookmarks",
-                bm_count,
-            );
-            self.nav_row(
-                ui,
-                SidebarSection::Search,
-                Icon::Search,
-                "Search",
-                search_count,
-            );
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(6.0);
-            let (label, salt, body): (&str, &str, fn(&mut ReaderApp, &mut egui::Ui)) =
-                match self.section {
-                    SidebarSection::Contents => {
-                        ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
-                    }
-                    SidebarSection::Bookmarks => {
-                        ("BOOKMARKS", "sidebar_bookmarks", ReaderApp::show_bookmarks)
-                    }
-                    SidebarSection::Search => ("SEARCH", "sidebar_search", ReaderApp::show_search),
-                };
-            ui.label(egui::RichText::new(label).weak().small());
-            ui.add_space(2.0);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .id_salt(salt)
-                .show(ui, |ui| body(self, ui));
-        });
+        egui::Frame::default()
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.add_space(6.0);
+                    let bm_count = (!self.session.bookmarks.is_empty())
+                        .then_some(self.session.bookmarks.len());
+                    let search_count = self
+                        .search_hits
+                        .as_deref()
+                        .and_then(|hits| (!hits.is_empty()).then_some(hits.len()));
+                    self.nav_row(ui, SidebarSection::Contents, Icon::List, "Contents", None);
+                    self.nav_row(
+                        ui,
+                        SidebarSection::Bookmarks,
+                        Icon::Flag,
+                        "Bookmarks",
+                        bm_count,
+                    );
+                    self.nav_row(
+                        ui,
+                        SidebarSection::Search,
+                        Icon::Search,
+                        "Search",
+                        search_count,
+                    );
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+                    let (label, salt, body): (&str, &str, fn(&mut ReaderApp, &mut egui::Ui)) =
+                        match self.section {
+                            SidebarSection::Contents => {
+                                ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
+                            }
+                            SidebarSection::Bookmarks => {
+                                ("BOOKMARKS", "sidebar_bookmarks", ReaderApp::show_bookmarks)
+                            }
+                            SidebarSection::Search => {
+                                ("SEARCH", "sidebar_search", ReaderApp::show_search)
+                            }
+                        };
+                    ui.label(egui::RichText::new(label).weak().small());
+                    ui.add_space(2.0);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .id_salt(salt)
+                        .show(ui, |ui| body(self, ui));
+                });
+            });
     }
 
     /// Full-width nav row: icon, label, optional right count; the active row
@@ -1133,9 +1158,10 @@ impl ReaderApp {
     ) {
         let accent = color_of(self.theme.accent);
         let fg = color_of(self.theme.ui_fg);
+        eprintln!("DIAG nav_row avail_w={}", ui.available_width());
         let active = self.section == section;
         let (rect, resp) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
         if active {
             ui.painter()
                 .rect_filled(rect, 6.0, accent.gamma_multiply(0.15));
@@ -1146,14 +1172,14 @@ impl ReaderApp {
         self.icons.paint_at(
             ui,
             egui::Rect::from_center_size(
-                egui::pos2(rect.left() + 18.0, rect.center().y),
-                egui::vec2(17.0, 17.0),
+                egui::pos2(rect.left() + 20.0, rect.center().y),
+                egui::vec2(18.0, 18.0),
             ),
             icon,
             color,
         );
         ui.painter().text(
-            egui::pos2(rect.left() + 36.0, rect.center().y),
+            egui::pos2(rect.left() + 40.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             name,
             egui::FontId::proportional(14.0),
@@ -1292,18 +1318,7 @@ impl ReaderApp {
                 {
                     self.cycle_theme();
                 }
-                egui::ComboBox::from_id_salt("theme_combo")
-                    .selected_text(&self.theme.name)
-                    .show_ui(ui, |ui| {
-                        for name in BUILTIN_NAMES {
-                            if ui
-                                .selectable_label(self.theme.name == *name, name)
-                                .clicked()
-                            {
-                                self.set_theme(name);
-                            }
-                        }
-                    });
+                self.theme_picker(ui, fg);
                 ui.add_space(10.0);
                 self.zoom_controls(ui, fg, accent);
             });
@@ -1354,6 +1369,47 @@ impl ReaderApp {
         if slider.inner.changed() {
             self.fit_page = false;
             self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(pct as f32));
+        }
+    }
+
+    /// Bordered theme picker: current name + chevron; popup lists the five
+    /// built-ins and the YAML editor. No font glyphs anywhere.
+    fn theme_picker(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
+        let chevron = self
+            .icons
+            .image(ui, Icon::ChevronDown, 14.0, fg.gamma_multiply(0.7));
+        let resp = ui.add(egui::Button::image_and_text(
+            chevron,
+            egui::RichText::new(&self.theme.name).font(egui::FontId::proportional(13.0)),
+        ));
+        let id = resp.id.with("theme_popup");
+        if resp.clicked() {
+            ui.memory_mut(|mem| mem.toggle_popup(id));
+        }
+        if ui.memory(|mem| mem.is_popup_open(id)) {
+            egui::popup_below_widget(
+                ui,
+                id,
+                &resp,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_min_width(170.0);
+                    for name in BUILTIN_NAMES {
+                        if ui
+                            .selectable_label(self.theme.name == *name, name)
+                            .clicked()
+                        {
+                            self.set_theme(name);
+                            ui.memory_mut(|mem| mem.close_popup());
+                        }
+                    }
+                    ui.separator();
+                    if ui.selectable_label(false, "Edit Config (YAML)…").clicked() {
+                        ui.memory_mut(|mem| mem.close_popup());
+                        self.open_theme_editor();
+                    }
+                },
+            );
         }
     }
 
@@ -1791,22 +1847,25 @@ fn toc_row_ui(
             title = title.color(accent);
             page = page.color(accent);
         }
-        // Right-to-left: the page number hugs the row's right edge (design
-        // spec §12); the title fills the rest and truncates.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let page_resp = ui
-                .add(egui::Label::new(page).sense(egui::Sense::click()))
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let title_resp = ui
-                .add(
-                    egui::Label::new(title)
-                        .truncate()
-                        .sense(egui::Sense::click()),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            title_resp.union(page_resp)
-        })
-        .inner
+        // Title left and truncating; the page number holds the right edge.
+        let title_resp = ui
+            .add_sized(
+                [(ui.available_width() - 36.0).max(40.0), 20.0],
+                egui::Label::new(title)
+                    .truncate()
+                    .halign(egui::Align::LEFT)
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let page_resp = ui
+            .add_sized(
+                [34.0, 20.0],
+                egui::Label::new(page)
+                    .halign(egui::Align::RIGHT)
+                    .sense(egui::Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        title_resp.union(page_resp)
     })
     .inner
 }
@@ -1881,15 +1940,21 @@ impl eframe::App for ReaderApp {
         if let Some(file) = dropped.iter().find_map(|f| f.path.clone()) {
             self.open_path(file);
         }
+        // Sidebar tracks the window (26%), clamped — never grows on its own.
+        self.sidebar_w = (ctx.screen_rect().width() * 0.26).clamp(230.0, 310.0);
         if !self.focus_mode {
             egui::TopBottomPanel::top("top_bar")
                 .exact_height(46.0)
                 .show(ctx, |ui| self.top_bar(ui));
             if self.sidebar_open {
-                egui::SidePanel::left("sidebar")
-                    .default_width(SIDEBAR_WIDTH)
+                let panel = egui::SidePanel::left("sidebar")
+                    .default_width(self.sidebar_w)
                     .resizable(false)
                     .show(ctx, |ui| self.sidebar(ui));
+                eprintln!(
+                    "DIAG sidebar_w={} panel_rect={:?}",
+                    self.sidebar_w, panel.response.rect
+                );
             }
             egui::TopBottomPanel::bottom("bottom_bar")
                 .exact_height(42.0)

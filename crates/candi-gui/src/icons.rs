@@ -46,6 +46,10 @@ const SOURCES: &[(Icon, &str)] = &[
     ),
     (Icon::Save, include_str!("../assets/icons/save.svg")),
     (Icon::Info, include_str!("../assets/icons/info.svg")),
+    (
+        Icon::ChevronDown,
+        include_str!("../assets/icons/chevron-down.svg"),
+    ),
 ];
 
 /// A chrome icon.
@@ -70,6 +74,7 @@ pub enum Icon {
     MoveHorizontal,
     Save,
     Info,
+    ChevronDown,
 }
 
 impl Icon {
@@ -117,6 +122,12 @@ impl IconRender {
         };
         let image = egui::Image::new((tex.id(), Vec2::splat((side - 10.0).max(8.0)))).tint(tint);
         ui.add(egui::Button::image(image))
+    }
+
+    /// Pre-tinted image for composite buttons (icon + text).
+    pub fn image(&mut self, ui: &mut Ui, icon: Icon, side: f32, color: Color32) -> egui::Image<'_> {
+        let tex = self.texture(ui.ctx(), icon);
+        egui::Image::new((tex.id(), Vec2::splat(side))).tint(color)
     }
 
     /// Paint an icon texture at an arbitrary rect (nav rows, menu items).
