@@ -1958,36 +1958,35 @@ impl eframe::App for ReaderApp {
                 .show(ctx, |ui| self.bottom_bar(ui));
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Paint the full central rect: nothing between the panels may
-            // show through as a transparent strip.
-            ui.painter().rect_filled(
-                ui.available_rect_before_wrap(),
-                0.0,
-                color_of(self.theme.panel_bg),
-            );
-            match center_pane(
-                self.editor.is_some(),
-                self.document.is_some(),
-                self.error.is_some(),
-            ) {
-                CenterPane::Editor => self.show_theme_editor(ui),
-                CenterPane::Canvas => {
-                    if let Some(error) = self.error.clone() {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.colored_label(ERROR_RED, error);
-                            if ui.small_button("dismiss").clicked() {
-                                self.error = None;
-                            }
-                        });
-                        ui.separator();
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .inner_margin(0.0)
+                    .fill(color_of(self.theme.panel_bg)),
+            )
+            .show(ctx, |ui| {
+                match center_pane(
+                    self.editor.is_some(),
+                    self.document.is_some(),
+                    self.error.is_some(),
+                ) {
+                    CenterPane::Editor => self.show_theme_editor(ui),
+                    CenterPane::Canvas => {
+                        if let Some(error) = self.error.clone() {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.colored_label(ERROR_RED, error);
+                                if ui.small_button("dismiss").clicked() {
+                                    self.error = None;
+                                }
+                            });
+                            ui.separator();
+                        }
+                        self.show_canvas(ui);
                     }
-                    self.show_canvas(ui);
+                    CenterPane::OpenError => self.open_error_view(ui),
+                    CenterPane::Empty => self.empty_state(ui),
                 }
-                CenterPane::OpenError => self.open_error_view(ui),
-                CenterPane::Empty => self.empty_state(ui),
-            }
-        });
+            });
 
         self.about_window(ctx);
         self.info_window(ctx);
