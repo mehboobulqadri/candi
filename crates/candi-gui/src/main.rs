@@ -55,6 +55,7 @@ fn main() -> ExitCode {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_app_id("candi")
+            .with_decorations(false)
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([640.0, 400.0]),
         ..Default::default()

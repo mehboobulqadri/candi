@@ -934,13 +934,25 @@ impl ReaderApp {
         ui.horizontal(|ui| {
             ui.set_height(ui.available_height());
             self.icon_menu(ui, Icon::Menu, "Menu", Self::app_menu);
-            ui.label(
+            let brand = ui.label(
                 egui::RichText::new("Candi")
                     .strong()
                     .size(16.0)
                     .color(accent),
             );
+            // Decorations are off, so the brand zone doubles as the drag
+            // handle; double-click toggles maximize like a native title bar.
+            let drag = ui.interact(brand.rect, egui::Id::new("title_drag"), egui::Sense::drag());
+            if drag.dragged() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if drag.double_clicked() {
+                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.window_buttons(ui, fg);
                 self.icon_menu(ui, Icon::Dots, "More actions", Self::app_menu);
                 if self
                     .icons
@@ -982,6 +994,23 @@ impl ReaderApp {
         });
     }
 
+    /// Window controls rendered at the far right of both top-bar layouts
+    /// (native titlebar is disabled).
+    fn window_buttons(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
+        if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        if self.icons.button(ui, Icon::Square, 22.0, fg).clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+        if self.icons.button(ui, Icon::X, 22.0, fg).clicked() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
     /// Top-bar search overlay shown while the sidebar's Search section is
     /// open: the query field moves up here and the right cluster drives the
     /// match list; the sidebar keeps rendering the hit rows.
@@ -999,6 +1028,7 @@ impl ReaderApp {
                 accent,
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.window_buttons(ui, fg);
                 if self.icons.button(ui, Icon::X, 26.0, fg).clicked() {
                     self.search_query.clear();
                     self.search_hits = None;

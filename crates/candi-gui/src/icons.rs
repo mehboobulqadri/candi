@@ -52,6 +52,7 @@ const SOURCES: &[(Icon, &str)] = &[
         Icon::ChevronDown,
         include_str!("../assets/icons/chevron-down.svg"),
     ),
+    (Icon::Square, include_str!("../assets/icons/square.svg")),
 ];
 
 /// A chrome icon.
@@ -79,6 +80,7 @@ pub enum Icon {
     Info,
     Pen,
     ChevronDown,
+    Square,
 }
 
 impl Icon {
