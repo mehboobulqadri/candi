@@ -719,6 +719,8 @@ impl ReaderApp {
         }
         let jump = self.pending_scroll.take();
 
+        ui.style_mut().spacing.scroll.bar_width = 4.0;
+        ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
         let mut area = egui::ScrollArea::vertical()
             .id_salt("page_canvas")
             .auto_shrink([false, false])
@@ -1091,6 +1093,8 @@ impl ReaderApp {
                         };
                     ui.label(egui::RichText::new(label).weak().small());
                     ui.add_space(4.0);
+                    ui.style_mut().spacing.scroll.bar_width = 4.0;
+                    ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .id_salt(salt)
