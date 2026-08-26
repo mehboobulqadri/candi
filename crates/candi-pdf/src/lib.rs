@@ -126,6 +126,12 @@ pub trait Document: Send + Sync {
     /// external or unresolvable are dropped, so a present-but-unusable
     /// outline can come back empty.
     fn outline(&self) -> Result<Vec<TocItem>, Error>;
+    /// Rectangles of every case-insensitive occurrence of `needle` on one
+    /// page, one entry per highlight box (a match spanning lines yields one
+    /// entry per line): `[x0, y0, x1, y1]` in PDF points (1/72 inch),
+    /// TOP-LEFT origin with y increasing downward. An empty needle returns
+    /// no rects.
+    fn search_page(&self, page: usize, needle: &str) -> Result<Vec<[f32; 4]>, Error>;
 }
 
 /// A document backend. Implementations must be cheap to construct and hold no

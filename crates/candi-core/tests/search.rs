@@ -48,6 +48,10 @@ impl Document for FakeDoc {
     fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
         Ok(Vec::new())
     }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 struct ErrorOnPageDoc {
@@ -81,6 +85,10 @@ impl Document for ErrorOnPageDoc {
     fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
         Ok(Vec::new())
     }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 static ERROR_DOC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -110,6 +118,10 @@ impl Document for CountingErrorDoc {
     }
 
     fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
         Ok(Vec::new())
     }
 }
@@ -312,6 +324,10 @@ fn search_matches_normalized_ligatures() {
         }
 
         fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
             Ok(Vec::new())
         }
     }

@@ -149,6 +149,9 @@ pub struct ReaderApp {
     jump_invalid: bool,
     search_query: String,
     search_hits: Option<Vec<SearchHit>>,
+    /// Hit rects of one painted page: (page, lowercase query, [x0, y0, x1,
+    /// y1] points top-left origin). Refreshed lazily per visible page.
+    highlight: Option<(usize, String, Vec<[f32; 4]>)>,
     /// Flattened table of contents, loaded once per open; empty = none.
     toc_rows: Vec<TocRow>,
     about_open: bool,
@@ -223,6 +226,7 @@ impl ReaderApp {
             jump_invalid: false,
             search_query: String::new(),
             search_hits: None,
+            highlight: None,
             toc_rows: Vec::new(),
             about_open: false,
             info_open: false,
@@ -243,6 +247,7 @@ impl ReaderApp {
         self.error = None;
         self.search_hits = None;
         self.search_query.clear();
+        self.highlight = None;
         self.renaming = None;
         self.rename_buffer.clear();
         self.rename_focus = false;
@@ -427,6 +432,28 @@ impl ReaderApp {
             }
         }
         Ok(hits)
+    }
+
+    /// Hit rects for one painted page, in trait order: lowercase the live
+    /// query, reuse a cached result when it still matches, otherwise re-query
+    /// the backend (errors become no rects). Empty while no search is active.
+    fn page_highlight(&mut self, page: usize) -> Vec<[f32; 4]> {
+        let query = self.search_query.trim().to_lowercase();
+        if query.is_empty() || self.search_hits.as_deref().is_none_or(|h| h.is_empty()) {
+            return Vec::new();
+        }
+        if let Some((hit_page, hit_query, rects)) = &self.highlight
+            && *hit_page == page
+            && hit_query == &query
+        {
+            return rects.clone();
+        }
+        let Some(document) = self.document.as_ref() else {
+            return Vec::new();
+        };
+        let rects = document.search_page(page, &query).unwrap_or_default();
+        self.highlight = Some((page, query, rects.clone()));
+        rects
     }
 
     // --- rendering -------------------------------------------------------
@@ -840,6 +867,23 @@ impl ReaderApp {
                             "rendering…",
                             hint_font.clone(),
                             fg.gamma_multiply(0.6),
+                        );
+                    }
+                }
+                let hits = self.page_highlight(page);
+                if !hits.is_empty()
+                    && let Some(&(page_w, page_h)) = self.page_sizes.get(page)
+                {
+                    // Hit rects are fractional points over page_size points;
+                    // scale both axes by the on-screen page rect.
+                    for &[x0, y0, x1, y1] in &hits {
+                        painter.rect_filled(
+                            egui::Rect::from_min_max(
+                                screen.min + egui::vec2(x0 * rect.w / page_w, y0 * rect.h / page_h),
+                                screen.min + egui::vec2(x1 * rect.w / page_w, y1 * rect.h / page_h),
+                            ),
+                            2.0,
+                            color_of(self.theme.accent).gamma_multiply(0.35),
                         );
                     }
                 }

@@ -190,6 +190,9 @@ mod tests {
         fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
             Ok(Vec::new())
         }
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
+        }
     }
 
     #[test]

@@ -144,6 +144,11 @@ impl Document for StubDocument {
             },
         ])
     }
+
+    fn search_page(&self, page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        self.page(page)?;
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]

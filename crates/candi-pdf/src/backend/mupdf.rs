@@ -137,6 +137,34 @@ impl Document for MupdfPdfDocument {
         let outlines = inner.doc.outlines().map_err(map_mupdf_error)?;
         Ok(toc_from_outlines(&outlines, self.page_count))
     }
+
+    fn search_page(&self, page: usize, needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let page_no = page_index(page, self.page_count)?;
+        let inner = self.inner.lock().expect("mupdf document mutex poisoned");
+        let mupdf_page = inner.doc.load_page(page_no).map_err(map_mupdf_error)?;
+        let text_page = mupdf_page
+            .to_text_page(TextPageFlags::empty())
+            .map_err(map_mupdf_error)?;
+        // fz_search folds case and returns quads in page space — top-left
+        // origin, y-down points, the same space as word bounds above.
+        Ok(text_page
+            .search(needle)
+            .map_err(map_mupdf_error)?
+            .iter()
+            .map(|quad| {
+                let (ul, ur, ll, lr) = (&quad.ul, &quad.ur, &quad.ll, &quad.lr);
+                [
+                    ul.x.min(ll.x).min(ur.x).min(lr.x),
+                    ul.y.min(ur.y).min(ll.y).min(lr.y),
+                    ul.x.max(ll.x).max(ur.x).max(lr.x),
+                    ul.y.max(ur.y).max(ll.y).max(lr.y),
+                ]
+            })
+            .collect())
+    }
 }
 
 /// `LinkDestination::page_number` is the 0-based absolute page; entries with

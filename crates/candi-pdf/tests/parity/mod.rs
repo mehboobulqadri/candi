@@ -29,6 +29,7 @@ pub fn run_suite(open_fn: OpenFn) {
     hardening_unsupported(open_fn);
     hardening_zero_pages_malformed(open_fn);
     parity_tiny_opens_with_text(open_fn);
+    parity_search_finds_needle_within_page_bounds(open_fn);
     parity_tiny_outline_is_empty(open_fn);
     parity_ghost_outline_drops_unresolvable_entries(open_fn);
     parity_blank_first_page_not_no_text_layer(open_fn);
@@ -180,6 +181,32 @@ pub fn parity_tiny_opens_with_text(open_fn: OpenFn) {
         let doc = open_fn(&path, None).expect("tiny.pdf should open");
         assert_eq!(doc.page_count(), 1);
         assert!(doc.page_text(0).unwrap().contains("Hello Candi"));
+    });
+}
+
+/// tiny.pdf says "Hello Candi" on a 200x200 page: at least one case-insensitive
+/// hit rect must land inside the page bounds in top-left y-down points, misses
+/// and the empty needle return none.
+pub fn parity_search_finds_needle_within_page_bounds(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("search_finds_needle_within_page_bounds", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        let (w, h) = doc.page_size(0).unwrap();
+
+        for needle in ["hello", "HELLO", "candi"] {
+            let rects = doc.search_page(0, needle).expect("search call");
+            assert!(!rects.is_empty(), "no rects for {needle:?}");
+            for r in &rects {
+                assert!(
+                    r[0] >= 0.0 && r[1] >= 0.0 && r[2] <= w && r[3] <= h,
+                    "{needle:?} rect {r:?} outside {w}x{h} page"
+                );
+                assert!(r[0] < r[2] && r[1] < r[3], "{needle:?} degenerate {r:?}");
+            }
+        }
+
+        assert!(doc.search_page(0, "zebra").unwrap().is_empty());
+        assert!(doc.search_page(0, "").unwrap().is_empty());
     });
 }
 

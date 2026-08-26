@@ -236,6 +236,61 @@ impl Document for PdfiumPdfDocument {
             0,
         ))
     }
+
+    // FPDFText_GetRect yields PDFium page space (bottom-left origin, y-up),
+    // flipped here to the trait's top-left y-down points. No `match_case`
+    // flag is set, so matching is case-insensitive per the trait contract.
+    fn search_page(&self, page: usize, needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            let height = bindings.FPDF_GetPageHeightF(page_handle);
+            let text_page = load_text_page(bindings, page_handle)?;
+
+            let mut rects = Vec::new();
+            // Flags 0: no FPDF_MATCHCASE, no FPDF_MATCHWHOLEWORD.
+            let search = bindings.FPDFText_FindStart_str(text_page, needle, 0, 0);
+            if search.is_null() {
+                bindings.FPDFText_ClosePage(text_page);
+                return Err(Error::Other("text search could not be started".into()));
+            }
+            while bindings.is_true(bindings.FPDFText_FindNext(search)) {
+                let start = bindings.FPDFText_GetSchResultIndex(search);
+                let count = bindings.FPDFText_GetSchCount(search);
+                if count <= 0 {
+                    continue;
+                }
+                for i in 0..bindings.FPDFText_CountRects(text_page, start, count) {
+                    let mut left = 0.0f64;
+                    let mut top = 0.0f64;
+                    let mut right = 0.0f64;
+                    let mut bottom = 0.0f64;
+                    if !bindings.is_true(bindings.FPDFText_GetRect(
+                        text_page,
+                        i,
+                        &mut left,
+                        &mut top,
+                        &mut right,
+                        &mut bottom,
+                    )) {
+                        continue;
+                    }
+                    rects.push([
+                        left as f32,
+                        height - top as f32,
+                        right as f32,
+                        height - bottom as f32,
+                    ]);
+                }
+            }
+            bindings.FPDFText_FindClose(search);
+            bindings.FPDFText_ClosePage(text_page);
+            Ok(rects)
+        })
+    }
 }
 
 /// Maximum outline nesting the walker descends into; malformed documents can
