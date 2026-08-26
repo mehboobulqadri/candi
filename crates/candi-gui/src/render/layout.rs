@@ -12,9 +12,9 @@ use std::ops::Range;
 use candi_core::ZoomMode;
 
 /// Vertical gap between consecutive pages, in logical points.
-pub const GAP: f32 = 16.0;
+pub const GAP: f32 = 12.0;
 /// Margin around the content block on every side, in logical points.
-pub const MARGIN: f32 = 20.0;
+pub const MARGIN: f32 = 12.0;
 /// Zoom quantization step, in percent.
 const ZOOM_STEP: f32 = 5.0;
 
@@ -187,15 +187,15 @@ mod tests {
 
     #[test]
     fn fit_width_fills_widest_page_without_overflowing() {
-        // 640 window: usable 600; 600/612 = 98.04% → floor to 95%.
+        // 640 window: usable 616; 616/612 = 100.65% → floor to 100%.
         let layout = letter_layout(ZoomMode::FitWidth, 640.0, 1);
-        assert_eq!(layout.zoom, 0.95);
+        assert_eq!(layout.zoom, 1.0);
         assert!(layout.rects[0].w <= 640.0 - 2.0 * MARGIN);
 
         // Mixed sizes resolve against the widest page so both fit.
         let sizes = vec![LETTER, (300.0, 500.0)];
         let mixed = Layout::build(&sizes, ZoomMode::FitWidth, 640.0);
-        assert_eq!(mixed.zoom, 0.95);
+        assert_eq!(mixed.zoom, 1.0);
         assert!((mixed.rects[1].w - 300.0 * mixed.zoom).abs() < 1e-3);
         assert!(mixed.rects[1].x > mixed.rects[0].x, "narrower page centers");
     }
@@ -265,9 +265,9 @@ mod tests {
 
     #[test]
     fn fit_width_percent_uses_usable_width_over_widest_page() {
-        // Usable = 800 - 2*MARGIN = 760; 760/612 = 124.18…% → floor to 120.
-        assert_eq!(fit_width_percent(&[LETTER], 800.0), 120);
-        assert_eq!(fit_width_percent(&[LETTER, (300.0, 500.0)], 800.0), 120);
+        // Usable = 800 - 2*MARGIN = 776; 776/612 = 126.79…% → floor to 125.
+        assert_eq!(fit_width_percent(&[LETTER], 800.0), 125);
+        assert_eq!(fit_width_percent(&[LETTER, (300.0, 500.0)], 800.0), 125);
     }
 
     #[test]

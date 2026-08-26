@@ -828,16 +828,8 @@ impl ReaderApp {
                     .size(16.0)
                     .color(accent),
             );
-            if ui.ctx().screen_rect().width() >= 720.0 {
-                ui.label(
-                    egui::RichText::new("Clean · Minimal · Distraction-Free · Fast")
-                        .weak()
-                        .small(),
-                );
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.icon_menu(ui, Icon::Dots, "More actions", Self::app_menu);
-                self.zoom_stepper(ui, fg);
                 if self
                     .icons
                     .button(ui, Icon::Focus, 26.0, fg)
@@ -870,29 +862,6 @@ impl ReaderApp {
                     self.focus_search = true;
                 }
                 self.nav_cluster(ui, fg);
-            });
-        });
-    }
-
-    /// − / percent / + stepper in the top bar (states 2–3).
-    fn zoom_stepper(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
-        let can = self.page_count() > 0;
-        // Explicit LTR: the RTL top-bar parent reverses child order.
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.add_enabled_ui(can, |ui| {
-                if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
-                    self.zoom_step(-5);
-                }
-            });
-            ui.label(
-                egui::RichText::new(format!("{}%", self.zoom_pct))
-                    .font(egui::FontId::proportional(13.0)),
-            )
-            .on_hover_text("Zoom");
-            ui.add_enabled_ui(can, |ui| {
-                if self.icons.button(ui, Icon::Plus, 22.0, fg).clicked() {
-                    self.zoom_step(5);
-                }
             });
         });
     }
