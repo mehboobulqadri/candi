@@ -1935,6 +1935,13 @@ impl eframe::App for ReaderApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Paint the full central rect: nothing between the panels may
+            // show through as a transparent strip.
+            ui.painter().rect_filled(
+                ui.available_rect_before_wrap(),
+                0.0,
+                color_of(self.theme.panel_bg),
+            );
             match center_pane(
                 self.editor.is_some(),
                 self.document.is_some(),
