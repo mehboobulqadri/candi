@@ -945,19 +945,19 @@ impl ReaderApp {
                 ui.add_enabled_ui(has_hits, |ui| {
                     if self
                         .icons
-                        .button(ui, Icon::ChevronLeft, 22.0, fg)
-                        .on_hover_text("Previous match")
-                        .clicked()
-                    {
-                        self.cycle_search_hit(-1);
-                    }
-                    if self
-                        .icons
                         .button(ui, Icon::ChevronRight, 22.0, fg)
                         .on_hover_text("Next match")
                         .clicked()
                     {
                         self.cycle_search_hit(1);
+                    }
+                    if self
+                        .icons
+                        .button(ui, Icon::ChevronLeft, 22.0, fg)
+                        .on_hover_text("Previous match")
+                        .clicked()
+                    {
+                        self.cycle_search_hit(-1);
                     }
                 });
                 let current = self
@@ -1483,6 +1483,12 @@ impl ReaderApp {
     }
 
     fn show_search(&mut self, ui: &mut egui::Ui) {
+        if self.sidebar_open && self.section == SidebarSection::Search {
+            // The top-bar overlay owns the query field in this state; the
+            // panel stays a pure results list.
+            self.show_hits_only(ui);
+            return;
+        }
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.search_query)
                 .hint_text("Find in document")
@@ -1500,6 +1506,32 @@ impl ReaderApp {
         match self.search_hits.as_deref() {
             None => {
                 ui.label(egui::RichText::new("Type a query and press Enter").weak());
+            }
+            Some([]) => {
+                ui.label(egui::RichText::new("No matches").weak());
+            }
+            Some(hits) => {
+                for hit in hits {
+                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet).into())
+                        .clicked()
+                    {
+                        jump = Some(hit.page);
+                    }
+                }
+            }
+        };
+        if let Some(page) = jump {
+            self.goto_page(page);
+        }
+    }
+
+    /// Results list without the query field: the top-bar overlay owns the
+    /// field while the search section is active.
+    fn show_hits_only(&mut self, ui: &mut egui::Ui) {
+        let mut jump = None;
+        match self.search_hits.as_deref() {
+            None => {
+                ui.label(egui::RichText::new("Run a search to see matches").weak());
             }
             Some([]) => {
                 ui.label(egui::RichText::new("No matches").weak());
