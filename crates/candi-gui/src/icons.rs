@@ -17,12 +17,16 @@ use egui::{Color32, TextureHandle, Ui, Vec2};
 const SOURCES: &[(Icon, &str)] = &[
     (Icon::Menu, include_str!("../assets/icons/menu.svg")),
     (
-        Icon::Dots,
-        include_str!("../assets/icons/ellipsis-vertical.svg"),
+        Icon::PanelClose,
+        include_str!("../assets/icons/panel-left-close.svg"),
     ),
-    (Icon::Panel, include_str!("../assets/icons/panel-left.svg")),
+    (
+        Icon::PanelOpen,
+        include_str!("../assets/icons/panel-left-open.svg"),
+    ),
     (Icon::Search, include_str!("../assets/icons/search.svg")),
     (Icon::Focus, include_str!("../assets/icons/maximize.svg")),
+    (Icon::Expand, include_str!("../assets/icons/expand.svg")),
     (Icon::List, include_str!("../assets/icons/list.svg")),
     (Icon::Flag, include_str!("../assets/icons/flag.svg")),
     (Icon::Gear, include_str!("../assets/icons/settings.svg")),
@@ -52,17 +56,17 @@ const SOURCES: &[(Icon, &str)] = &[
         Icon::ChevronDown,
         include_str!("../assets/icons/chevron-down.svg"),
     ),
-    (Icon::Square, include_str!("../assets/icons/square.svg")),
 ];
 
 /// A chrome icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
     Menu,
-    Dots,
-    Panel,
+    PanelClose,
+    PanelOpen,
     Search,
     Focus,
+    Expand,
     List,
     Flag,
     Gear,
@@ -80,7 +84,6 @@ pub enum Icon {
     Info,
     Pen,
     ChevronDown,
-    Square,
 }
 
 impl Icon {

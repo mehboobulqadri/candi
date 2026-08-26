@@ -23,7 +23,7 @@ use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, Flow, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
 use crate::sidebar::{
-    SearchHit, SidebarSection, TocRow, active_toc_rows, date_only, extract_snippet, flatten_toc,
+    SearchHit, SidebarSection, TocRow, active_toc_row, date_only, extract_snippet, flatten_toc,
 };
 
 /// Pages kept as textures around the current page; texture memory outside this
@@ -129,8 +129,6 @@ pub struct ReaderApp {
     flow: Flow,
 
     sidebar_open: bool,
-    /// Sidebar width for the frame; clamped to the window each pass.
-    sidebar_w: f32,
     section: SidebarSection,
     /// Slider-driven UI text scale on top of [`Self::base_ppp`].
     ui_scale: f32,
@@ -159,6 +157,8 @@ pub struct ReaderApp {
     about_open: bool,
     info_open: bool,
     shortcuts_open: bool,
+    /// Case-insensitive filter applied to the shortcuts window's rows.
+    shortcut_filter: String,
     /// Live theme editor; `Some` while the center pane shows it.
     editor: Option<ThemeEditor>,
 
@@ -215,7 +215,6 @@ impl ReaderApp {
             fit_page: false,
             flow: Flow::Continuous,
             sidebar_open: false,
-            sidebar_w: 280.0,
             section: SidebarSection::Contents,
             ui_scale: 1.0,
             base_ppp: cc.egui_ctx.pixels_per_point(),
@@ -234,6 +233,7 @@ impl ReaderApp {
             about_open: false,
             info_open: false,
             shortcuts_open: false,
+            shortcut_filter: String::new(),
             editor: None,
             restore_frac: None,
             pending_scroll: None,
@@ -242,6 +242,27 @@ impl ReaderApp {
         };
         if let Some(path) = initial {
             app.open_path(path);
+        }
+        if let Ok(mode) = std::env::var("CANDI_UI_DEBUG") {
+            // Capture scaffolding: pre-opens the UI state each mode names so
+            // scripts/shot.sh-style evidence needs no input injection.
+            app.sidebar_open = mode != "nosidebar";
+            match mode.as_str() {
+                "search" => {
+                    app.section = SidebarSection::Search;
+                    app.search_query = "attention".into();
+                    app.run_search();
+                }
+                "search-empty" => app.section = SidebarSection::Search,
+                "appearance" => app.section = SidebarSection::Appearance,
+                "shortcuts" => {
+                    app.shortcuts_open = true;
+                    app.shortcut_filter = "page".into();
+                }
+                "shortcuts-all" => app.shortcuts_open = true,
+                "info" => app.info_open = true,
+                _ => {}
+            }
         }
         app
     }
@@ -923,12 +944,7 @@ impl ReaderApp {
     // --- chrome ----------------------------------------------------------
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
         chrome_style(ui);
-        if self.sidebar_open && self.section == SidebarSection::Search {
-            self.search_overlay(ui);
-            return;
-        }
         let fg = color_of(self.theme.ui_fg);
         let accent = color_of(self.theme.accent);
         ui.horizontal(|ui| {
@@ -952,8 +968,6 @@ impl ReaderApp {
                     .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.window_buttons(ui, fg);
-                self.icon_menu(ui, Icon::Dots, "More actions", Self::app_menu);
                 if self
                     .icons
                     .button(ui, Icon::Focus, 26.0, fg)
@@ -985,96 +999,9 @@ impl ReaderApp {
                     self.section = SidebarSection::Search;
                     self.focus_search = true;
                 }
-                ui.with_layout(
-                    egui::Layout::left_to_right(egui::Align::Center)
-                        .with_main_align(egui::Align::Center),
-                    |ui| self.nav_cluster(ui, fg),
-                );
             });
         });
-    }
-
-    /// Window controls rendered at the far right of both top-bar layouts
-    /// (native titlebar is disabled).
-    fn window_buttons(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
-        if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        }
-        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-        if self.icons.button(ui, Icon::Square, 22.0, fg).clicked() {
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-        }
-        if self.icons.button(ui, Icon::X, 22.0, fg).clicked() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-    }
-
-    /// Top-bar search overlay shown while the sidebar's Search section is
-    /// open: the query field moves up here and the right cluster drives the
-    /// match list; the sidebar keeps rendering the hit rows.
-    fn search_overlay(&mut self, ui: &mut egui::Ui) {
-        let fg = color_of(self.theme.ui_fg);
-        let accent = color_of(self.theme.accent);
-        let has_hits = self.search_hits.as_deref().is_some_and(|h| !h.is_empty());
-        ui.horizontal(|ui| {
-            ui.set_height(ui.available_height());
-            let (slot, _) = ui.allocate_exact_size(egui::vec2(32.0, 28.0), egui::Sense::hover());
-            self.icons.paint_at(
-                ui,
-                egui::Rect::from_center_size(slot.center(), egui::vec2(20.0, 20.0)),
-                Icon::Search,
-                accent,
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.window_buttons(ui, fg);
-                if self.icons.button(ui, Icon::X, 26.0, fg).clicked() {
-                    self.search_query.clear();
-                    self.search_hits = None;
-                }
-                ui.add_enabled_ui(has_hits, |ui| {
-                    if self
-                        .icons
-                        .button(ui, Icon::ChevronRight, 22.0, fg)
-                        .on_hover_text("Next match")
-                        .clicked()
-                    {
-                        self.cycle_search_hit(1);
-                    }
-                    if self
-                        .icons
-                        .button(ui, Icon::ChevronLeft, 22.0, fg)
-                        .on_hover_text("Previous match")
-                        .clicked()
-                    {
-                        self.cycle_search_hit(-1);
-                    }
-                });
-                let current = self
-                    .search_hits
-                    .as_deref()
-                    .and_then(|hits| hits.iter().position(|hit| hit.page >= self.session.page))
-                    .map_or(String::new(), |idx| format!("{} / ", idx + 1));
-                let total = self.search_hits.as_deref().map_or(0, <[SearchHit]>::len);
-                ui.label(egui::RichText::new(format!("{current}{total}")).weak());
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("Search document")
-                        .desired_width(ui.available_width()),
-                );
-                if self.focus_search {
-                    field.request_focus();
-                    self.focus_search = false;
-                }
-                if field.changed() {
-                    self.search_hits = None;
-                }
-                if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    self.run_search();
-                }
-            });
-        });
+        self.nav_cluster(ui, fg);
     }
 
     /// Icon button that opens a popup menu — the font-free replacement for
@@ -1200,91 +1127,98 @@ impl ReaderApp {
         }
     }
 
-    /// Bordered `‹ n / N ›` pill (mockup §4); the count opens the inline
-    /// page-jump input.
+    /// Bordered `‹ n / N ›` pill (mockup §4), floating dead-center of the
+    /// WINDOW: an area anchored to the screen's top-center, since egui's
+    /// horizontal main_align only positions content inside widgets, not the
+    /// widget stream. The count opens the inline page-jump input.
     fn nav_cluster(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let count = self.page_count();
         let current = self.session.page;
         let mut done = false;
-        egui::Frame::default()
-            .stroke(egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25)))
-            .rounding(6.0)
-            .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-            .show(ui, |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.add_enabled_ui(count > 0 && current > 0, |ui| {
-                        if self
-                            .icons
-                            .button(ui, Icon::ChevronLeft, 22.0, fg)
-                            .on_hover_text("Previous page (←)")
-                            .clicked()
-                        {
-                            self.goto_page(current - 1);
-                        }
-                    });
-                    match self.page_jump.as_mut() {
-                        Some(buffer) => {
-                            let outcome = jump_input(
-                                ui,
-                                buffer,
-                                count,
-                                &mut self.page_jump_focus,
-                                &mut self.jump_invalid,
-                            );
-                            match outcome {
-                                JumpOutcome::Commit(page) => {
-                                    self.goto_page(page);
-                                    done = true;
+        egui::Area::new(egui::Id::new("page_pill"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 10.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::default()
+                    .stroke(egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25)))
+                    .rounding(6.0)
+                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_enabled_ui(count > 0 && current > 0, |ui| {
+                                if self
+                                    .icons
+                                    .button(ui, Icon::ChevronLeft, 22.0, fg)
+                                    .on_hover_text("Previous page (Left / PgUp)")
+                                    .clicked()
+                                {
+                                    self.goto_page(current - 1);
                                 }
-                                JumpOutcome::Cancel => done = true,
-                                JumpOutcome::Idle => {}
+                            });
+                            match self.page_jump.as_mut() {
+                                Some(buffer) => {
+                                    let outcome = jump_input(
+                                        ui,
+                                        buffer,
+                                        count,
+                                        &mut self.page_jump_focus,
+                                        &mut self.jump_invalid,
+                                    );
+                                    match outcome {
+                                        JumpOutcome::Commit(page) => {
+                                            self.goto_page(page);
+                                            done = true;
+                                        }
+                                        JumpOutcome::Cancel => done = true,
+                                        JumpOutcome::Idle => {}
+                                    }
+                                }
+                                None if count > 0 => {
+                                    let counter = format!("{} / {}", current + 1, count);
+                                    let counter = egui::Label::new(
+                                        egui::RichText::new(counter)
+                                            .font(egui::FontId::proportional(13.0)),
+                                    )
+                                    .sense(egui::Sense::click());
+                                    if ui
+                                        .add(counter)
+                                        .on_hover_text("Jump to page (Ctrl+G)")
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked()
+                                        && count > 0
+                                    {
+                                        self.page_jump = Some((current + 1).to_string());
+                                        self.page_jump_focus = true;
+                                        self.jump_invalid = false;
+                                    }
+                                }
+                                None => {}
                             }
-                        }
-                        None if count > 0 => {
-                            let counter = format!("{} / {}", current + 1, count);
-                            let counter = egui::Label::new(
-                                egui::RichText::new(counter).font(egui::FontId::proportional(13.0)),
-                            )
-                            .sense(egui::Sense::click());
-                            if ui
-                                .add(counter)
-                                .on_hover_text("Jump to page (Ctrl+G)")
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .clicked()
-                                && count > 0
-                            {
-                                self.page_jump = Some((current + 1).to_string());
-                                self.page_jump_focus = true;
-                                self.jump_invalid = false;
-                            }
-                        }
-                        None => {}
-                    }
-                    ui.add_enabled_ui(count > 0 && current + 1 < count, |ui| {
-                        if self
-                            .icons
-                            .button(ui, Icon::ChevronRight, 22.0, fg)
-                            .on_hover_text("Next page (→)")
-                            .clicked()
-                        {
-                            self.goto_page(current + 1);
-                        }
+                            ui.add_enabled_ui(count > 0 && current + 1 < count, |ui| {
+                                if self
+                                    .icons
+                                    .button(ui, Icon::ChevronRight, 22.0, fg)
+                                    .on_hover_text("Next page (Right / PgDn)")
+                                    .clicked()
+                                {
+                                    self.goto_page(current + 1);
+                                }
+                            });
+                        });
                     });
-                });
             });
         if done {
             self.page_jump = None;
         }
     }
 
-    /// The section panel beside the rail: header + scrollable body.
+    /// The section panel beside the rail: header + scrollable body. Width
+    /// comes from the resizable SidePanel (230–400 px, user-dragged).
     fn section_panel(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .fill(color_of(self.theme.panel_bg))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(self.sidebar_w - 20.0);
                     let (label, salt, body): (&str, &str, fn(&mut ReaderApp, &mut egui::Ui)) =
                         match self.section {
                             SidebarSection::Contents => {
@@ -1443,6 +1377,24 @@ impl ReaderApp {
                     }
                 }
             }
+            let toggle_rect = egui::Rect::from_min_size(
+                egui::pos2(rail_rect.left() + 7.0, rail_rect.top() + 8.0 + 46.0 * 3.0),
+                egui::vec2(38.0, 38.0),
+            );
+            let toggle_icon = if self.sidebar_open {
+                Icon::PanelClose
+            } else {
+                Icon::PanelOpen
+            };
+            let toggle =
+                egui::Button::image(self.icons.image(ui, toggle_icon, 26.0, fg)).rounding(6.0);
+            if ui
+                .put(toggle_rect, toggle)
+                .on_hover_text("Toggle sidebar (Ctrl+B)")
+                .clicked()
+            {
+                self.sidebar_open = !self.sidebar_open;
+            }
             let gear_rect = egui::Rect::from_min_size(
                 egui::pos2(rail_rect.left() + 7.0, rail_rect.bottom() - 46.0),
                 egui::vec2(38.0, 38.0),
@@ -1465,11 +1417,11 @@ impl ReaderApp {
             ui.label(egui::RichText::new("No table of contents").weak());
             return;
         }
-        let active = active_toc_rows(&self.toc_rows, self.session.page);
+        let active = active_toc_row(&self.toc_rows, self.session.page);
         let accent = color_of(self.theme.accent);
         let mut jump = None;
         for (idx, row) in self.toc_rows.iter().enumerate() {
-            if toc_row_ui(ui, row, active.contains(&idx), accent).clicked() {
+            if toc_row_ui(ui, row, active == Some(idx), accent).clicked() {
                 jump = Some(row.page);
             }
         }
@@ -1574,24 +1526,47 @@ impl ReaderApp {
     }
 
     fn show_search(&mut self, ui: &mut egui::Ui) {
-        if self.sidebar_open && self.section == SidebarSection::Search {
-            // The top-bar overlay owns the query field in this state; the
-            // panel stays a pure results list.
-            self.show_hits_only(ui);
-            return;
-        }
+        let fg = color_of(self.theme.ui_fg);
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.search_query)
                 .hint_text("Find in document")
-                .desired_width(f32::INFINITY),
+                .desired_width(ui.available_width()),
         );
         if self.focus_search {
             field.request_focus();
             self.focus_search = false;
         }
+        if field.changed() {
+            self.search_hits = None;
+        }
         if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
             self.run_search();
         }
+
+        let total = self.search_hits.as_deref().map_or(0, <[SearchHit]>::len);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(format!("{total} matches")).weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(total > 0, |ui| {
+                    if self
+                        .icons
+                        .button(ui, Icon::ChevronRight, 18.0, fg)
+                        .on_hover_text("Next match")
+                        .clicked()
+                    {
+                        self.cycle_search_hit(1);
+                    }
+                    if self
+                        .icons
+                        .button(ui, Icon::ChevronLeft, 18.0, fg)
+                        .on_hover_text("Previous match")
+                        .clicked()
+                    {
+                        self.cycle_search_hit(-1);
+                    }
+                });
+            });
+        });
 
         let mut jump = None;
         match self.search_hits.as_deref() {
@@ -1616,34 +1591,7 @@ impl ReaderApp {
         }
     }
 
-    /// Results list without the query field: the top-bar overlay owns the
-    /// field while the search section is active.
-    fn show_hits_only(&mut self, ui: &mut egui::Ui) {
-        let mut jump = None;
-        match self.search_hits.as_deref() {
-            None => {
-                ui.label(egui::RichText::new("Run a search to see matches").weak());
-            }
-            Some([]) => {
-                ui.label(egui::RichText::new("No matches").weak());
-            }
-            Some(hits) => {
-                for hit in hits {
-                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet).into())
-                        .clicked()
-                    {
-                        jump = Some(hit.page);
-                    }
-                }
-            }
-        };
-        if let Some(page) = jump {
-            self.goto_page(page);
-        }
-    }
-
     fn bottom_bar(&mut self, ui: &mut egui::Ui) {
-        ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
         chrome_style(ui);
         let fg = color_of(self.theme.ui_fg);
         let accent = color_of(self.theme.accent);
@@ -1663,7 +1611,7 @@ impl ReaderApp {
                 egui::Layout::left_to_right(egui::Align::Center)
                     .with_main_align(egui::Align::Center),
                 |ui| {
-                    self.zoom_slider(ui, fg, accent);
+                    self.zoom_slider(ui, fg);
                 },
             );
             columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1730,7 +1678,7 @@ impl ReaderApp {
     }
 
     /// 100% − slider + (states 1–6 bottom bar).
-    fn zoom_slider(&mut self, ui: &mut egui::Ui, fg: egui::Color32, accent: egui::Color32) {
+    fn zoom_slider(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let can_zoom = self.page_count() > 0;
         ui.add_enabled_ui(can_zoom, |ui| {
             if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
@@ -1749,12 +1697,11 @@ impl ReaderApp {
         });
         let mut pct = i32::from(self.zoom_pct);
         let slider = ui.scope(|ui| {
-            let visuals = ui.visuals_mut();
-            visuals.selection.bg_fill = accent;
-            visuals.widgets.inactive.bg_fill = accent;
-            visuals.widgets.hovered.bg_fill = accent;
-            visuals.widgets.active.bg_fill = accent;
-            ui.spacing_mut().slider_width = 160.0;
+            // Take exactly what is left of the bottom-bar third (the −/+/%
+            // cluster is already spent from available_width) so the cluster
+            // never overflows into the view-mode toggles at the 640 px
+            // minimum window width.
+            ui.spacing_mut().slider_width = ui.available_width().clamp(24.0, 160.0);
             ui.spacing_mut().interact_size.y = 12.0;
             ui.add_enabled(
                 can_zoom,
@@ -1786,7 +1733,7 @@ impl ReaderApp {
         ui.add_enabled_ui(can, |ui| {
             if self
                 .icons
-                .button(ui, Icon::Focus, 24.0, if fitp { accent } else { fg })
+                .button(ui, Icon::Expand, 24.0, if fitp { accent } else { fg })
                 .on_hover_text("Fit page")
                 .clicked()
             {
@@ -1893,6 +1840,9 @@ impl ReaderApp {
         egui::Window::new("Document Information")
             .open(&mut open)
             .collapsible(false)
+            .resizable(false)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
                 egui::Grid::new("doc_info")
                     .num_columns(2)
@@ -1913,17 +1863,19 @@ impl ReaderApp {
     }
 
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
-        const SHORTCUTS: [(&str, &str); 14] = [
+        const SHORTCUTS: [(&str, &str); 16] = [
             ("Ctrl+O", "Open file"),
             ("Ctrl+S", "Save state"),
             ("Ctrl+F", "Search"),
             ("Ctrl+B", "Toggle sidebar"),
             ("Ctrl+E", "Edit theme YAML"),
             ("Ctrl+G", "Go to page"),
+            ("Ctrl+K", "Keybinds"),
             ("F11", "Focus mode"),
             ("+ / −", "Zoom in / out"),
             ("0", "Fit-width zoom"),
-            ("← → / PgUp PgDn", "Previous / next page"),
+            ("Left / PgUp", "Previous page"),
+            ("Right / PgDn", "Next page"),
             ("T", "Cycle themes"),
             ("B", "Bookmark page"),
             ("Esc", "Close overlay"),
@@ -1932,16 +1884,37 @@ impl ReaderApp {
         egui::Window::new("Keyboard Shortcuts")
             .open(&mut self.shortcuts_open)
             .collapsible(false)
+            .resizable(false)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .fixed_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
-                egui::Grid::new("shortcuts_grid")
-                    .num_columns(2)
-                    .spacing([16.0, 2.0])
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.shortcut_filter)
+                        .hint_text("Filter shortcuts")
+                        .desired_width(ui.available_width()),
+                );
+                let needle = self.shortcut_filter.trim().to_lowercase();
+                egui::ScrollArea::vertical()
+                    .max_height(ctx.screen_rect().height() * 0.6)
+                    .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        for (keys, action) in SHORTCUTS {
-                            ui.strong(keys);
-                            ui.label(action);
-                            ui.end_row();
-                        }
+                        egui::Grid::new("shortcuts_grid")
+                            .num_columns(2)
+                            .spacing([16.0, 6.0])
+                            .show(ui, |ui| {
+                                for (keys, action) in SHORTCUTS {
+                                    if !needle.is_empty()
+                                        && !format!("{keys} {action}")
+                                            .to_lowercase()
+                                            .contains(&needle)
+                                    {
+                                        continue;
+                                    }
+                                    ui.strong(keys);
+                                    ui.label(action);
+                                    ui.end_row();
+                                }
+                            });
                     });
             });
     }
@@ -1979,6 +1952,9 @@ impl ReaderApp {
                 } else {
                     self.open_theme_editor();
                 }
+            }
+            if ctrl && input.key_pressed(Key::K) {
+                self.shortcuts_open = true;
             }
             if plain
                 && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals))
@@ -2035,9 +2011,13 @@ impl ReaderApp {
 }
 
 /// Flat chrome: borderless idle/hover widgets, transparent idle fill — the
-/// mockup's borderless icon look.
+/// mockup's borderless icon look. Spacing is roomier than egui's defaults
+/// without crowding the 640 px minimum window width.
 fn chrome_style(ui: &mut egui::Ui) {
-    let widgets = &mut ui.style_mut().visuals.widgets;
+    let style = ui.style_mut();
+    style.spacing.item_spacing.x = 10.0;
+    style.spacing.button_padding = egui::vec2(9.0, 5.0);
+    let widgets = &mut style.visuals.widgets;
     widgets.inactive.bg_stroke = egui::Stroke::NONE;
     widgets.hovered.bg_stroke = egui::Stroke::NONE;
     widgets.active.bg_stroke = egui::Stroke::NONE;
@@ -2216,42 +2196,51 @@ fn jump_input(
     JumpOutcome::Cancel
 }
 
-/// One contents row: full-width clickable title indented 12 pt per outline
-/// level, truncated when too long. Rows containing the reading position are
-/// accent-tinted (design spec §12/§24).
+/// Width reserved for a contents row's right-aligned page number.
+const TOC_PAGE_COL: f32 = 34.0;
+
+/// One contents row spanning the panel's full width exactly like the search
+/// and bookmark rows: title indented 12 pt per outline level, truncated; page
+/// number at a fixed right column. Rows containing the reading position are
+/// accent-tinted (design spec §12/§24). Both boxes reserve their full width —
+/// a plain hugging label would advance the cursor by its content width and
+/// pull the page column left of the panel edge (the old right-side gap).
 fn toc_row_ui(
     ui: &mut egui::Ui,
     row: &TocRow,
     active: bool,
     accent: egui::Color32,
 ) -> egui::Response {
+    let full_w = ui.available_width();
+    let indent = INDENT_PER_LEVEL * row.depth as f32;
     ui.horizontal(|ui| {
-        ui.add_space(INDENT_PER_LEVEL * row.depth as f32);
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(indent);
         let mut title = egui::RichText::new(&row.title);
         let mut page = egui::RichText::new(format!("p. {}", row.page + 1)).weak();
         if active {
             title = title.color(accent);
             page = page.color(accent);
         }
-        // Title left and truncating; the page number holds the right edge.
-        // (add_sized centers its content — explicit layouts keep alignment.)
-        let title_w = (ui.available_width() - 36.0).max(40.0);
+        let title_w = (full_w - indent - TOC_PAGE_COL).max(40.0);
+        let (title_rect, _) =
+            ui.allocate_exact_size(egui::vec2(title_w, 20.0), egui::Sense::hover());
         let title_resp = ui
-            .allocate_ui_with_layout(
-                egui::vec2(title_w, 20.0),
-                egui::Layout::left_to_right(egui::Align::Center),
+            .allocate_new_ui(
+                egui::UiBuilder::new().max_rect(title_rect).layout(
+                    egui::Layout::left_to_right(egui::Align::Center)
+                        .with_main_align(egui::Align::LEFT)
+                        .with_main_justify(true),
+                ),
                 |ui| ui.add(egui::Label::new(title).truncate()),
             )
             .inner
             .interact(egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let (page_rect, _) =
+            ui.allocate_exact_size(egui::vec2(TOC_PAGE_COL, 20.0), egui::Sense::hover());
         let page_resp = ui
-            .allocate_ui_with_layout(
-                egui::vec2(34.0, 20.0),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| ui.add(egui::Label::new(page)),
-            )
-            .inner
+            .put(page_rect, egui::Label::new(page).truncate())
             .interact(egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         title_resp.union(page_resp)
@@ -2298,6 +2287,10 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
         visuals.hyperlink_color = accent;
         visuals.selection.bg_fill = selection;
         visuals.selection.stroke = accent_stroke;
+        // Fill the rail from its start to the handle so the handle visibly
+        // sits ON the track; without it, rail and handle share one fill and
+        // read as a detached dot.
+        visuals.slider_trailing_fill = true;
 
         let widgets = &mut visuals.widgets;
         widgets.noninteractive.bg_fill = color_of(theme.ui_bg);
@@ -2312,6 +2305,9 @@ fn apply_theme(ctx: &egui::Context, theme: &Theme) {
         widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, fg);
         widgets.active.weak_bg_fill = selection;
         widgets.active.bg_fill = selection;
+        // Window title bars take their fill from `widgets.open`, which egui
+        // leaves at the dark-mode default; map it to a themed surface.
+        widgets.open.weak_bg_fill = color_of(theme.panel_bg);
     });
 }
 
@@ -2329,8 +2325,6 @@ impl eframe::App for ReaderApp {
         if let Some(file) = dropped.iter().find_map(|f| f.path.clone()) {
             self.open_path(file);
         }
-        // Sidebar tracks the window (26%), clamped — never grows on its own.
-        self.sidebar_w = (ctx.screen_rect().width() * 0.26).clamp(230.0, 310.0);
         if !self.focus_mode {
             egui::TopBottomPanel::top("top_bar")
                 .exact_height(46.0)
@@ -2345,8 +2339,11 @@ impl eframe::App for ReaderApp {
                 .show(ctx, |ui| self.rail(ui));
             if self.sidebar_open {
                 egui::SidePanel::left("panel")
-                    .exact_width(self.sidebar_w)
-                    .resizable(false)
+                    .resizable(true)
+                    .default_width((ctx.screen_rect().width() * 0.26).clamp(230.0, 310.0))
+                    .min_width(230.0)
+                    .max_width(400.0)
+                    .show_separator_line(false)
                     .frame(panel_frame)
                     .show(ctx, |ui| self.section_panel(ui));
             }

@@ -42,11 +42,13 @@ fn walk(items: &[TocItem], depth: u32, rows: &mut Vec<TocRow>) {
     }
 }
 
-/// Row indices of the outline entries containing `page`: reading order makes
-/// start pages non-decreasing, so for every nesting depth the last entry that
-/// started at or before `page` is an ancestor of the reading position. Empty
-/// when the position precedes the first heading.
-pub(crate) fn active_toc_rows(rows: &[TocRow], page: usize) -> Vec<usize> {
+/// Row index of the single deepest outline entry whose range contains
+/// `page`. An entry spans from its start page to the start of the next entry
+/// at its own depth or shallower; beyond that it is superseded. Ancestors of
+/// the reading position stay unaccented so stale siblings never light up
+/// together with the live entry. `None` when the position precedes the first
+/// heading.
+pub(crate) fn active_toc_row(rows: &[TocRow], page: usize) -> Option<usize> {
     let mut chain: Vec<Option<usize>> = Vec::new();
     for (idx, row) in rows.iter().enumerate() {
         if row.page > page {
@@ -57,9 +59,17 @@ pub(crate) fn active_toc_rows(rows: &[TocRow], page: usize) -> Vec<usize> {
         }
         chain[row.depth as usize] = Some(idx);
     }
-    let mut active: Vec<usize> = chain.into_iter().flatten().collect();
-    active.sort_unstable();
-    active
+    chain
+        .into_iter()
+        .flatten()
+        .filter(|&idx| {
+            let depth = rows[idx].depth;
+            rows[idx + 1..]
+                .iter()
+                .find(|row| row.depth <= depth)
+                .is_none_or(|bound| bound.page > page)
+        })
+        .max_by_key(|&idx| rows[idx].depth)
 }
 
 /// One search result: the page it points at plus an excerpt of the page's
@@ -175,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn active_toc_rows_trace_the_containing_section_chain() {
+    fn active_toc_row_is_the_deepest_containing_section() {
         let rows = flatten_toc(&[
             toc(
                 "Part I",
@@ -184,27 +194,53 @@ mod tests {
             ),
             toc("Part II", 9, vec![]),
         ]);
-        // Reading page 6 (0-based 5): inside Part I → 2. Data; the superseded
-        // 1. Intro and not-yet-reached Part II stay inactive.
-        assert_eq!(active_toc_rows(&rows, 5), vec![0, 2]);
-        // Past every heading: Part II plus its deepest ancestor.
-        assert_eq!(active_toc_rows(&rows, 100), vec![2, 3]);
+        // Reading page 6 (0-based 5): inside 2. Data; Part I and the
+        // superseded 1. Intro stay unaccented.
+        assert_eq!(active_toc_row(&rows, 5), Some(2));
+        // Past every heading: only Part II — the already-ended 2. Data never
+        // outshines it.
+        assert_eq!(active_toc_row(&rows, 100), Some(3));
+        // Between headings the deeper sibling keeps the accent.
+        assert_eq!(active_toc_row(&rows, 3), Some(1));
     }
 
     #[test]
-    fn active_toc_rows_is_empty_before_the_first_heading() {
+    fn active_toc_row_is_none_before_the_first_heading() {
         let rows = flatten_toc(&[toc("Chapter 1", 4, vec![])]);
-        assert!(active_toc_rows(&rows, 0).is_empty());
+        assert_eq!(active_toc_row(&rows, 0), None);
     }
 
     #[test]
-    fn active_toc_rows_holds_one_entry_per_nesting_level() {
+    fn active_toc_row_prefers_the_latest_equal_depth_entry() {
+        // Two depth-1 entries on the same start page: the later one wins, so
+        // duplicate-page outlines do not keep a stale sibling lit.
+        let rows = flatten_toc(&[toc(
+            "Cover",
+            1,
+            vec![toc("Left page", 1, vec![]), toc("Right page", 1, vec![])],
+        )]);
+        assert_eq!(active_toc_row(&rows, 1), Some(2));
+    }
+
+    #[test]
+    fn active_toc_row_climbs_back_when_deep_sections_end() {
         let rows = flatten_toc(&[toc(
             "Part I",
             1,
-            vec![toc("Ch. 1", 2, vec![toc("1.1", 3, vec![])])],
+            vec![
+                toc(
+                    "Ch. 1",
+                    2,
+                    vec![toc("1.1", 3, vec![]), toc("1.2", 5, vec![])],
+                ),
+                toc("Ch. 2", 7, vec![]),
+            ],
         )]);
-        assert_eq!(active_toc_rows(&rows, 3), vec![0, 1, 2]);
+        assert_eq!(active_toc_row(&rows, 3), Some(2));
+        assert_eq!(active_toc_row(&rows, 5), Some(3));
+        // Inside Ch. 2 the finished 1.x sections are no longer accentable;
+        // the highlight climbs back to the chapter that is actually open.
+        assert_eq!(active_toc_row(&rows, 8), Some(4));
     }
 
     #[test]
