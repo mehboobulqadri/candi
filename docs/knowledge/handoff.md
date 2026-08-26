@@ -1,75 +1,78 @@
 # Handoff — next agent starts here
 
-## State (2026-08-26)
+## State (2026-08-26, late)
 
-Branch `slice/02-01-gui-reader`, tip `8ee2110` (reverted a broken
-central-embedded sidebar experiment `2231aa8` — keep the sidebar as
-SidePanels; see log), pushed, tree clean except the
-user's reference images (`image.png`, `image copy.png` at repo root — the
-six-state design reference; do NOT commit or delete them).
+Branch `slice/02-01-gui-reader`, tip `49be1fc`, pushed, gates green (fmt,
+clippy -D warnings, workspace tests with
+`PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` = DIRECTORY).
 
-The GUI has been rebuilt against the user's six-state reference (root
-`image.png`): always-visible icon rail (own SidePanel, 52px) + slide-out
-section panel (Contents/Bookmarks/Search), hamburger + accent "Candi"
-wordmark top bar (tagline removed by user request), page-nav pill, zoom
-stepper deduped into the bottom bar (theme picker | − % + slider | view-mode
-toggles), Inter typography (embedded OFL TTFs), Lucide SVG icons everywhere
-(no font glyphs in chrome — fallbacks rendered tofu and mirrored ‹›), dark
-theme is the startup default, styled empty state, real-content fixture
-(arXiv 1706.03762) for captures.
+The GUI is feature-complete against the user's six-state reference
+(root `image.png`): icon rail (52px SidePanel, gear bottom) + slide-out
+section panel, hamburger + accent "Candi" wordmark (no tagline), centered
+page pill, Lucide SVG icons everywhere, Inter typography embedded, dark
+default, four page flows (Continuous / Single / Dual spreads / Fit page),
+top-bar search overlay (query + n/m count + prev/next + results panel),
+in-page match highlighting (both MuPDF and PDFium implement rect search —
+trait `Document::search_page`), named bookmarks (schema v3, v2 sidecars
+still parse; inline rename via pen icon), Appearance panel (rail gear:
+theme picker, 8 accent swatches, text-size slider driving
+pixels_per_point), in-app window decorations (decorations off; custom
+minimize/maximize/close + brand-zone drag; `ViewportCommand::Minimized`
+exists, `Minimize` does not), drag-and-drop, focus/empty/error states.
 
-Gates green: fmt, clippy -D warnings, workspace tests
-(`PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` = DIRECTORY). Capture
-evidence pipeline: `scripts/shot.sh` matches the spawned window by PID now —
-older class-based matching grabbed other windows/wallpapers and produced
-fake "broken UI" evidence more than once.
+## Install (done on this machine)
 
-## Known-true facts about egui 0.30 (learned the hard way)
+- `~/.local/bin/candi` → symlink to `target/release/candi` (stale
+  `~/.cargo/bin/candi` removed — it shadowed the symlink once).
+- Desktop entry `~/.local/share/applications/candi.desktop`
+  (Icon=candi at ~/.local/share/icons/hicolor/128x128/apps/candi.png,
+  MimeType=application/pdf, StartupWMClass=candi).
+- NOTE: the symlink points into `target/release` — a `cargo clean`
+  invalidates it until the next build.
 
-- Horizontal uis clamp children to one interact row (~18 px). Panels do not.
-  Rail/section content lives in SidePanels for this reason; do not nest
-  full-height content back inside `ui.horizontal`.
-- `Layout::bottom_up` allocates from the cursor, not the rect bottom. Pin
-  things by consuming remaining space or `ui.put` at exact rects.
-- `add_sized` centers content — use `allocate_ui_with_layout` + halign for
+## Capture discipline (do not regress)
+
+`scripts/shot.sh` matches the spawned window BY PID. Older class-based
+matching grabbed other windows/wallpapers and fabricated "broken UI"
+evidence. Verify WHAT you captured; the user works on this machine
+simultaneously — expect interference, ask for quiet moments for final
+evidence. User's display runs a scale factor: logical vs physical sizes
+differ in captures.
+
+## egui-0.30 gotchas (all learned the hard way, all verified)
+
+- Horizontal uis clamp children to one interact row (~18px). Panels don't.
+  Full-height content (rails, panels) lives in SidePanels.
+- `Layout::bottom_up` allocates from the cursor — pin by consuming
+  remaining space or `ui.put` at exact rects.
+- `add_sized` centers its content — `allocate_ui_with_layout` + halign for
   left/right alignment.
-- `SidePanel::exact_width` beats `default_width` (state caching made widths
-  stick from frame 1).
-- RTL parents reverse child order — wrap steppers/pills in explicit
-  `left_to_right`.
-- `Slider` width is `spacing.slider_width`; fixed bars are `exact_height`.
-- Menus with custom widgets: `popup_below_widget` + `toggle_popup`.
-- `pkill -f '<path regex>'` kills your own shell; use `pkill -x candi`.
+- `SidePanel::exact_width` (default_width caches frame-1 width).
+- RTL parents reverse child order — wrap steppers/pills in explicit LTR.
+- `Slider` width = `spacing.slider_width`; bars = `TopBottomPanel::exact_height`.
+- Custom-widget menus: `popup_below_widget` + `toggle_popup`.
+- CentralPanel/panel seams: set the frame `.fill(panel_bg)` +
+  `.inner_margin(0)` or the clear color shows as a dark band.
+- `pkill -f '<path regex>'` kills your own shell — `pkill -x candi`.
+- `ViewportCommand::Minimized(bool)` exists; `Minimize` does not.
 
 ## Next (user stop-gates — explicit authorization required)
 
-1. Finish the visual iteration loop: recapture s8 light/dark once the user
-   closes their wallpaper-picker overlay (it floated over the last two
-   captures), review, fix residuals.
-2. User dogfoods → tag `v0.1` → PR `slice/02-01-gui-reader` → `dev` → `main`.
-   Release flow per user: slices merge to dev; every 0.x tag lands on main.
+1. User dogfoods (now launchable as `candi` anywhere + app-list entry).
+2. User names missing pieces from the six-state reference — remaining
+   known gap: none functional; polish judgment calls (separator line,
+   picker chevron side) documented in this file's earlier revisions.
+3. Tag `v0.1` → PR `slice/02-01-gui-reader` → `dev` → `main`.
+   Release flow: slices merge to dev; every 0.x tag lands on main.
 
-## Residual polish (judgment calls, not defects)
+## Deferred (user-set)
 
-- ~1px separator + shadow line between section panel and canvas — reads as
-  an intentional divider; user has seen it.
-- Theme picker paints chevron left of the name (reference wants right).
-- Page pill sits after the wordmark, not centered over the canvas.
-- View modes are 3 honest toggles (free/fit-width/fit-page), not the
-  reference's 4 (dual/mobile are unbuilt features — do not fake).
-
-## Roadmap (user-set)
-
-- v0.2 performance/lean pass. v0.3 mobile/other-platform ports. v0.4 docs +
-  architecture write-up.
-- Deferred UI features (user said NOT now): search top-overlay redesign,
-  visual Appearance panel (accent swatches/font-size), custom window
-  decorations (− □ ✕), dual-page/mobile view modes.
-
-## Environment notes
-
-- The user works on this machine while agents run: expect window interference;
-  captures must be PID-matched and re-checked. User can provide fullscreen
-  views on request.
-- Disk cleanup was deferred by the user: `~/.local/share/opencode/opencode.db`
- is 26G (session history), `target/debug` ~23G, `spikes/pdf-backend/target` 2G.
+- Disk cleanup: `~/.local/share/opencode/opencode.db` = 26G (session
+  history; VACUUM approach documented in log.md), `target/debug` ≈ 23G,
+  `spikes/pdf-backend/target` = 2G.
+- Search: top overlay shipped; in-page HIGHLIGHTING shipped; "highlight
+  current vs other matches differently" not done.
+- Possible polish: per-app persistence of flow choice; accent/YAML
+  persistence across restarts (currently resets on reopen by design).
+- Docs slice (v0.4 per roadmap): architecture.md §candi-pdf trait block is
+  stale (missing page_size/render_page/outline/search_page).

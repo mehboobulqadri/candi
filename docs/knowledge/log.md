@@ -248,3 +248,21 @@ Format per entry:
 - **Lesson:** when a cosmetic fix requires restructuring working layout,
   revert fast and document — three rounds of seam chasing bought two
   regressions; the SidePanel version was one good review away from done.
+
+## 2026-08-26 (night) — feature-complete push
+
+- **Shipped in sequence:** install (PATH symlink + desktop entry; stale
+  cargo binary shadowed it), named bookmarks (schema v3, hand-rolled TOML
+  parse adapted for optional titles), Appearance panel (rail gear; accent
+  swatches apply via name-cache sync hack; text size = pixels_per_point
+  with reopen reset piggybacked on the `primed` hook), search overlay
+  (overlay owns the query field; panel is a pure results list), backend
+  rect search + in-page highlighting (MuPDF TextPage::search quads
+  top-left; PDFium find loop flipped y-up→y-down; orientation proven by a
+  probe against word coords, then deleted), page flows (rows-of-k layout,
+  page_at returns row-first, fit-width over widest ROW), in-app window
+  decorations (Minimized(bool) not Minimize; drag on the brand zone).
+- **Recurring root causes:** egui panel-seam class ended in a reverted
+  experiment (2231aa8) — keep SidePanels; patch scripts must be authored
+  against post-fmt state; capture evidence must be PID-matched and
+  actually READ before concluding.
