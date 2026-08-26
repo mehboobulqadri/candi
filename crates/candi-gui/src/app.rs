@@ -1945,14 +1945,19 @@ impl eframe::App for ReaderApp {
             egui::TopBottomPanel::top("top_bar")
                 .exact_height(46.0)
                 .show(ctx, |ui| self.top_bar(ui));
+            let panel_frame = egui::Frame::default()
+                .inner_margin(0.0)
+                .fill(color_of(self.theme.panel_bg));
             egui::SidePanel::left("rail")
                 .exact_width(52.0)
                 .resizable(false)
+                .frame(panel_frame)
                 .show(ctx, |ui| self.rail(ui));
             if self.sidebar_open {
                 egui::SidePanel::left("panel")
                     .exact_width(self.sidebar_w)
                     .resizable(false)
+                    .frame(panel_frame)
                     .show(ctx, |ui| self.section_panel(ui));
             }
             egui::TopBottomPanel::bottom("bottom_bar")
