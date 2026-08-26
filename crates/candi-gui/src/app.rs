@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-//! GUI reader shell: continuous page canvas over a background render
-//! pipeline, chrome (top bar / sidebar / bottom bar), built-in theming, and
-//! session persistence via `candi-cli`.
+//! GUI reader shell: paged canvas (continuous, single-page, or dual-page
+//! flow) over a background render pipeline, chrome (top bar / sidebar /
+//! bottom bar), built-in theming, and session persistence via `candi-cli`.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Range, RangeInclusive};
@@ -20,7 +20,7 @@ use egui::Key;
 use crate::highlight::yaml_job;
 use crate::icons::{Icon, IconRender};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
-use crate::render::layout::{self, GAP, Layout};
+use crate::render::layout::{self, Flow, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
 use crate::sidebar::{
     SearchHit, SidebarSection, TocRow, active_toc_rows, date_only, extract_snippet, flatten_toc,
@@ -116,8 +116,8 @@ pub struct ReaderApp {
     icons: IconRender,
 
     layout: Layout,
-    /// `(avail_w, avail_h, zoom)` the current layout was built for.
-    layout_key: Option<(f32, f32, ZoomMode)>,
+    /// `(avail_w, avail_h, zoom, flow)` the current layout was built for.
+    layout_key: Option<(f32, f32, ZoomMode, Flow)>,
     /// Per-page `(width, height)` in points, fetched once at open.
     page_sizes: Vec<(f32, f32)>,
     /// Effective quantized zoom percent; resolved from fit-width on relayout.
@@ -125,6 +125,8 @@ pub struct ReaderApp {
     /// Fit-page is active; the percent zoom is re-derived on every relayout
     /// so window resizes keep the page fully visible. A manual zoom clears it.
     fit_page: bool,
+    /// Page flow (continuous / 1-up / 2-up); session-local, not persisted.
+    flow: Flow,
 
     sidebar_open: bool,
     /// Sidebar width for the frame; clamped to the window each pass.
@@ -211,6 +213,7 @@ impl ReaderApp {
             page_sizes: Vec::new(),
             zoom_pct: layout::MIN_ZOOM_PERCENT,
             fit_page: false,
+            flow: Flow::Continuous,
             sidebar_open: false,
             sidebar_w: 280.0,
             section: SidebarSection::Contents,
@@ -266,6 +269,7 @@ impl ReaderApp {
                 self.primed = false;
                 self.sidebar_open = true;
                 self.fit_page = false;
+                self.flow = Flow::Continuous;
                 self.ui_scale = 1.0;
 
                 let theme_name = opened.session.theme.clone();
@@ -344,6 +348,14 @@ impl ReaderApp {
 
     /// Leave any percent zoom and refit the document to the window width.
     fn zoom_fit_width(&mut self) {
+        self.fit_page = false;
+        self.session.zoom = ZoomMode::FitWidth;
+    }
+
+    /// Switch the page flow; each flow refits to its widest row so spreads
+    /// always land fully visible.
+    fn set_flow(&mut self, flow: Flow) {
+        self.flow = flow;
         self.fit_page = false;
         self.session.zoom = ZoomMode::FitWidth;
     }
@@ -509,17 +521,22 @@ impl ReaderApp {
     /// current viewport on every rebuild.
     fn ensure_layout(&mut self, avail_w: f32, avail_h: f32) -> bool {
         if self.fit_page && !self.page_sizes.is_empty() {
-            let pct = layout::fit_page_percent(&self.page_sizes, avail_w, avail_h);
+            let pct = layout::fit_page_percent(
+                &self.page_sizes,
+                avail_w,
+                avail_h,
+                layout::pages_per_row(self.flow),
+            );
             self.session.zoom = ZoomMode::Percent(pct);
         }
-        let key = (avail_w, avail_h, self.session.zoom);
+        let key = (avail_w, avail_h, self.session.zoom, self.flow);
         if self.layout_key == Some(key) {
             return true;
         }
         if self.page_sizes.is_empty() {
             return false;
         }
-        self.layout = Layout::build(&self.page_sizes, self.session.zoom, avail_w);
+        self.layout = Layout::build(&self.page_sizes, self.session.zoom, avail_w, self.flow);
         self.zoom_pct = layout::quantize_nearest(self.layout.zoom * 100.0);
         self.layout_key = Some(key);
         true
@@ -1725,37 +1742,18 @@ impl ReaderApp {
         }
     }
 
-    /// View-mode toggles — free zoom, fit width, fit page; exactly one active.
+    /// View-mode toggles — continuous, single page, dual spreads, fit page
+    /// (visual order left to right; emitted right-to-left). A flow pick
+    /// refits to its widest row via [`ReaderApp::set_flow`].
     fn view_modes(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let can = self.page_count() > 0;
         let accent = color_of(self.theme.accent);
-        let free = !self.fit_page && self.session.zoom != ZoomMode::FitWidth;
-        let fitw = !self.fit_page && self.session.zoom == ZoomMode::FitWidth;
+        let on_flow = !self.fit_page;
+        let continuous = on_flow && self.flow == Flow::Continuous;
+        let single = on_flow && self.flow == Flow::Single;
+        let dual = on_flow && self.flow == Flow::Dual;
         let fitp = self.fit_page;
         ui.add_enabled_ui(can, |ui| {
-            if self
-                .icons
-                .button(ui, Icon::Page, 24.0, if free { accent } else { fg })
-                .on_hover_text("Free zoom")
-                .clicked()
-            {
-                self.fit_page = false;
-                self.session.zoom =
-                    ZoomMode::Percent(layout::quantize_nearest(f32::from(self.zoom_pct)));
-            }
-            if self
-                .icons
-                .button(
-                    ui,
-                    Icon::MoveHorizontal,
-                    24.0,
-                    if fitw { accent } else { fg },
-                )
-                .on_hover_text("Fit width (0)")
-                .clicked()
-            {
-                self.zoom_fit_width();
-            }
             if self
                 .icons
                 .button(ui, Icon::Focus, 24.0, if fitp { accent } else { fg })
@@ -1763,6 +1761,30 @@ impl ReaderApp {
                 .clicked()
             {
                 self.fit_page = true;
+            }
+            if self
+                .icons
+                .button(ui, Icon::Columns2, 24.0, if dual { accent } else { fg })
+                .on_hover_text("Dual-page spreads")
+                .clicked()
+            {
+                self.set_flow(Flow::Dual);
+            }
+            if self
+                .icons
+                .button(ui, Icon::Page, 24.0, if single { accent } else { fg })
+                .on_hover_text("Single page")
+                .clicked()
+            {
+                self.set_flow(Flow::Single);
+            }
+            if self
+                .icons
+                .button(ui, Icon::Book, 24.0, if continuous { accent } else { fg })
+                .on_hover_text("Continuous scroll")
+                .clicked()
+            {
+                self.set_flow(Flow::Continuous);
             }
         });
     }
