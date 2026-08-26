@@ -47,8 +47,8 @@ fn write_sidecar(pdf: &Path, contents: &str) {
 }
 
 #[test]
-fn session_v2_roundtrip_all_fields() {
-    let dir = temp_fixture_dir("v2-roundtrip");
+fn session_v3_roundtrip_all_fields() {
+    let dir = temp_fixture_dir("v3-roundtrip");
     let pdf = pdf_path(&dir);
     let session = SessionState {
         page: 3,
@@ -58,14 +58,60 @@ fn session_v2_roundtrip_all_fields() {
         bookmarks: vec![Bookmark {
             page: 5,
             created_at: "2026-08-20T12:00:00Z".to_owned(),
+            title: None,
         }],
     };
 
     save_session(&pdf, &session).unwrap();
 
     let sidecar = fs::read_to_string(sidecar_path(&pdf)).unwrap();
-    assert!(sidecar.contains("schema_version = 2"), "sidecar: {sidecar}");
+    assert!(sidecar.contains("schema_version = 3"), "sidecar: {sidecar}");
     assert!(loaded(load_session(&pdf).unwrap()) == session);
+}
+
+#[test]
+fn session_v3_roundtrip_titled_bookmark() {
+    let dir = temp_fixture_dir("v3-titled");
+    let pdf = pdf_path(&dir);
+    let session = SessionState {
+        bookmarks: vec![Bookmark {
+            page: 2,
+            created_at: "2026-08-20T12:00:00Z".to_owned(),
+            title: Some("Intro".to_owned()),
+        }],
+        ..SessionState::new(10)
+    };
+
+    save_session(&pdf, &session).unwrap();
+
+    let sidecar = fs::read_to_string(sidecar_path(&pdf)).unwrap();
+    assert!(sidecar.contains(r#"title = "Intro""#), "sidecar: {sidecar}");
+    assert_eq!(loaded(load_session(&pdf).unwrap()), session);
+}
+
+#[test]
+fn v2_sidecar_without_titles_parses_with_none() {
+    let dir = temp_fixture_dir("v2-compat");
+    let pdf = pdf_path(&dir);
+    write_sidecar(
+        &pdf,
+        r#"schema_version = 2
+updated_at = "2026-08-20T12:00:00Z"
+[reading]
+page = 0
+scroll_frac = 0.0
+zoom = "fit-width"
+theme = "Light"
+[[bookmarks]]
+page = 7
+created_at = "2026-08-20T12:00:00Z"
+"#,
+    );
+
+    let restored = loaded(load_session(&pdf).unwrap());
+    assert_eq!(restored.bookmarks.len(), 1);
+    assert_eq!(restored.bookmarks[0].page, 7);
+    assert_eq!(restored.bookmarks[0].title, None);
 }
 
 #[test]
@@ -148,12 +194,12 @@ fn garbage_returns_corrupt() {
 }
 
 #[test]
-fn schema_version_three_is_unsupported() {
-    let dir = temp_fixture_dir("schema-v3");
+fn schema_version_four_is_unsupported() {
+    let dir = temp_fixture_dir("schema-v4");
     let pdf = pdf_path(&dir);
     write_sidecar(
         &pdf,
-        r#"schema_version = 3
+        r#"schema_version = 4
 updated_at = "2026-08-20T12:00:00Z"
 [reading]
 page = 0
@@ -164,8 +210,8 @@ theme = "Light"
     );
 
     match load_session(&pdf) {
-        Err(Error::UnsupportedSchema { found: 3 }) => {}
-        other => panic!("expected UnsupportedSchema {{ found: 3 }}, got {other:?}"),
+        Err(Error::UnsupportedSchema { found: 4 }) => {}
+        other => panic!("expected UnsupportedSchema {{ found: 4 }}, got {other:?}"),
     }
 }
 
@@ -324,4 +370,27 @@ fn bookmarks_dedup_by_page_and_toggle() {
 
     session.remove_bookmark(5);
     assert!(session.bookmarks.is_empty());
+}
+
+#[test]
+fn rename_bookmark_sets_trims_and_clears_title() {
+    let mut session = SessionState::new(10);
+    session.add_bookmark(4);
+
+    session.rename_bookmark(4, "  Intro  ".to_owned());
+    assert_eq!(session.bookmarks[0].title.as_deref(), Some("Intro"));
+
+    session.rename_bookmark(4, "   ".to_owned());
+    assert_eq!(session.bookmarks[0].title, None);
+
+    session.rename_bookmark(9, "ghost".to_owned());
+    assert_eq!(
+        session
+            .bookmarks
+            .iter()
+            .map(|b| b.title.clone())
+            .collect::<Vec<_>>(),
+        vec![None],
+        "renaming a missing page changes nothing"
+    );
 }

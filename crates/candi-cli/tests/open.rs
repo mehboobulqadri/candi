@@ -89,13 +89,13 @@ updated_at = "2026-08-20T12:00:00Z"
 }
 
 #[test]
-fn save_session_writes_schema_version_two() {
+fn save_session_writes_schema_version_three() {
     let (_dir, pdf) = copied_fixture("tiny.pdf", "session-save");
 
     save_session(&pdf, &SessionState::new(2)).unwrap();
 
     let sidecar = fs::read_to_string(sidecar_path(&pdf)).unwrap();
-    assert!(sidecar.contains("schema_version = 2"), "sidecar: {sidecar}");
+    assert!(sidecar.contains("schema_version = 3"), "sidecar: {sidecar}");
 }
 
 #[test]

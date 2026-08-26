@@ -2,7 +2,8 @@
 
 //! Versioned sidecar (`{pdf}.candi.toml`): schema v1 stores the reading
 //! position, schema v2 stores the full reading session (zoom, theme,
-//! bookmarks) and migrates v1 files on load.
+//! bookmarks), and schema v3 adds optional bookmark titles; v1 files are
+//! migrated on load and title-less bookmarks parse as before.
 //!
 //! Concurrent writers use last-write-wins; locking is deferred to v0.2 (Spike 4).
 
@@ -18,7 +19,7 @@ use serde::{Serialize, Serializer};
 /// Highest schema version understood by [`load`] (v1 reading position).
 const POSITION_SCHEMA: u32 = 1;
 /// Schema version written by [`save_session`] and read by [`load_session`].
-const SESSION_SCHEMA: u32 = 2;
+const SESSION_SCHEMA: u32 = 3;
 
 /// Theme applied to fresh sessions and v1 migrations.
 const DEFAULT_THEME: &str = "Light";
@@ -77,14 +78,16 @@ impl Serialize for ZoomMode {
     }
 }
 
-/// A user bookmark pointing at a 0-based page.
+/// A user bookmark pointing at a 0-based page. `title` is an optional
+/// display name (schema v3); older sidecars simply have no title.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bookmark {
     pub page: usize,
     pub created_at: String,
+    pub title: Option<String>,
 }
 
-/// Full reading session (schema v2). Fractions are 0-based: `scroll_frac` is
+/// Full reading session (schema v3). Fractions are 0-based: `scroll_frac` is
 /// the vertical position within the current page as a fraction of its height.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionState {
@@ -144,7 +147,23 @@ impl SessionState {
         self.bookmarks.push(Bookmark {
             page,
             created_at: format_rfc3339_utc(SystemTime::now()),
+            title: None,
         });
+    }
+
+    /// Set the title of the first bookmark for `page`; surrounding whitespace
+    /// is trimmed and an empty result clears the title. Missing bookmarks are
+    /// ignored.
+    pub fn rename_bookmark(&mut self, page: usize, title: String) {
+        let trimmed = title.trim();
+        let title = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        };
+        if let Some(bookmark) = self.bookmarks.iter_mut().find(|b| b.page == page) {
+            bookmark.title = title;
+        }
     }
 
     /// Drop any bookmark for `page`; missing bookmarks are ignored.
@@ -459,7 +478,16 @@ fn zoom_field(field: Option<&toml::Value>) -> Result<ZoomMode, String> {
 fn bookmark(value: &toml::Value) -> Result<Bookmark, String> {
     let page = uint_field(value.get("page"), "bookmark page")?;
     let created_at = text_field(value.get("created_at"), "bookmark created_at")?;
-    Ok(Bookmark { page, created_at })
+    let title = match value.get("title") {
+        Some(toml::Value::String(title)) => Some(title.clone()),
+        Some(_) => return Err("invalid bookmark title type".into()),
+        None => None,
+    };
+    Ok(Bookmark {
+        page,
+        created_at,
+        title,
+    })
 }
 
 #[derive(Serialize)]
@@ -507,6 +535,8 @@ struct SessionReading<'a> {
 struct BookmarkSection<'a> {
     page: usize,
     created_at: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
 }
 
 fn serialize_session(session: &SessionState, updated_at: &str) -> io::Result<String> {
@@ -525,6 +555,7 @@ fn serialize_session(session: &SessionState, updated_at: &str) -> io::Result<Str
             .map(|bookmark| BookmarkSection {
                 page: bookmark.page,
                 created_at: &bookmark.created_at,
+                title: bookmark.title.as_deref(),
             })
             .collect(),
     };

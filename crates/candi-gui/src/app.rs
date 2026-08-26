@@ -122,6 +122,10 @@ pub struct ReaderApp {
     /// Inline page-jump buffer; `Some` while the counter is an input field.
     page_jump: Option<String>,
     page_jump_focus: bool,
+    /// Page of the bookmark being renamed inline; `Some` while editing.
+    renaming: Option<usize>,
+    rename_buffer: String,
+    rename_focus: bool,
     /// Last jump attempt failed validation; tints the input until edited.
     jump_invalid: bool,
     search_query: String,
@@ -192,6 +196,9 @@ impl ReaderApp {
             focus_mode: false,
             page_jump: None,
             page_jump_focus: false,
+            renaming: None,
+            rename_buffer: String::new(),
+            rename_focus: false,
             jump_invalid: false,
             search_query: String::new(),
             search_hits: None,
@@ -215,6 +222,9 @@ impl ReaderApp {
         self.error = None;
         self.search_hits = None;
         self.search_query.clear();
+        self.renaming = None;
+        self.rename_buffer.clear();
+        self.rename_focus = false;
         self.toc_rows.clear();
         match open_session(&path, self.backend) {
             Ok(opened) => {
@@ -1210,25 +1220,76 @@ impl ReaderApp {
         }
         let mut jump = None;
         let mut remove = None;
+        let mut begin_rename = None;
+        let mut commit_rename: Option<(usize, String)> = None;
+        let mut cancel_rename = false;
         for bookmark in &self.session.bookmarks {
-            ui.horizontal(|ui| {
-                if click_row(
-                    ui,
-                    format!(
-                        "p. {} · {}",
-                        bookmark.page + 1,
-                        date_only(&bookmark.created_at)
-                    )
-                    .into(),
-                )
-                .clicked()
-                {
-                    jump = Some(bookmark.page);
-                }
-                if self.icons.button(ui, Icon::X, 18.0, fg).clicked() {
-                    remove = Some(bookmark.page);
-                }
-            });
+            if self.renaming == Some(bookmark.page) {
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.rename_buffer)
+                            .desired_width(ui.available_width() - 30.0),
+                    );
+                    if self.rename_focus {
+                        field.request_focus();
+                        self.rename_focus = false;
+                    }
+                    if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        commit_rename =
+                            Some((bookmark.page, std::mem::take(&mut self.rename_buffer)));
+                    } else if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+                        cancel_rename = true;
+                        self.rename_buffer.clear();
+                    }
+                    if self.icons.button(ui, Icon::X, 18.0, fg).clicked() {
+                        cancel_rename = true;
+                    }
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    let row = if let Some(title) = bookmark.title.as_deref() {
+                        format!("{title} — {}", date_only(&bookmark.created_at))
+                    } else {
+                        format!(
+                            "Page {} — {}",
+                            bookmark.page + 1,
+                            date_only(&bookmark.created_at)
+                        )
+                    };
+                    if click_row(ui, row.into()).clicked() {
+                        jump = Some(bookmark.page);
+                    }
+                    if self
+                        .icons
+                        .button(ui, Icon::Pen, 18.0, fg)
+                        .on_hover_text("Rename")
+                        .clicked()
+                    {
+                        begin_rename = Some(bookmark.page);
+                    }
+                    if self.icons.button(ui, Icon::X, 18.0, fg).clicked() {
+                        remove = Some(bookmark.page);
+                    }
+                });
+            }
+        }
+        if let Some((page, title)) = commit_rename {
+            self.session.rename_bookmark(page, title);
+            self.renaming = None;
+        } else if cancel_rename {
+            self.renaming = None;
+            self.rename_buffer.clear();
+        }
+        if let Some(page) = begin_rename {
+            self.renaming = Some(page);
+            self.rename_buffer = self
+                .session
+                .bookmarks
+                .iter()
+                .find(|b| b.page == page)
+                .and_then(|b| b.title.clone())
+                .unwrap_or_default();
+            self.rename_focus = true;
         }
         if let Some(page) = jump {
             self.goto_page(page);

@@ -46,6 +46,7 @@ const SOURCES: &[(Icon, &str)] = &[
     ),
     (Icon::Save, include_str!("../assets/icons/save.svg")),
     (Icon::Info, include_str!("../assets/icons/info.svg")),
+    (Icon::Pen, include_str!("../assets/icons/pen.svg")),
     (
         Icon::ChevronDown,
         include_str!("../assets/icons/chevron-down.svg"),
@@ -74,6 +75,7 @@ pub enum Icon {
     MoveHorizontal,
     Save,
     Info,
+    Pen,
     ChevronDown,
 }
 
