@@ -861,7 +861,11 @@ impl ReaderApp {
                     self.section = SidebarSection::Search;
                     self.focus_search = true;
                 }
-                self.nav_cluster(ui, fg);
+                ui.with_layout(
+                    egui::Layout::left_to_right(egui::Align::Center)
+                        .with_main_align(egui::Align::Center),
+                    |ui| self.nav_cluster(ui, fg),
+                );
             });
         });
     }
@@ -1298,13 +1302,29 @@ impl ReaderApp {
     /// Bordered theme picker: current name + chevron; popup lists the five
     /// built-ins and the YAML editor. No font glyphs anywhere.
     fn theme_picker(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
-        let chevron = self
-            .icons
-            .image(ui, Icon::ChevronDown, 14.0, fg.gamma_multiply(0.7));
-        let resp = ui.add(egui::Button::image_and_text(
-            chevron,
-            egui::RichText::new(&self.theme.name).font(egui::FontId::proportional(13.0)),
-        ));
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::click());
+        let fill = if resp.hovered() {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(rect, 6.0, fill);
+        ui.painter().text(
+            egui::pos2(rect.left() + 10.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &self.theme.name,
+            egui::FontId::proportional(13.0),
+            fg,
+        );
+        self.icons.paint_at(
+            ui,
+            egui::Rect::from_center_size(
+                egui::pos2(rect.right() - 14.0, rect.center().y),
+                egui::vec2(14.0, 14.0),
+            ),
+            Icon::ChevronDown,
+            fg.gamma_multiply(0.7),
+        );
         let id = resp.id.with("theme_popup");
         if resp.clicked() {
             ui.memory_mut(|mem| mem.toggle_popup(id));
