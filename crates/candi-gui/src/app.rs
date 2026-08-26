@@ -384,6 +384,16 @@ impl ReaderApp {
         }
     }
 
+    /// Jump to the next (`dir > 0`) or previous hit page relative to the
+    /// reading position, cycling past either end.
+    fn cycle_search_hit(&mut self, dir: isize) {
+        let Some(hits) = self.search_hits.as_deref().filter(|hits| !hits.is_empty()) else {
+            return;
+        };
+        let page = cycle_hit_page(hits, self.session.page, dir);
+        self.goto_page(page);
+    }
+
     /// Every match in the document as a result row, in document order.
     /// `SearchSession` cycles its cursor once the scan is complete, so the
     /// collection stops when the first hit comes around again.
@@ -854,6 +864,10 @@ impl ReaderApp {
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.style_mut().spacing.button_padding = egui::vec2(8.0, 4.0);
         chrome_style(ui);
+        if self.sidebar_open && self.section == SidebarSection::Search {
+            self.search_overlay(ui);
+            return;
+        }
         let fg = color_of(self.theme.ui_fg);
         let accent = color_of(self.theme.accent);
         ui.horizontal(|ui| {
@@ -903,6 +917,71 @@ impl ReaderApp {
                         .with_main_align(egui::Align::Center),
                     |ui| self.nav_cluster(ui, fg),
                 );
+            });
+        });
+    }
+
+    /// Top-bar search overlay shown while the sidebar's Search section is
+    /// open: the query field moves up here and the right cluster drives the
+    /// match list; the sidebar keeps rendering the hit rows.
+    fn search_overlay(&mut self, ui: &mut egui::Ui) {
+        let fg = color_of(self.theme.ui_fg);
+        let accent = color_of(self.theme.accent);
+        let has_hits = self.search_hits.as_deref().is_some_and(|h| !h.is_empty());
+        ui.horizontal(|ui| {
+            ui.set_height(ui.available_height());
+            let (slot, _) = ui.allocate_exact_size(egui::vec2(32.0, 28.0), egui::Sense::hover());
+            self.icons.paint_at(
+                ui,
+                egui::Rect::from_center_size(slot.center(), egui::vec2(20.0, 20.0)),
+                Icon::Search,
+                accent,
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.icons.button(ui, Icon::X, 26.0, fg).clicked() {
+                    self.search_query.clear();
+                    self.search_hits = None;
+                }
+                ui.add_enabled_ui(has_hits, |ui| {
+                    if self
+                        .icons
+                        .button(ui, Icon::ChevronLeft, 22.0, fg)
+                        .on_hover_text("Previous match")
+                        .clicked()
+                    {
+                        self.cycle_search_hit(-1);
+                    }
+                    if self
+                        .icons
+                        .button(ui, Icon::ChevronRight, 22.0, fg)
+                        .on_hover_text("Next match")
+                        .clicked()
+                    {
+                        self.cycle_search_hit(1);
+                    }
+                });
+                let current = self
+                    .search_hits
+                    .as_deref()
+                    .and_then(|hits| hits.iter().position(|hit| hit.page >= self.session.page))
+                    .map_or(String::new(), |idx| format!("{} / ", idx + 1));
+                let total = self.search_hits.as_deref().map_or(0, <[SearchHit]>::len);
+                ui.label(egui::RichText::new(format!("{current}{total}")).weak());
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.search_query)
+                        .hint_text("Search document")
+                        .desired_width(ui.available_width()),
+                );
+                if self.focus_search {
+                    field.request_focus();
+                    self.focus_search = false;
+                }
+                if field.changed() {
+                    self.search_hits = None;
+                }
+                if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    self.run_search();
+                }
             });
         });
     }
@@ -1908,6 +1987,24 @@ fn validate_jump(text: &str, count: usize) -> Option<usize> {
     Some(page - 1)
 }
 
+/// Neighbor hit page for cyclic stepping: next takes the first hit page
+/// strictly ahead of `current` (wrapping to the first hit), previous the
+/// last one behind (wrapping to the final hit).
+fn cycle_hit_page(hits: &[SearchHit], current: usize, dir: isize) -> usize {
+    if dir > 0 {
+        hits.iter()
+            .find(|hit| hit.page > current)
+            .unwrap_or(&hits[0])
+            .page
+    } else {
+        hits.iter()
+            .rev()
+            .find(|hit| hit.page < current)
+            .unwrap_or_else(|| hits.last().expect("caller checked non-empty"))
+            .page
+    }
+}
+
 /// ☀ or 🌙 by the UI background's luma — an icon for what is active now, not
 /// a toggle promise (design spec §21).
 fn theme_icon(theme: &Theme) -> Icon {
@@ -2305,5 +2402,35 @@ mod tests {
         );
         assert_eq!(humanize_reason("single line"), "single line");
         assert_eq!(humanize_reason(""), "");
+    }
+
+    fn hits(pages: &[usize]) -> Vec<SearchHit> {
+        pages
+            .iter()
+            .map(|&page| SearchHit {
+                page,
+                snippet: String::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn search_stepping_walks_hits_and_cycles_at_the_ends() {
+        let sample = hits(&[2, 5, 9]);
+        assert_eq!(cycle_hit_page(&sample, 1, 1), 2);
+        assert_eq!(cycle_hit_page(&sample, 5, 1), 9);
+        assert_eq!(cycle_hit_page(&sample, 8, -1), 5);
+        assert_eq!(cycle_hit_page(&sample, 7, -1), 5);
+        assert_eq!(cycle_hit_page(&sample, 9, 1), 2, "next wraps past the end");
+        assert_eq!(
+            cycle_hit_page(&sample, 0, -1),
+            9,
+            "previous wraps before the start"
+        );
+        assert_eq!(
+            cycle_hit_page(&hits(&[4]), 4, 1),
+            4,
+            "single-page lists step in place"
+        );
     }
 }
