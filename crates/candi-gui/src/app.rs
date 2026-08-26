@@ -877,20 +877,23 @@ impl ReaderApp {
     /// − / percent / + stepper in the top bar (states 2–3).
     fn zoom_stepper(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let can = self.page_count() > 0;
-        ui.add_enabled_ui(can, |ui| {
-            if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
-                self.zoom_step(-5);
-            }
-        });
-        ui.label(
-            egui::RichText::new(format!("{}%", self.zoom_pct))
-                .font(egui::FontId::proportional(13.0)),
-        )
-        .on_hover_text("Zoom");
-        ui.add_enabled_ui(can, |ui| {
-            if self.icons.button(ui, Icon::Plus, 22.0, fg).clicked() {
-                self.zoom_step(5);
-            }
+        // Explicit LTR: the RTL top-bar parent reverses child order.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(can, |ui| {
+                if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
+                    self.zoom_step(-5);
+                }
+            });
+            ui.label(
+                egui::RichText::new(format!("{}%", self.zoom_pct))
+                    .font(egui::FontId::proportional(13.0)),
+            )
+            .on_hover_text("Zoom");
+            ui.add_enabled_ui(can, |ui| {
+                if self.icons.button(ui, Icon::Plus, 22.0, fg).clicked() {
+                    self.zoom_step(5);
+                }
+            });
         });
     }
 
@@ -1096,40 +1099,45 @@ impl ReaderApp {
 
     /// Icon rail (always visible) + the section panel beside it.
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_height(ui.available_height());
-            self.rail(ui);
-            if self.sidebar_open {
-                ui.separator();
-                egui::Frame::default()
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(self.sidebar_w - 74.0);
-                            let (label, salt, body): (
-                                &str,
-                                &str,
-                                fn(&mut ReaderApp, &mut egui::Ui),
-                            ) = match self.section {
-                                SidebarSection::Contents => {
-                                    ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
-                                }
-                                SidebarSection::Bookmarks => {
-                                    ("BOOKMARKS", "sidebar_bookmarks", ReaderApp::show_bookmarks)
-                                }
-                                SidebarSection::Search => {
-                                    ("SEARCH", "sidebar_search", ReaderApp::show_search)
-                                }
-                            };
-                            ui.label(egui::RichText::new(label).weak().small());
-                            ui.add_space(4.0);
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .id_salt(salt)
-                                .show(ui, |ui| body(self, ui));
+        let row = egui::vec2(ui.available_width(), ui.available_height());
+        ui.allocate_ui(row, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_height(ui.available_height());
+                self.rail(ui);
+                if self.sidebar_open {
+                    ui.separator();
+                    egui::Frame::default()
+                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(self.sidebar_w - 74.0);
+                                let (label, salt, body): (
+                                    &str,
+                                    &str,
+                                    fn(&mut ReaderApp, &mut egui::Ui),
+                                ) = match self.section {
+                                    SidebarSection::Contents => {
+                                        ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
+                                    }
+                                    SidebarSection::Bookmarks => (
+                                        "BOOKMARKS",
+                                        "sidebar_bookmarks",
+                                        ReaderApp::show_bookmarks,
+                                    ),
+                                    SidebarSection::Search => {
+                                        ("SEARCH", "sidebar_search", ReaderApp::show_search)
+                                    }
+                                };
+                                ui.label(egui::RichText::new(label).weak().small());
+                                ui.add_space(4.0);
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink([false, false])
+                                    .id_salt(salt)
+                                    .show(ui, |ui| body(self, ui));
+                            });
                         });
-                    });
-            }
+                }
+            });
         });
     }
 
