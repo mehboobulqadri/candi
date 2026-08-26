@@ -293,6 +293,17 @@ fn start_page_full_scan_does_not_rescan_start_page() {
 }
 
 #[test]
+fn non_ascii_page_text_does_not_panic_and_finds_hits() {
+    let doc = FakeDoc::new(vec!["café latte — résumé"]);
+    let mut session = SearchSession::new(&doc, "latte", 0);
+    assert_eq!(session.next().unwrap().unwrap(), (0, 6));
+    assert_eq!(session.results().len(), 1);
+
+    let mut session = SearchSession::new(&doc, "résumé", 0);
+    assert_eq!(session.next().unwrap().unwrap(), (0, 14));
+}
+
+#[test]
 fn search_matches_normalized_ligatures() {
     struct LigatureDoc {
         page: String,

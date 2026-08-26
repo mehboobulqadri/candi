@@ -153,7 +153,9 @@ impl<'a, D: Document + ?Sized> SearchSession<'a, D> {
 
         let mut start = 0;
         while start + needle_len <= haystack.len() {
-            if haystack[start..].starts_with(needle) {
+            if haystack.is_char_boundary(start)
+                && haystack.as_bytes()[start..].starts_with(needle.as_bytes())
+            {
                 self.results.push((next_page, start));
                 start += needle_len.max(1);
             } else {
