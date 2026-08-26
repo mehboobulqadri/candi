@@ -30,9 +30,10 @@ wait_for_window() {
 }
 
 capture_window() {
-    local out=$1
-    # Re-read geometry immediately before every shot.
-    win=$(hyprctl -j clients | jq -c 'first(.[] | select(.mapped and (.class|ascii_downcase|contains("candi")) or (.title|test("Candi"))))')
+    local out=$1 pid=$2
+    # Re-read geometry immediately before every shot; match OUR process by
+    # pid so other windows can never be captured by mistake.
+    win=$(hyprctl -j clients | jq -c --argjson pid "$pid" 'first(.[] | select(.mapped and .pid == $pid))')
     if [[ -z $win || $win == null ]]; then
         echo "no candi window found" >&2
         return 1
@@ -40,7 +41,7 @@ capture_window() {
     local x y w h bytes
     x=$(jq '.at[0]' <<<"$win"); y=$(jq '.at[1]' <<<"$win")
     w=$(jq '.size[0]' <<<"$win"); h=$(jq '.size[1]' <<<"$win")
-    echo "window ${x},${y} ${w}x${h} (class $(jq -r .class <<<"$win"), title $(jq -r .title <<<"$win"))"
+    echo "window ${x},${y} ${w}x${h} (pid ${pid}, class $(jq -r .class <<<"$win"), title $(jq -r .title <<<"$win"))"
     mkdir -p "$(dirname "$out")"
     grim -g "${x},${y} ${w}x${h}" "$out"
     bytes=$(stat -c%s "$out")
@@ -65,7 +66,7 @@ launch_and_capture() {
     pid=$!
     sleep 3
 
-    capture_window "$out"
+    capture_window "$out" "$pid"
 
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -131,7 +132,7 @@ matrix() {
     read w h <<<"$(hyprctl -j clients | jq -r '.[] | select(.class=="candi") | "\(.size[0]) \(.size[1])"')"
     hyprctl dispatch "hl.dsp.window.resize({ x = $((700 - w)), y = $((800 - h)), relative = true })" > /dev/null
     sleep 0.7
-    capture_window "$dir/10-light-narrow-tagline.png"
+    capture_window "$dir/10-light-narrow-tagline.png" "$pid"
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
     pid=0
@@ -146,7 +147,7 @@ empty_probe() {
     sleep 4
     if wait_for_window; then
         sleep 1
-        capture_window "$out"
+        capture_window "$out" "$pid"
     else
         echo "no window mapped after no-args launch: rfd file dialog blocks headlessly" >&2
         kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; pid=0
