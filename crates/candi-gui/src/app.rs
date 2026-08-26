@@ -1076,6 +1076,7 @@ impl ReaderApp {
     fn section_panel(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .fill(color_of(self.theme.panel_bg))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     ui.set_width(self.sidebar_w - 20.0);
@@ -1098,6 +1099,7 @@ impl ReaderApp {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .id_salt(salt)
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                         .show(ui, |ui| body(self, ui));
                 });
             });
