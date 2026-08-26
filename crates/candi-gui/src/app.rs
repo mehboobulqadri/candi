@@ -1097,48 +1097,33 @@ impl ReaderApp {
         }
     }
 
-    /// Icon rail (always visible) + the section panel beside it.
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        let row = egui::vec2(ui.available_width(), ui.available_height());
-        ui.allocate_ui(row, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_height(ui.available_height());
-                self.rail(ui);
-                if self.sidebar_open {
-                    ui.separator();
-                    egui::Frame::default()
-                        .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                        .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                ui.set_width(self.sidebar_w - 74.0);
-                                let (label, salt, body): (
-                                    &str,
-                                    &str,
-                                    fn(&mut ReaderApp, &mut egui::Ui),
-                                ) = match self.section {
-                                    SidebarSection::Contents => {
-                                        ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
-                                    }
-                                    SidebarSection::Bookmarks => (
-                                        "BOOKMARKS",
-                                        "sidebar_bookmarks",
-                                        ReaderApp::show_bookmarks,
-                                    ),
-                                    SidebarSection::Search => {
-                                        ("SEARCH", "sidebar_search", ReaderApp::show_search)
-                                    }
-                                };
-                                ui.label(egui::RichText::new(label).weak().small());
-                                ui.add_space(4.0);
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false, false])
-                                    .id_salt(salt)
-                                    .show(ui, |ui| body(self, ui));
-                            });
-                        });
-                }
+    /// The section panel beside the rail: header + scrollable body.
+    fn section_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::default()
+            .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(self.sidebar_w - 20.0);
+                    let (label, salt, body): (&str, &str, fn(&mut ReaderApp, &mut egui::Ui)) =
+                        match self.section {
+                            SidebarSection::Contents => {
+                                ("CONTENTS", "sidebar_contents", ReaderApp::show_contents)
+                            }
+                            SidebarSection::Bookmarks => {
+                                ("BOOKMARKS", "sidebar_bookmarks", ReaderApp::show_bookmarks)
+                            }
+                            SidebarSection::Search => {
+                                ("SEARCH", "sidebar_search", ReaderApp::show_search)
+                            }
+                        };
+                    ui.label(egui::RichText::new(label).weak().small());
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .id_salt(salt)
+                        .show(ui, |ui| body(self, ui));
+                });
             });
-        });
     }
 
     /// The ~52 px rail: sections top-down, theme editor pinned bottom.
@@ -1965,14 +1950,16 @@ impl eframe::App for ReaderApp {
             egui::TopBottomPanel::top("top_bar")
                 .exact_height(46.0)
                 .show(ctx, |ui| self.top_bar(ui));
-            egui::SidePanel::left("sidebar")
-                .exact_width(if self.sidebar_open {
-                    self.sidebar_w + 52.0
-                } else {
-                    52.0
-                })
+            egui::SidePanel::left("rail")
+                .exact_width(52.0)
                 .resizable(false)
-                .show(ctx, |ui| self.sidebar(ui));
+                .show(ctx, |ui| self.rail(ui));
+            if self.sidebar_open {
+                egui::SidePanel::left("panel")
+                    .exact_width(self.sidebar_w)
+                    .resizable(false)
+                    .show(ctx, |ui| self.section_panel(ui));
+            }
             egui::TopBottomPanel::bottom("bottom_bar")
                 .exact_height(42.0)
                 .show(ctx, |ui| self.bottom_bar(ui));
