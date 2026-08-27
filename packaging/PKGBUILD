@@ -1,7 +1,7 @@
 # Maintainer: Mehboob ul Qadri <mehboobulqadri@gmail.com>
 
 pkgname=candi
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Clean, minimal, distraction-free PDF reader'
 arch=('x86_64')
@@ -14,7 +14,7 @@ options=('!lto')
 depends=('gcc-libs' 'fontconfig' 'freetype2' 'libx11' 'libxkbcommon' 'wayland')
 makedepends=('cargo' 'clang')
 source=("$url/archive/refs/tags/v$pkgver.tar.gz")
-# PLACEHOLDER until the v0.1.0 tag is cut; run `updpkgsums` immediately
+# PLACEHOLDER until the v0.1.1 tag is cut; run `updpkgsums` immediately
 # before AUR submission (see packaging/AUR.md) to fill real sums.
 b2sums=('SKIP')
 
