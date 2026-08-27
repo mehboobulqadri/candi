@@ -12,10 +12,12 @@ mod builtin;
 mod color;
 mod error;
 mod recolor;
+mod retint;
 mod theme;
 
 pub use builtin::{BUILTIN_NAMES, builtin};
 pub use color::Color;
 pub use error::ThemeError;
 pub use recolor::recolor;
+pub use retint::retint;
 pub use theme::{Theme, parse, to_yaml};

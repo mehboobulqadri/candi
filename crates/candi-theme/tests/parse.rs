@@ -1,4 +1,4 @@
-use candi_theme::{BUILTIN_NAMES, Color, builtin, parse, to_yaml};
+use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, to_yaml};
 
 fn theme_with(color_line: &str) -> String {
     format!("name: Probe\n{color_line}")
@@ -143,15 +143,90 @@ fn to_yaml_lists_all_schema_keys_in_order_with_name_first() {
         to_yaml(&t),
         "\
 name: Sepia
-page_bg: \"#F4ECD8\"
-page_fg: \"#3B3228\"
-ui_bg: \"#262019\"
-panel_bg: \"#332B21\"
-ui_fg: \"#D8CFC0\"
+page:
+  bg: \"#F4ECD8\"
+  fg: \"#3B3228\"
+ui:
+  bg: \"#262019\"
+  fg: \"#D8CFC0\"
+panel:
+  bg: \"#332B21\"
 accent: \"#C89B3C\"
 selection: \"#A85D3C66\"
 "
     );
+}
+
+#[test]
+fn parses_nested_documents() {
+    let src = "\
+name: Night
+page:
+  bg: \"#101010\"
+  fg: \"#EEEEEE\"
+ui:
+  bg: \"#202020\"
+  fg: \"#DDDDDD\"
+panel:
+  bg: \"#2A2A2A\"
+accent: \"#FF8800\"
+selection: \"#FF880066\"
+";
+    let t = parse(src).expect("nested document");
+    assert_eq!(t.name, "Night");
+    assert_eq!(t.page_bg, Color::from([0x10, 0x10, 0x10, 0xFF]));
+    assert_eq!(t.page_fg, Color::from([0xEE, 0xEE, 0xEE, 0xFF]));
+    assert_eq!(t.ui_bg, Color::from([0x20, 0x20, 0x20, 0xFF]));
+    assert_eq!(t.ui_fg, Color::from([0xDD, 0xDD, 0xDD, 0xFF]));
+    assert_eq!(t.panel_bg, Color::from([0x2A, 0x2A, 0x2A, 0xFF]));
+    assert_eq!(t.accent, Color::from([0xFF, 0x88, 0x00, 0xFF]));
+    assert_eq!(t.selection, Color::from([0xFF, 0x88, 0x00, 0x66]));
+}
+
+#[test]
+fn nested_and_flat_forms_are_equivalent() {
+    let nested = "\
+name: Probe
+page:
+  bg: \"#101010\"
+  fg: \"#EEEEEE\"
+ui:
+  bg: \"#202020\"
+  fg: \"#DDDDDD\"
+panel:
+  bg: \"#2A2A2A\"
+accent: \"#FF8800\"
+selection: \"#FF880066\"
+";
+    let flat = "\
+name: Probe
+page_bg: \"#101010\"
+page_fg: \"#EEEEEE\"
+ui_bg: \"#202020\"
+panel_bg: \"#2A2A2A\"
+ui_fg: \"#DDDDDD\"
+accent: \"#FF8800\"
+selection: \"#FF880066\"
+";
+    assert_eq!(parse(nested), parse(flat));
+}
+
+#[test]
+fn nested_group_delegates_the_default_palette() {
+    // A nested document may override a single field inside one group while
+    // the rest defaults, exactly like the flat form.
+    let t = parse("name: Probe\npage:\n  bg: \"#101010\"").expect("partial nested");
+    assert_eq!(t.page_bg, Color::from([0x10, 0x10, 0x10, 0xFF]));
+    assert_eq!(t.page_fg, builtin("Light").unwrap().page_fg);
+}
+
+#[test]
+fn custom_theme_roundtrips_through_to_yaml() {
+    let custom = Theme {
+        name: "Custom".into(),
+        ..builtin("Dark").unwrap()
+    };
+    assert_eq!(parse(&to_yaml(&custom)), Ok(custom));
 }
 
 #[test]

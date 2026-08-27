@@ -91,7 +91,7 @@ pub fn recolor(rgba: &mut [u8], page_bg: Color, page_fg: Color) {
 
 /// Full-range integer Rec.601 luma: the coefficients sum to 256, so white
 /// maps to exactly 255 and paper can land exactly on `page_bg`.
-fn luma(r: u8, g: u8, b: u8) -> u8 {
+pub(crate) fn luma(r: u8, g: u8, b: u8) -> u8 {
     ((77 * r as u32 + 151 * g as u32 + 28 * b as u32) >> 8) as u8
 }
 

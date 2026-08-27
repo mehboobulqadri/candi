@@ -21,8 +21,8 @@ const POSITION_SCHEMA: u32 = 1;
 /// Schema version written by [`save_session`] and read by [`load_session`].
 const SESSION_SCHEMA: u32 = 3;
 
-/// Theme applied to fresh sessions and v1 migrations.
-const DEFAULT_THEME: &str = "Light";
+/// Theme applied to fresh sessions, v1 migrations, and fresh app configs.
+pub const DEFAULT_THEME: &str = "Dark";
 
 /// Lowest and highest supported zoom percent, shared with the GUI's
 /// quantizer so sidecar values and live zoom stay consistent.
@@ -263,7 +263,7 @@ pub fn save(pdf: &Path, position: &Position) -> Result<(), Error> {
         format_rfc3339_utc(SystemTime::now()),
     );
     let body = serialize_sidecar(&position).map_err(Error::Io)?;
-    write_atomically(&sidecar_path(pdf), &body)
+    write_file_atomically(&sidecar_path(pdf), &body).map_err(Error::Io)
 }
 
 /// Atomically persist a reading session next to the PDF (never modifies the PDF).
@@ -273,11 +273,13 @@ pub fn save(pdf: &Path, position: &Position) -> Result<(), Error> {
 pub fn save_session(pdf: &Path, session: &SessionState) -> Result<(), Error> {
     let body =
         serialize_session(session, &format_rfc3339_utc(SystemTime::now())).map_err(Error::Io)?;
-    write_atomically(&sidecar_path(pdf), &body)
+    write_file_atomically(&sidecar_path(pdf), &body).map_err(Error::Io)
 }
 
-fn write_atomically(sidecar: &Path, body: &str) -> Result<(), Error> {
-    let mut temp = sidecar.as_os_str().to_os_string();
+/// Atomically replace `target` with `body` (tmp file + rename + dir sync),
+/// shared by the sidecar and app-config writers.
+pub(crate) fn write_file_atomically(target: &Path, body: &str) -> io::Result<()> {
+    let mut temp = target.as_os_str().to_os_string();
     temp.push(".tmp");
     let temp_path = PathBuf::from(temp);
 
@@ -287,22 +289,22 @@ fn write_atomically(sidecar: &Path, body: &str) -> Result<(), Error> {
     }
     written?;
 
-    if let Err(err) = fs::rename(&temp_path, sidecar) {
+    if let Err(err) = fs::rename(&temp_path, target) {
         let _ = fs::remove_file(&temp_path);
-        return Err(Error::Io(err));
+        return Err(err);
     }
 
-    if let Some(parent) = sidecar.parent() {
+    if let Some(parent) = target.parent() {
         sync_dir(parent)?;
     }
 
     Ok(())
 }
 
-fn write_temp(temp_path: &Path, body: &str) -> Result<(), Error> {
-    let mut file = File::create(temp_path).map_err(Error::Io)?;
-    file.write_all(body.as_bytes()).map_err(Error::Io)?;
-    file.sync_all().map_err(Error::Io)
+fn write_temp(temp_path: &Path, body: &str) -> io::Result<()> {
+    let mut file = File::create(temp_path)?;
+    file.write_all(body.as_bytes())?;
+    file.sync_all()
 }
 
 /// Internal parse failure: recoverable corruption or a hard error.
@@ -562,7 +564,7 @@ fn serialize_session(session: &SessionState, updated_at: &str) -> io::Result<Str
     toml::to_string_pretty(&file).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
-fn format_rfc3339_utc(time: SystemTime) -> String {
+pub(crate) fn format_rfc3339_utc(time: SystemTime) -> String {
     let seconds = time
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
@@ -595,16 +597,11 @@ fn unix_days_to_ymd(mut days: i64) -> (i32, u32, u32) {
 }
 
 #[cfg(unix)]
-fn sync_dir(dir: &Path) -> Result<(), Error> {
-    OpenOptions::new()
-        .read(true)
-        .open(dir)
-        .map_err(Error::Io)?
-        .sync_all()
-        .map_err(Error::Io)
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    OpenOptions::new().read(true).open(dir)?.sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> Result<(), Error> {
+fn sync_dir(_dir: &Path) -> io::Result<()> {
     Ok(())
 }

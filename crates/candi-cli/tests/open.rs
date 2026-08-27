@@ -83,7 +83,7 @@ updated_at = "2026-08-20T12:00:00Z"
     assert_eq!(session.page, 1);
     assert_eq!(session.scroll_frac, 0.0);
     assert_eq!(session.zoom, ZoomMode::FitWidth);
-    assert_eq!(session.theme, "Light");
+    assert_eq!(session.theme, "Dark");
     assert!(session.bookmarks.is_empty());
     assert!(document.page_count() > 1);
 }

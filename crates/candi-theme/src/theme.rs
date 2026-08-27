@@ -64,30 +64,67 @@ fn light_selection() -> Color {
 }
 
 /// Parse a theme document (user YAML or embedded built-in).
+///
+/// Accepts both the nested canonical shape ([`to_yaml`]) and the legacy flat
+/// one (`page_bg`, `ui_bg`, …); nested `page`/`ui`/`panel` groups are
+/// flattened onto the flat schema keys before validation.
 pub fn parse(input: &str) -> Result<Theme, ThemeError> {
-    let value = serde_yaml::from_str(input).map_err(|e| ThemeError::Yaml(e.to_string()))?;
+    let mut value = serde_yaml::from_str(input).map_err(|e| ThemeError::Yaml(e.to_string()))?;
+    flatten_groups(&mut value);
     serde_yaml::from_value(value).map_err(|e| ThemeError::Schema(e.to_string()))
 }
 
-/// Serialize a theme to the canonical YAML shape: schema key order with
-/// `name` first, colors as hex. Deliberately not serde `Serialize`, so the
-/// editor buffer's formatting stays stable across versions.
+/// Move `page`/`ui`/`panel` group mappings onto their flat `page_bg`-style
+/// keys. A group that is not a string-keyed mapping is kept so the schema
+/// check rejects it as an unknown field.
+fn flatten_groups(value: &mut serde_yaml::Value) {
+    use serde_yaml::Value;
+
+    let Some(map) = value.as_mapping_mut() else {
+        return;
+    };
+    for group in ["page", "ui", "panel"] {
+        let fields = match map.remove(group) {
+            Some(Value::Mapping(fields))
+                if fields.iter().all(|(key, _)| key.as_str().is_some()) =>
+            {
+                fields
+            }
+            Some(other) => {
+                map.insert(Value::String(group.into()), other);
+                continue;
+            }
+            None => continue,
+        };
+        for (key, val) in fields {
+            let name = key.as_str().unwrap_or_default();
+            map.insert(Value::String(format!("{group}_{name}")), val);
+        }
+    }
+}
+
+/// Serialize a theme to the canonical nested YAML shape: `name` first, then
+/// the color groups, colors as hex. Deliberately not serde `Serialize`, so
+/// the editor buffer's formatting stays stable across versions.
 pub fn to_yaml(theme: &Theme) -> String {
     format!(
         "name: {}\n\
-         page_bg: \"{}\"\n\
-         page_fg: \"{}\"\n\
-         ui_bg: \"{}\"\n\
-         panel_bg: \"{}\"\n\
-         ui_fg: \"{}\"\n\
+         page:\n\
+         \x20 bg: \"{}\"\n\
+         \x20 fg: \"{}\"\n\
+         ui:\n\
+         \x20 bg: \"{}\"\n\
+         \x20 fg: \"{}\"\n\
+         panel:\n\
+         \x20 bg: \"{}\"\n\
          accent: \"{}\"\n\
          selection: \"{}\"\n",
         theme.name,
         theme.page_bg,
         theme.page_fg,
         theme.ui_bg,
-        theme.panel_bg,
         theme.ui_fg,
+        theme.panel_bg,
         theme.accent,
         theme.selection
     )

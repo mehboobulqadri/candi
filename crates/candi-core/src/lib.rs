@@ -7,14 +7,16 @@
 //! performs lazy, page-at-a-time text search over any [`candi_pdf::Document`].
 
 mod navigation;
+mod prefs;
 mod search;
 mod state;
 mod text;
 
 pub use navigation::ViewState;
+pub use prefs::{Prefs, Recent, config_path, load as load_prefs, store as store_prefs};
 pub use search::SearchSession;
 pub use state::{
-    Bookmark, Error, Load, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, Position, SessionLoad, SessionState,
-    ZoomMode, load, load_session, save, save_session, sidecar_path,
+    Bookmark, DEFAULT_THEME, Error, Load, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, Position,
+    SessionLoad, SessionState, ZoomMode, load, load_session, save, save_session, sidecar_path,
 };
 pub use text::normalize_reader_text;

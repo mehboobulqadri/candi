@@ -11,9 +11,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use candi_cli::{open_session, save_session};
-use candi_core::{SearchSession, SessionState, ZoomMode, normalize_reader_text};
+use candi_core::{
+    DEFAULT_THEME, Prefs, SearchSession, SessionState, ZoomMode, config_path, load_prefs,
+    normalize_reader_text, store_prefs,
+};
 use candi_pdf::{BackendKind, Document, Error as PdfError, PageImage};
-use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, to_yaml};
+use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, retint, to_yaml};
 use eframe::egui;
 use egui::Key;
 
@@ -50,6 +53,10 @@ const ACCENT_SWATCHES: [[u8; 3]; 8] = [
 ];
 /// Bounds of the UI text-size slider.
 const UI_SCALE_RANGE: RangeInclusive<f32> = 0.80..=1.40;
+/// Bounds of the theme-editor font zoom (Ctrl+= / Ctrl+- over the editor).
+const EDITOR_FONT_RANGE: RangeInclusive<f32> = 8.0..=40.0;
+/// Multiplicative step of one editor font-zoom key press.
+const EDITOR_FONT_STEP: f32 = 1.1;
 const SWATCH_SIZE: f32 = 22.0;
 
 /// A promoted GPU texture for one page plus the scale it was rendered at.
@@ -58,13 +65,14 @@ struct PageTexture {
     handle: egui::TextureHandle,
 }
 
-/// Center-pane theme editor state: the YAML buffer plus its last parse
-/// outcome. Openness is encoded by [`ReaderApp`] holding
-/// `Option<ThemeEditor>`; applying a parsed theme stays with the caller so
-/// this stays egui-free and unit-testable.
+/// Center-pane theme editor state: the YAML buffer, its last parse outcome,
+/// and the monospace font size (zoomable in place). Openness is encoded by
+/// [`ReaderApp`] holding `Option<ThemeEditor>`; applying a parsed theme
+/// stays with the caller so this stays egui-free and unit-testable.
 struct ThemeEditor {
     buffer: String,
     error: Option<String>,
+    font_size: f32,
 }
 
 impl ThemeEditor {
@@ -72,6 +80,7 @@ impl ThemeEditor {
         Self {
             buffer: to_yaml(theme),
             error: None,
+            font_size: crate::highlight::FONT_SIZE,
         }
     }
 
@@ -108,6 +117,10 @@ pub struct ReaderApp {
     theme: Theme,
     /// Name of the theme whose visuals were last pushed into egui.
     applied_theme: String,
+    /// App config (theme choice + recents), persisted next to the binary's
+    /// XDG config dir; `None` disables persistence (no HOME/XDG).
+    config: Prefs,
+    config_path: Option<PathBuf>,
 
     cache: ImageCache,
     pipeline: Option<Pipeline>,
@@ -210,14 +223,26 @@ impl ReaderApp {
             family.insert(1, "inter-semibold".into());
         }
         cc.egui_ctx.set_fonts(fonts);
+        let config_path = config_path();
+        let config = config_path
+            .as_deref()
+            .map(|path| {
+                let mut prefs = load_prefs(path);
+                // Prune entries whose files have vanished since the last run.
+                prefs.recents.retain(|recent| recent.path.is_file());
+                prefs
+            })
+            .unwrap_or_default();
         let mut app = Self {
             backend,
             path: None,
             filename: String::new(),
             document: None,
             session: SessionState::new(1),
-            theme: builtin("Dark").expect("built-in Dark parses"),
+            theme: Self::startup_theme(&config),
             applied_theme: String::new(),
+            config,
+            config_path,
             cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
             pipeline: None,
             pending: HashSet::new(),
@@ -275,6 +300,21 @@ impl ReaderApp {
                 }
                 "search-empty" => app.section = SidebarSection::Search,
                 "appearance" => app.section = SidebarSection::Appearance,
+                "accent-purple" => {
+                    app.section = SidebarSection::Appearance;
+                    app.set_accent(&cc.egui_ctx, ACCENT_SWATCHES[0]);
+                }
+                "editor" => {
+                    app.sidebar_open = false;
+                    app.open_theme_editor();
+                }
+                "editor-zoom" => {
+                    app.sidebar_open = false;
+                    app.open_theme_editor();
+                    if let Some(editor) = app.editor.as_mut() {
+                        editor.font_size = 20.0;
+                    }
+                }
                 "shortcuts" => {
                     app.shortcuts_open = true;
                     app.shortcut_filter = "page".into();
@@ -341,6 +381,8 @@ impl ReaderApp {
                 self.set_theme(&theme_name);
                 self.path = Some(path.clone());
                 self.filename = filename_of(&path);
+                self.config.record_open(&path);
+                self.save_config();
                 let document: Arc<dyn Document> = Arc::from(opened.document);
                 self.pipeline = Some(Pipeline::spawn(document.clone()));
                 self.document = Some(document);
@@ -357,15 +399,36 @@ impl ReaderApp {
         }
     }
 
+    /// Theme the app starts with: the persisted config choice, falling back
+    /// to the built-in default when the name is unknown.
+    fn startup_theme(config: &Prefs) -> Theme {
+        builtin(&config.theme)
+            .or_else(|| builtin(DEFAULT_THEME))
+            .expect("built-in default theme parses")
+    }
+
+    /// Persist the app config (theme choice, recents); a failed write warns
+    /// instead of disturbing the session.
+    fn save_config(&mut self) {
+        let Some(path) = self.config_path.as_deref() else {
+            return;
+        };
+        if let Err(err) = store_prefs(path, &self.config) {
+            eprintln!("candi: saving config: {err}");
+        }
+    }
+
     /// Switch the active built-in theme. Visuals are re-applied at the top of
     /// the next [`ReaderApp::update`]; texture slots are dropped so pages
     /// re-promote from their cached originals in the new colors. Closes the
     /// theme editor: a dropdown/menu switch means the buffer is no longer
-    /// authoritative.
+    /// authoritative. The choice persists to the app config immediately.
     fn set_theme(&mut self, name: &str) {
         self.theme =
-            builtin(name).unwrap_or_else(|| builtin("Light").expect("built-in Light parses"));
+            builtin(name).unwrap_or_else(|| builtin(DEFAULT_THEME).expect("default theme parses"));
         self.session.theme = self.theme.name.clone();
+        self.config.theme = self.theme.name.clone();
+        self.save_config();
         self.textures.clear();
         self.editor = None;
     }
@@ -384,8 +447,20 @@ impl ReaderApp {
     fn apply_edited_theme(&mut self, theme: Theme) {
         self.theme = theme;
         self.session.theme = self.theme.name.clone();
+        self.config.theme = self.theme.name.clone();
+        self.save_config();
         self.textures.clear();
         self.applied_theme.clear();
+    }
+
+    /// Session-local accent override (appearance swatches): re-applies the
+    /// visuals immediately, retinting the chrome toward the new accent even
+    /// though the theme name — the cache key in `applied_theme` — is
+    /// unchanged.
+    fn set_accent(&mut self, ctx: &egui::Context, rgb: [u8; 3]) {
+        self.theme.accent = Color::from([rgb[0], rgb[1], rgb[2], 0xFF]);
+        apply_theme(ctx, &self.theme);
+        self.applied_theme.clone_from(&self.theme.name);
     }
 
     fn page_count(&self) -> usize {
@@ -817,7 +892,10 @@ impl ReaderApp {
     fn show_theme_editor(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.strong(format!("Theme — {}", self.theme.name));
-            ui.label(egui::RichText::new("Edits apply live · Esc to close").weak());
+            ui.label(
+                egui::RichText::new("Edits apply live · Ctrl+= / Ctrl+- font · Esc to close")
+                    .weak(),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Close").clicked() {
                     self.editor = None;
@@ -826,7 +904,7 @@ impl ReaderApp {
         });
         ui.label(
             egui::RichText::new(
-                "Only built-in names persist; unknown names load as Light next session.",
+                "The theme name persists across sessions; unknown names load as Dark next time.",
             )
             .weak()
             .small(),
@@ -836,12 +914,31 @@ impl ReaderApp {
             let Some(editor) = self.editor.as_mut() else {
                 return;
             };
+            // Editor-scoped font zoom: Ctrl+= / Ctrl+- keys and Ctrl+scroll
+            // (egui's zoom delta covers both pinch and ctrl+scroll).
+            let mut zoom = 1.0_f32;
+            ui.ctx().input(|input| {
+                if !input.modifiers.ctrl {
+                    return;
+                }
+                if input.key_pressed(Key::Equals) || input.key_pressed(Key::Plus) {
+                    zoom = EDITOR_FONT_STEP;
+                } else if input.key_pressed(Key::Minus) {
+                    zoom = 1.0 / EDITOR_FONT_STEP;
+                } else {
+                    zoom = input.zoom_delta();
+                }
+            });
+            if zoom != 1.0 {
+                editor.font_size = (editor.font_size * zoom)
+                    .clamp(*EDITOR_FONT_RANGE.start(), *EDITOR_FONT_RANGE.end());
+            }
             if let Some(err) = &editor.error {
                 ui.colored_label(ERROR_RED, err);
             }
             let mut buffer = std::mem::take(&mut editor.buffer);
             let mut layouter = |ui: &egui::Ui, text: &str, _wrap_width: f32| {
-                let job = yaml_job(text, &self.theme);
+                let job = yaml_job(text, &self.theme, editor.font_size);
                 ui.fonts(|f| f.layout_job(job))
             };
             let edit_box = egui::TextEdit::multiline(&mut buffer)
@@ -1369,9 +1466,7 @@ impl ReaderApp {
                     egui::Sense::click(),
                 );
                 if resp.clicked() {
-                    self.theme.accent = swatch;
-                    apply_theme(ui.ctx(), &self.theme);
-                    self.applied_theme.clone_from(&self.theme.name);
+                    self.set_accent(ui.ctx(), rgb);
                 }
                 let color = color_of(swatch);
                 let center = rect.center();
@@ -1861,9 +1956,19 @@ impl ReaderApp {
         });
     }
 
-    /// §40 empty state: brand, one call to action, and the drag-drop hint —
-    /// nothing else.
+    /// §40 empty state: brand, one call to action, drag-drop hint, and the
+    /// recent-documents list when the config has any.
     fn empty_state(&mut self, ui: &mut egui::Ui) {
+        let recents: Vec<(PathBuf, String)> = self
+            .config
+            .recents
+            .iter()
+            .filter_map(|recent| {
+                let name = recent.path.file_name()?.to_str()?;
+                Some((recent.path.clone(), name.to_owned()))
+            })
+            .collect();
+        let mut open = None;
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             let accent = color_of(self.theme.accent);
             ui.add_space(ui.available_height() * 0.16);
@@ -1892,7 +1997,23 @@ impl ReaderApp {
                     .weak()
                     .small(),
             );
+            if !recents.is_empty() {
+                ui.add_space(26.0);
+                ui.label(egui::RichText::new("Recent").weak().small());
+                ui.add_space(2.0);
+                for (path, name) in &recents {
+                    if click_row(ui, egui::RichText::new(name).weak())
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        open = Some(path.clone());
+                    }
+                }
+            }
         });
+        if let Some(path) = open {
+            self.open_path(path);
+        }
     }
 
     fn open_error_view(&mut self, ui: &mut egui::Ui) {
@@ -2051,24 +2172,29 @@ impl ReaderApp {
             if ctrl && input.key_pressed(Key::K) {
                 self.shortcuts_open = true;
             }
-            if plain
-                && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals))
-                && self.page_count() > 0
-            {
-                self.zoom_step(5);
-            }
-            if plain && input.key_pressed(Key::Minus) && self.page_count() > 0 {
-                self.zoom_step(-5);
-            }
-            if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
-                self.zoom_fit_width();
-            }
-            // Pinch-zoom gesture (trackpad / touchscreen) and ctrl+scroll
-            // report a multiplicative delta anchored at the viewport center,
-            // mirroring the keyboard steps' percent-switch semantics.
-            let pinch = input.zoom_delta();
-            if plain && pinch != 1.0 && self.page_count() > 0 {
-                self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
+            // Document zoom keys and gestures are scoped to the canvas: the
+            // theme editor owns Ctrl+= / Ctrl+- / Ctrl+scroll for its font.
+            if self.editor.is_none() {
+                if plain
+                    && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals))
+                    && self.page_count() > 0
+                {
+                    self.zoom_step(5);
+                }
+                if plain && input.key_pressed(Key::Minus) && self.page_count() > 0 {
+                    self.zoom_step(-5);
+                }
+                if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
+                    self.zoom_fit_width();
+                }
+                // Pinch-zoom gesture (trackpad / touchscreen) and ctrl+scroll
+                // report a multiplicative delta anchored at the viewport
+                // center, mirroring the keyboard steps' percent-switch
+                // semantics.
+                let pinch = input.zoom_delta();
+                if plain && pinch != 1.0 && self.page_count() > 0 {
+                    self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
+                }
             }
             if plain && input.key_pressed(Key::T) {
                 self.cycle_theme();
@@ -2391,7 +2517,10 @@ fn filename_of(path: &Path) -> String {
 }
 
 /// Map theme tokens onto egui visuals; called whenever the theme changes.
+/// The chrome surfaces are first retinted toward the accent so a chosen
+/// accent seeps into the surrounding UI while pages stay clean.
 fn apply_theme(ctx: &egui::Context, theme: &Theme) {
+    let theme = retint(theme, theme.accent);
     let fg = color_of(theme.ui_fg);
     let accent = color_of(theme.accent);
     let selection = color_of(theme.selection);

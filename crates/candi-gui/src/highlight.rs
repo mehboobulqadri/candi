@@ -11,19 +11,25 @@ use egui::FontId;
 use egui::text::{LayoutJob, TextFormat};
 use egui_code_editor::{Syntax, Token, TokenType};
 
-/// Editor font size, matching the previous plain code editor look.
-const FONT_SIZE: f32 = 13.0;
+/// Default editor font size, matching the previous plain code editor look.
+pub(crate) const FONT_SIZE: f32 = 13.0;
 
-/// Every schema key the editor accepts; keys are the accent-colored tokens.
-const SCHEMA_KEYS: [&str; 8] = [
+/// Every word the editor highlights: the schema keys in both the nested
+/// (group + `bg`/`fg`) and legacy flat forms.
+const SCHEMA_KEYS: [&str; 13] = [
     "name",
+    "accent",
+    "selection",
+    "page",
+    "ui",
+    "panel",
+    "bg",
+    "fg",
     "page_bg",
     "page_fg",
     "ui_bg",
-    "panel_bg",
     "ui_fg",
-    "accent",
-    "selection",
+    "panel_bg",
 ];
 
 /// YAML dialect for theme buffers: `#` comments and the exact schema keys.
@@ -36,11 +42,11 @@ pub(crate) fn yaml_syntax() -> Syntax {
 /// Highlight `text` with the theme's palette: schema keys and numbers take
 /// the accent, comments fall back to a muted foreground, everything else to
 /// the plain foreground.
-pub(crate) fn yaml_job(text: &str, theme: &Theme) -> LayoutJob {
+pub(crate) fn yaml_job(text: &str, theme: &Theme, font_size: f32) -> LayoutJob {
     let accent = color_of(theme.accent);
     let fg = color_of(theme.ui_fg);
     let muted = fg.gamma_multiply(0.55);
-    let font = FontId::monospace(FONT_SIZE);
+    let font = FontId::monospace(font_size);
 
     let mut job = LayoutJob::default();
     for token in Token::default().tokens(&yaml_syntax(), text) {
