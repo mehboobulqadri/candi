@@ -559,11 +559,10 @@ fn migrate_document(document: &serde_json::Value) -> Option<serde_json::Value> {
     let object = document.as_object()?;
     let version = object
         .get("schema_version")
-        .and_then(serde_json::Value::as_u64);
-    if version.is_none_or(|v| v >= DEFAULTS_SCHEMA_VERSION) {
+        .and_then(serde_json::Value::as_u64)?;
+    if version >= DEFAULTS_SCHEMA_VERSION {
         return None;
     }
-    let version = version.unwrap_or(0);
     let mut healed = object.clone();
     for &(superseded_in, name, legacy) in LEGACY_DEFAULTS {
         if version >= superseded_in {

@@ -77,6 +77,18 @@ const RETRY_BACKOFFS: [Duration; 3] = [
 const TOAST_HOLD: Duration = Duration::from_millis(700);
 /// then a linear fade over this long.
 const TOAST_FADE: Duration = Duration::from_millis(200);
+/// Banner when the reading-position sidecar failed to parse: the fresh
+/// session must not silently replace the unreadable file, so saves stay
+/// blocked until the reader engages with the document.
+const SESSION_CORRUPT_BANNER: &str = "Reading-position file corrupt — started fresh (your previous file is preserved until you navigate)";
+/// Custom theme files larger than this are rejected before reading.
+const MAX_THEME_BYTES: u64 = 256 * 1024;
+
+/// A theme file above the cap is rejected unread: a pathological file must
+/// not be slurped into a String on startup.
+fn oversized_theme(size: u64) -> bool {
+    size > MAX_THEME_BYTES
+}
 
 /// Per-page render failure ledger entry: failures so far at the current
 /// scale, when the next automatic retry fires — `None` once the backoffs
@@ -292,6 +304,10 @@ pub struct ReaderApp {
     filename: String,
     document: Option<Arc<dyn Document>>,
     session: SessionState,
+    /// The sidecar failed to parse at open: automatic saves stay blocked
+    /// (see [`Self::note_engagement`]) so the fresh session cannot destroy
+    /// the unreadable file before the reader actually engages.
+    session_corrupt: bool,
     theme: Theme,
     /// Name of the theme whose visuals were last pushed into egui.
     applied_theme: String,
@@ -390,6 +406,9 @@ pub struct ReaderApp {
     /// Custom themes loaded from `<config>/themes/*.yaml`, sorted by name;
     /// each entry keeps its backing file for deletion.
     custom_themes: Vec<(Theme, PathBuf)>,
+    /// Inline status for theme-registry actions (delete failures); shown
+    /// under the My Themes list until the next action replaces it.
+    theme_status: Option<String>,
     /// Live theme editor; `Some` while the center pane shows it.
     editor: Option<ThemeEditor>,
 
@@ -443,6 +462,7 @@ impl ReaderApp {
             filename: String::new(),
             document: None,
             session: SessionState::new(1),
+            session_corrupt: false,
             theme: Self::startup_theme(&config, &custom_themes),
             applied_theme: String::new(),
             config,
@@ -491,6 +511,7 @@ impl ReaderApp {
             shortcut_filter: String::new(),
             keybinds: Keybinds::load_or_init(config_dir().as_deref()),
             custom_themes,
+            theme_status: None,
             editor: None,
             restore_frac: None,
             pending_scroll: None,
@@ -600,14 +621,17 @@ impl ReaderApp {
     fn open_path(&mut self, path: PathBuf) {
         self.error = None;
         self.cancel_search();
-        self.search_query.clear();
-        self.highlight = None;
-        self.renaming = None;
-        self.rename_buffer.clear();
-        self.rename_focus = false;
-        self.toc_rows.clear();
         match open_session(&path, self.backend) {
             Ok(opened) => {
+                // A successful open rebuilds every doc-scoped surface from
+                // the new document; a failed open leaves the previous one
+                // exactly as it was.
+                self.search_query.clear();
+                self.highlight = None;
+                self.renaming = None;
+                self.rename_buffer.clear();
+                self.rename_focus = false;
+                self.toc_rows.clear();
                 self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
                 self.pending.clear();
                 self.failed.clear();
@@ -629,6 +653,10 @@ impl ReaderApp {
 
                 let theme_name = opened.session.theme.clone();
                 self.session = opened.session;
+                self.session_corrupt = opened.warning.is_some();
+                if self.session_corrupt {
+                    self.error = Some(SESSION_CORRUPT_BANNER.to_owned());
+                }
                 self.set_theme(&theme_name);
                 self.path = Some(path.clone());
                 self.filename = filename_of(&path);
@@ -688,6 +716,16 @@ impl ReaderApp {
             .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("yaml")))
             .filter_map(|path| {
                 let stem = path.file_stem()?.to_str()?.to_owned();
+                if let Ok(meta) = fs::metadata(&path)
+                    && oversized_theme(meta.len())
+                {
+                    eprintln!(
+                        "candi: skipping custom theme {}: larger than {} KiB",
+                        path.display(),
+                        MAX_THEME_BYTES / 1024
+                    );
+                    return None;
+                }
                 let source = match fs::read_to_string(&path) {
                     Ok(source) => source,
                     Err(err) => {
@@ -743,19 +781,28 @@ impl ReaderApp {
     }
 
     /// Delete a custom theme's file and registry entry; deleting the active
-    /// theme falls back to Dark safely via [`Self::set_theme`].
+    /// theme falls back to Dark safely via [`Self::set_theme`]. A failed
+    /// deletion keeps the entry and reports inline — the theme must stay
+    /// usable when only its backing file is gone.
     fn delete_custom_theme(&mut self, name: &str) {
-        if let Some((_, path)) = self
+        let Some((_, path)) = self
             .custom_themes
             .iter()
             .find(|(theme, _)| theme.name == name)
-            && let Err(err) = fs::remove_file(path)
-        {
-            eprintln!("candi: deleting custom theme {name:?}: {err}");
-        }
-        self.custom_themes.retain(|(theme, _)| theme.name != name);
-        if self.theme.name == name {
-            self.set_theme(DEFAULT_THEME);
+        else {
+            return;
+        };
+        match fs::remove_file(path) {
+            Ok(()) => {
+                self.custom_themes.retain(|(theme, _)| theme.name != name);
+                if self.theme.name == name {
+                    self.set_theme(DEFAULT_THEME);
+                }
+                self.theme_status = None;
+            }
+            Err(err) => {
+                self.theme_status = Some(format!("Deleting {name:?} failed: {err}"));
+            }
         }
     }
 
@@ -853,11 +900,20 @@ impl ReaderApp {
         self.document.as_ref().map_or(0, |doc| doc.page_count())
     }
 
+    /// Genuine reader engagement — navigating, bookmarking, zooming, or
+    /// switching the flow. Authorizes overwriting a corrupt sidecar on
+    /// later automatic saves; until then the fresh session is never
+    /// written over the unreadable file.
+    fn note_engagement(&mut self) {
+        self.session_corrupt = false;
+    }
+
     fn goto_page(&mut self, page: usize, dest_top: Option<f32>) {
         let count = self.page_count();
         if count == 0 {
             return;
         }
+        self.note_engagement();
         let page = page.min(count - 1);
         self.session.page = page;
         // An explicit jump is more specific than any pending relayout anchor.
@@ -884,6 +940,7 @@ impl ReaderApp {
     /// Switch to percent zoom at `percent`, keeping the viewport-center
     /// content pinned across the relayout.
     fn set_zoom_percent(&mut self, percent: f32) {
+        self.note_engagement();
         self.fit_page = false;
         self.record_center_anchor();
         self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(percent));
@@ -895,6 +952,7 @@ impl ReaderApp {
 
     /// Leave any percent zoom and refit the document to the window width.
     fn zoom_fit_width(&mut self) {
+        self.note_engagement();
         self.fit_page = false;
         self.record_center_anchor();
         self.session.zoom = ZoomMode::FitWidth;
@@ -905,6 +963,7 @@ impl ReaderApp {
     /// flow's row-first page — spread pages share one row band, so the
     /// offset is identical while toggling back keeps the same primary page.
     fn set_flow(&mut self, flow: Flow) {
+        self.note_engagement();
         self.record_center_anchor();
         if let Some((page, _)) = self.scroll_anchor.as_mut() {
             *page -= *page % layout::pages_per_row(flow);
@@ -924,6 +983,9 @@ impl ReaderApp {
     }
 
     fn save_state(&mut self) {
+        if self.session_corrupt {
+            return;
+        }
         let Some(path) = self.path.as_deref() else {
             return;
         };
@@ -2180,6 +2242,7 @@ impl ReaderApp {
         }
         let fg = color_of(self.theme.ui_fg);
         if ui.button("Add bookmark").clicked() {
+            self.note_engagement();
             self.session.add_bookmark(self.session.page);
         }
         if self.session.bookmarks.is_empty() {
@@ -2492,6 +2555,9 @@ impl ReaderApp {
                                 },
                             );
                         });
+                    }
+                    if let Some(status) = &self.theme_status {
+                        ui.label(egui::RichText::new(status).weak().small());
                     }
                     ui.separator();
                     if ui.selectable_label(false, "Edit Config (YAML)…").clicked() {
@@ -2890,6 +2956,7 @@ impl ReaderApp {
                     }
                     Action::CycleTheme if keyboard_free => self.cycle_theme(),
                     Action::Bookmark if keyboard_free && self.page_count() > 0 => {
+                        self.note_engagement();
                         self.session.toggle_bookmark(self.session.page);
                     }
                     Action::Quit if keyboard_free => {
@@ -3504,6 +3571,9 @@ impl eframe::App for ReaderApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.session_corrupt {
+            return;
+        }
         if let Some(path) = self.path.as_deref()
             && let Err(err) = save_session(path, &self.session)
         {
@@ -3519,14 +3589,15 @@ mod tests {
 
     use candi_pdf::Backend as _;
     use candi_pdf::stub::StubBackend;
+    use eframe::App as _;
 
     fn builtin_theme(name: &str) -> Theme {
         builtin(name).unwrap_or_else(|| panic!("{name} must exist"))
     }
 
-    fn theme_dir(label: &str) -> PathBuf {
+    fn test_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "candi-themes-test-{label}-{}-{}",
+            "candi-gui-test-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -3536,6 +3607,194 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A bare app with no config persistence (`config_path: None`) so tests
+    /// never touch the developer's real config.
+    fn test_app(backend: BackendKind) -> ReaderApp {
+        ReaderApp {
+            backend,
+            path: None,
+            filename: String::new(),
+            document: None,
+            session: SessionState::new(1),
+            session_corrupt: false,
+            theme: builtin_theme(DEFAULT_THEME),
+            applied_theme: String::new(),
+            config: Prefs::default(),
+            config_path: None,
+            cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
+            pipeline: None,
+            pending: HashSet::new(),
+            failed: HashMap::new(),
+            failed_scale_q: 0,
+            textures: HashMap::new(),
+            icons: IconRender::default(),
+            layout: Layout::default(),
+            layout_key: None,
+            page_sizes: Vec::new(),
+            zoom_pct: layout::MIN_ZOOM_PERCENT,
+            fit_page: false,
+            flow: Flow::Continuous,
+            canvas_center_y: 0.0,
+            scroll_anchor: None,
+            debug_relayout: None,
+            debug_picker: false,
+            sidebar_open: false,
+            section: SidebarSection::Contents,
+            focus: FocusGuard::default(),
+            toast: None,
+            toc_follow: None,
+            ui_scale: 1.0,
+            base_ppp: 1.0,
+            focus_search: false,
+            focus_mode: false,
+            page_jump: None,
+            page_jump_focus: false,
+            renaming: None,
+            rename_buffer: String::new(),
+            rename_focus: false,
+            jump_invalid: false,
+            search_query: String::new(),
+            search_hits: None,
+            search_job: None,
+            dialog_result: None,
+            highlight: None,
+            toc_rows: Vec::new(),
+            about_open: false,
+            info_open: false,
+            shortcuts_open: false,
+            shortcut_filter: String::new(),
+            keybinds: Keybinds::load_or_init(None),
+            custom_themes: Vec::new(),
+            theme_status: None,
+            editor: None,
+            restore_frac: None,
+            pending_scroll: None,
+            primed: true,
+            error: None,
+        }
+    }
+
+    fn fixture_copy(name: &str, dir: &Path, file_name: &str) -> PathBuf {
+        let pdf = dir.join(file_name);
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../candi-pdf/tests/fixtures")
+                .join(name),
+            &pdf,
+        )
+        .unwrap();
+        pdf
+    }
+
+    #[test]
+    fn corrupt_sidecar_blocks_saving_until_engagement() {
+        let dir = test_dir("corrupt-sidecar");
+        let pdf = fixture_copy("tiny.pdf", &dir, "tiny.pdf");
+        let sidecar = dir.join("tiny.pdf.candi.toml");
+        let corrupt = "not valid {{{ toml";
+        fs::write(&sidecar, corrupt).unwrap();
+
+        let mut app = test_app(BackendKind::Mupdf);
+        app.open_path(pdf.clone());
+        assert!(app.session_corrupt, "the corrupt load must set the flag");
+        assert_eq!(app.error.as_deref(), Some(SESSION_CORRUPT_BANNER));
+
+        app.on_exit(None);
+        assert_eq!(
+            fs::read_to_string(&sidecar).unwrap(),
+            corrupt,
+            "no save while the flag is set"
+        );
+
+        app.goto_page(1, None);
+        assert!(!app.session_corrupt, "navigation is genuine engagement");
+        app.on_exit(None);
+        assert_ne!(
+            fs::read_to_string(&sidecar).unwrap(),
+            corrupt,
+            "engagement authorizes the save"
+        );
+        match candi_core::load_session(&pdf) {
+            // tiny.pdf is single-page: the requested page 1 clamps to 0.
+            Ok(candi_core::SessionLoad::Loaded(session)) => assert_eq!(session.page, 0),
+            other => panic!("expected a saved session, got {other:?}"),
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_open_preserves_the_previous_sidebar() {
+        let mut app = test_app(BackendKind::Mupdf);
+        app.toc_rows = vec![TocRow {
+            title: "Chapter".into(),
+            page: 1,
+            dest_top: Some(0.0),
+            depth: 0,
+        }];
+        app.open_path(test_dir("failed-open").join("missing.pdf"));
+        assert!(
+            !app.toc_rows.is_empty(),
+            "a failed open must not gut the live document's sidebar"
+        );
+        assert!(app.error.is_some());
+    }
+
+    #[test]
+    fn failed_theme_delete_keeps_the_registry_entry() {
+        let mut app = test_app(BackendKind::Mupdf);
+        let mut theme = builtin_theme("Dark");
+        theme.name = "Ghost".into();
+        let gone = test_dir("theme-delete").join("Ghost.yaml");
+        app.custom_themes.push((theme.clone(), gone));
+        app.delete_custom_theme("Ghost");
+        assert_eq!(
+            app.custom_themes.len(),
+            1,
+            "a failed delete keeps the entry"
+        );
+        assert!(
+            app.theme_status.is_some(),
+            "the failure must surface inline"
+        );
+
+        // A real file deletes cleanly, clears the status, and falls back
+        // when the deleted theme was active.
+        let dir = test_dir("theme-delete-ok");
+        let mut real = builtin_theme("Dark");
+        real.name = "Real".into();
+        write_file_atomically(&dir.join("Real.yaml"), &to_yaml(&real)).unwrap();
+        app.custom_themes
+            .push((real.clone(), dir.join("Real.yaml")));
+        app.theme = real;
+        app.delete_custom_theme("Real");
+        assert_eq!(app.custom_themes.len(), 1);
+        assert_eq!(app.theme_status, None);
+        assert!(!dir.join("Real.yaml").exists());
+        assert_eq!(app.theme.name, DEFAULT_THEME, "active theme fell back");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn oversized_theme_files_are_skipped_unread() {
+        assert!(!oversized_theme(MAX_THEME_BYTES));
+        assert!(oversized_theme(MAX_THEME_BYTES + 1));
+
+        let dir = test_dir("oversize");
+        let mut mint = builtin_theme("Dark");
+        mint.name = "Mint".into();
+        write_file_atomically(&dir.join("Mint.yaml"), &to_yaml(&mint)).unwrap();
+        // A valid theme whose file exceeds the cap: skipped before reading,
+        // so it must not appear even though its name matches the stem.
+        let big = format!("name: Big\n{}\n", "# padding\n".repeat(30_000));
+        assert!(big.len() as u64 > MAX_THEME_BYTES);
+        write_file_atomically(&dir.join("Big.yaml"), &big).unwrap();
+
+        let loaded = ReaderApp::load_custom_themes(Some(&dir));
+        assert_eq!(loaded.len(), 1, "{loaded:?}");
+        assert_eq!(loaded[0].0.name, "Mint");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -3613,7 +3872,7 @@ mod tests {
 
     #[test]
     fn custom_theme_roundtrip_through_a_temp_dir() {
-        let dir = theme_dir("roundtrip");
+        let dir = test_dir("roundtrip");
         let mut mint = builtin_theme("Dark");
         mint.name = "Mint".into();
         write_file_atomically(&dir.join("Mint.yaml"), &to_yaml(&mint)).unwrap();
@@ -3639,7 +3898,7 @@ mod tests {
     #[test]
     fn missing_themes_dir_loads_nothing() {
         assert!(ReaderApp::load_custom_themes(None).is_empty());
-        assert!(ReaderApp::load_custom_themes(Some(&theme_dir("absent").join("ghost"))).is_empty());
+        assert!(ReaderApp::load_custom_themes(Some(&test_dir("absent").join("ghost"))).is_empty());
     }
 
     #[test]

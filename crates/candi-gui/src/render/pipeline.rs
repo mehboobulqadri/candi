@@ -78,20 +78,20 @@ fn render_isolated(document: &dyn Document, req: RenderRequest) -> RenderResult 
         },
         Err(payload) => RenderResult::Failed {
             request: req,
-            error: panic_message(&payload),
+            error: panic_message(&payload, "renderer"),
         },
     }
 }
 
 /// Best-effort payload extraction; Rust panics carry `String` or `&str`.
-fn panic_message(payload: &(dyn Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn Any + Send), context: &str) -> String {
     let detail = payload
         .downcast_ref::<String>()
         .cloned()
         .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()));
     match detail {
-        Some(detail) => format!("renderer panicked: {detail}"),
-        None => "renderer panicked".into(),
+        Some(detail) => format!("{context} panicked: {detail}"),
+        None => format!("{context} panicked"),
     }
 }
 

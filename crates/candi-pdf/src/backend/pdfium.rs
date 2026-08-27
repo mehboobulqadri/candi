@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::ptr::null_mut;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use pdfium_render::prelude::*;
 
@@ -200,9 +200,13 @@ impl Document for PdfiumPdfDocument {
                 Some(render) => unsafe {
                     render(bitmap, page_handle, 0, 0, width, height, 0, FPDF_ANNOT) != 0
                 },
-                // Unreachable whenever the dynamic library loaded at all;
-                // prefer rendering unchecked to failing every page.
-                None => true,
+                // The loaded library lacks the render entry point; painting
+                // the white fill would masquerade as a successful blank page.
+                None => {
+                    return Err(Error::Other(
+                        "FPDF_RenderPageBitmap missing from loaded libpdfium".into(),
+                    ));
+                }
             };
 
             let mut buffer = bindings.FPDFBitmap_GetBuffer_as_vec(bitmap);
@@ -409,11 +413,14 @@ fn dest_top(
     }
     let height = bindings.FPDF_GetPageHeightF(page_handle);
     bindings.FPDF_ClosePage(page_handle);
-    Some(height - y)
+    // Non-finite results (crafted destinations) must not reach the scroll math.
+    let top = height - y;
+    top.is_finite().then_some(top)
 }
 
 fn pdfium_lock() -> std::sync::MutexGuard<'static, ()> {
-    PDFIUM_OPS.lock().expect("pdfium operations mutex poisoned")
+    // The guard carries no state; a poisoned lock is still a correct barrier.
+    PDFIUM_OPS.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn shared_engine() -> Result<Arc<Pdfium>, Error> {
@@ -756,13 +763,24 @@ fn page_index(page: usize, page_count: usize) -> Result<u16, Error> {
 fn preflight_path(path: &str) -> Result<(), Error> {
     match std::fs::metadata(path) {
         Err(err) => return Err(map_io_error(err)),
-        Ok(meta) if meta.is_dir() => {
-            return Err(Error::NotFound(format!("{path} is a directory")));
-        }
-        Ok(_) => {}
+        Ok(meta) => check_path_type(path, meta)?,
     }
     if let Err(err) = std::fs::File::open(path) {
         return Err(map_io_error(err));
+    }
+    Ok(())
+}
+
+/// Reject existing paths that must not reach the `File::open` probe:
+/// directories fail with the established NotFound, and non-regular files —
+/// named pipes above all, which would block the open until a writer
+/// appears — fail outright. (Shared semantics with the MuPDF backend.)
+fn check_path_type(path: &str, meta: std::fs::Metadata) -> Result<(), Error> {
+    if meta.is_dir() {
+        return Err(Error::NotFound(format!("{path} is a directory")));
+    }
+    if !meta.is_file() {
+        return Err(Error::Other(format!("{path} is not a regular file")));
     }
     Ok(())
 }
@@ -834,5 +852,38 @@ fn map_io_error(err: io::Error) -> Error {
         io::ErrorKind::NotFound => Error::NotFound(err.to_string()),
         io::ErrorKind::PermissionDenied => Error::PermissionDenied(err.to_string()),
         _ => Error::Other(err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn preflight_rejects_named_pipes_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("candi-pdfium-fifo-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("pipe");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("mkfifo exists")
+                .success()
+        );
+        let started = Instant::now();
+        let result = preflight_path(fifo.to_str().unwrap());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "a FIFO must be rejected, not opened (which would block)"
+        );
+        match result {
+            Err(Error::Other(msg)) if msg.contains("not a regular file") => {}
+            other => panic!("expected a FIFO rejection, got {other:?}"),
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 }

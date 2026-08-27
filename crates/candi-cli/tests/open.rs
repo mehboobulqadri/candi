@@ -79,7 +79,9 @@ updated_at = "2026-08-20T12:00:00Z"
     )
     .unwrap();
 
-    let OpenSession { document, session } = open_session(&pdf, BackendKind::Mupdf).unwrap();
+    let OpenSession {
+        document, session, ..
+    } = open_session(&pdf, BackendKind::Mupdf).unwrap();
     assert_eq!(session.page, 1);
     assert_eq!(session.scroll_frac, 0.0);
     assert_eq!(session.zoom, ZoomMode::FitWidth);
@@ -113,4 +115,29 @@ fn saved_session_round_trips_through_open_session() {
 
     let opened = open_session(&pdf, BackendKind::Mupdf).unwrap();
     assert_eq!(opened.session, session);
+}
+
+#[test]
+fn corrupt_sidecar_reports_a_warning_and_a_fresh_session() {
+    let (_dir, pdf) = copied_fixture("tiny.pdf", "session-corrupt");
+    fs::write(sidecar_path(&pdf), "not valid {{{ toml").unwrap();
+
+    let opened = open_session(&pdf, BackendKind::Mupdf).unwrap();
+
+    let warning = opened.warning.expect("corruption must be reported");
+    assert!(!warning.is_empty());
+    assert_eq!(
+        opened.session,
+        SessionState::new(opened.document.page_count()),
+        "the fresh session must not carry stale data"
+    );
+}
+
+#[test]
+fn missing_sidecar_carries_no_warning() {
+    let (_dir, pdf) = copied_fixture("tiny.pdf", "session-missing");
+
+    let opened = open_session(&pdf, BackendKind::Mupdf).unwrap();
+
+    assert_eq!(opened.warning, None);
 }

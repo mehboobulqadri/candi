@@ -8,6 +8,7 @@
 //! setting `cancel` stops the scan; the thread exits after its current page
 //! at the latest.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
@@ -16,10 +17,13 @@ use std::thread;
 use candi_core::{SearchSession, normalize_reader_text};
 use candi_pdf::Document;
 
+use crate::render::pipeline::panic_message;
 use crate::sidebar::{SearchHit, extract_snippet};
 
 /// One running full-document search. Batches of hits arrive page by page in
 /// document order; [`SearchJob::poll`] drains everything finished so far.
+/// A panic in the scan is isolated like the render pipeline's: it becomes a
+/// terminal `Err` batch instead of silently ending the scan mid-document.
 pub(crate) struct SearchJob {
     rx: Receiver<Result<Vec<SearchHit>, String>>,
     /// Stops the scan promptly; the worker also stops when the UI drops the
@@ -37,7 +41,14 @@ impl SearchJob {
         let flag = Arc::clone(&cancel);
         thread::Builder::new()
             .name("candi-search".into())
-            .spawn(move || run_scan(document, query, tx, flag))
+            .spawn(move || {
+                let scan = catch_unwind(AssertUnwindSafe(|| {
+                    run_scan(Arc::clone(&document), query, tx.clone(), flag)
+                }));
+                if let Err(payload) = scan {
+                    let _ = tx.send(Err(panic_message(&payload, "search")));
+                }
+            })
             .expect("spawn candi-search worker thread");
         SearchJob {
             rx,
@@ -193,6 +204,57 @@ mod tests {
             }
             assert!(Instant::now() < deadline, "no batch arrived in time");
             thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// A document whose text extraction panics on one page mid-scan.
+    struct PanickingPageDoc {
+        pages: Vec<&'static str>,
+        panic_page: usize,
+    }
+
+    impl Document for PanickingPageDoc {
+        fn page_count(&self) -> usize {
+            self.pages.len()
+        }
+        fn page_text(&self, page: usize) -> Result<String, Error> {
+            if page == self.panic_page {
+                panic!("text boom");
+            }
+            Ok(self.pages[page].to_owned())
+        }
+        fn page_positions(&self, _page: usize) -> Result<Option<PagePositions>, Error> {
+            Ok(None)
+        }
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Other("not rendered".into()))
+        }
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn panicked_scan_ends_in_a_terminal_error_not_partial_success() {
+        let doc: Arc<dyn Document> = Arc::new(PanickingPageDoc {
+            pages: vec!["foo a", "foo b", "foo c"],
+            panic_page: 1,
+        });
+        let mut job = SearchJob::spawn(doc, "foo".into());
+        let all = drain(&mut job);
+        assert!(
+            all[..all.len() - 1].iter().all(|batch| batch.is_ok()),
+            "hits that landed before the panic still stream: {all:?}"
+        );
+        match all.last() {
+            Some(Err(err)) => assert!(err.contains("panicked"), "{err}"),
+            other => panic!("expected a terminal error batch, got {other:?}"),
         }
     }
 
