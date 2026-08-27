@@ -3,6 +3,8 @@ name = "candi-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Clean, minimal, distraction-free PDF reader"
+repository = "https://github.com/mehboobulqadri/candi"
 
 [[bin]]
 name = "candi"

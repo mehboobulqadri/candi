@@ -31,33 +31,46 @@ dogfood, tag, `main` — need explicit user authorization).
 Shared open/resume/sidecar logic lives in the `candi-cli` library crate, wired by the GUI
 frontend.
 
-## Building from source (Arch-based)
+## Installing
+
+Three paths. All need the repo to be public — downloads, `cargo install --git`,
+and clones 404 while it is private.
+
+### Download (easiest)
+
+Grab `candi-<ver>-x86_64-linux-gnu.tar.gz` and its `.sha256` sidecar from the
+[Releases](https://github.com/mehboobulqadri/candi/releases) page:
 
 ```bash
-sudo pacman -S --needed rust clang fontconfig pkg-config
-cargo build --release
+sha256sum -c candi-<ver>-x86_64-linux-gnu.tar.gz.sha256
+tar -xzf candi-<ver>-x86_64-linux-gnu.tar.gz
+cd candi-<ver>-x86_64-linux-gnu
+./install.sh   # installs binary, desktop entry, icons to ~/.local (override: PREFIX=/usr ./install.sh)
 ```
 
-`clang` is needed at build time only, to compile `mupdf-sys`'s bundled copy of MuPDF's C
-sources (statically linked — no system `mupdf` package is used); it is not a runtime
-dependency. `fontconfig` and `pkg-config` satisfy its Linux link requirements.
+Or skip the installer: `install -Dm0755 candi ~/.local/bin/candi`.
 
-This produces:
-
-| Binary | Run |
-|---|---|
-| `target/release/candi` | the GUI |
-
-No prebuilt PDFium download is needed for a source build (MuPDF is the default backend);
-the optional permissive PDFium build is described in
-[docs/architecture.md](docs/architecture.md). Desktop entries can point at `candi` —
-set `StartupWMClass=candi` so the window groups correctly.
-
-Or install straight from a clone:
+### cargo install
 
 ```bash
-cargo install --path crates/candi-gui   # binary: candi
+cargo install --git https://github.com/mehboobulqadri/candi.git --tag v0.1.1 --locked --bin candi
 ```
+
+Requires Rust stable and `clang` — MuPDF's bundled C sources compile at build
+time (statically linked; not a runtime dependency).
+
+### From source
+
+```bash
+git clone https://github.com/mehboobulqadri/candi
+cd candi
+cargo install --path crates/candi-gui --locked
+```
+
+If `~/.local/bin` is not on your `PATH`, add it, then run `candi book.pdf`.
+
+AUR package planned (deferred until multi-OS packaging); `packaging/` already
+contains a validated PKGBUILD.
 
 ## Roadmap
 
@@ -69,7 +82,7 @@ releases. Full rules and details: [docs/roadmap.md](docs/roadmap.md).
 - **v0.2** — EPUB & other formats, password-locked PDFs, optimizations/cleanup.
 - **v0.3** — multi-OS (Windows, other Linux distros), deployments.
 - **v0.4** — GitHub documentation site + cleaning.
-- **v0.5** — AUR/Debian packaging + CI.
+- **v0.5** — Debian packaging + CI (AUR deferred until after multi-OS).
 - **v0.6** — Android (beta), Android UI optimization, CI.
 
 ## Project documents

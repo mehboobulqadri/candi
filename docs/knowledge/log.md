@@ -359,3 +359,84 @@ Format per entry:
   dependabot PR #1 closed w/ comment, manual consolidated checkout bump
   planned post-merge); `/tmp` tmpfs 7.7G overflows Rust target dirs → use
   `/mnt/personal/tmp` (SIGBUS ×2 sessions).
+
+## 2026-08-28 (GUI-only pivot)
+
+- **Decision/Issue:** Public surfaces pivoted GUI-only (`754d73d`) —
+  README, `docs/roadmap.md`, PKGBUILD, `.SRCINFO`, `AUR.md` de-advertise
+  `candi-tui`.
+- **Why:** User intent: v0.1.0 ships the `candi` GUI reader; the TUI is
+  internal and must not be publicly promised.
+- **Changed:** Docs/packaging rewritten. Incident: the user hand-edited
+  `packaging/.SRCINFO` pkgdesc and an agent git-restored the file as
+  anomalous, losing the edit. Rule: NEVER silent-restore an unexpected
+  working-tree change — ask the user or match stated intent first
+  (memory 2026-08-28).
+
+## 2026-08-28 (icon branding)
+
+- **Decision/Issue:** Icon branding adopted (`ce4486b`): rounded
+  21%-radius multi-res hicolor set (16–512) for packaging/desktop +
+  embedded 256px window icon.
+- **Why:** Product identity across desktop entry, AUR package, and window
+  chrome.
+- **Changed:** hicolor size set + desktop icon, embedded PNG via
+  `image 0.25` with png-only feature.
+
+## 2026-08-28 (dogfood batch — 19 issues fixed in c507c15)
+
+- **Decision/Issue:** Dogfood surfaced 19 issues; all root-caused and
+  fixed in `c507c15`.
+- **Why (root causes):** keybinds editor focus-steal (egui TextEdit never
+  blurs on outside click) + stale v1 seeds → FocusGuard +
+  `DEFAULTS_SCHEMA_VERSION` 2 migration healing; render state machine had
+  3 leak paths → FailState ledger with 250ms→1s→4s backoff +
+  click-to-retry + stale-scale pruning; TOC jumps wrong (MuPDF XYZ top /
+  PDFium `FPDFDest_GetLocationInPage` + y-flip) + accent same-page
+  boundary → `dest_top` end-to-end + `toc_follow` clicked-row preference;
+  ANR-class stalls = sync search + blocking rfd dialog → async
+  `SearchSession::step` worker (mpsc + AtomicBool) + non-blocking
+  single-flight dialog; startup detoured through pick_pdf → straight to
+  welcome.
+- **Changed:** `c507c15`; page toast 700ms/200ms. Pinch-zoom deferred:
+  winit has NO Linux pointer-gesture support (Wayland
+  `zwp_pointer_gestures` side-channel possible; Ctrl+scroll works and is
+  noted in the shortcuts window) — v0.1.1 backlog.
+
+## 2026-08-28 (review battery + hardening 8960d1a)
+
+- **Decision/Issue:** Pre-tag review battery: independent round-2
+  worktree review PASS; security FIX-THEN-PASS; silent-failure-hunter
+  PASS.
+- **Why:** Security found 1 MED crash-DoS (unbounded outline recursion →
+  depth cap 64, MuPDF parity) plus LOWs (fixed or deferred);
+  silent-failure found H1 data-loss (corrupt-sidecar save path) + 4 MEDs.
+- **Changed:** Hardening commit `8960d1a`: outline depth cap 64,
+  corrupt-sidecar `session_corrupt` flag + banner, failed-open-over
+  preserves sidebar, search `catch_unwind`, theme-delete keeps entry on
+  failure, PDFium missing-render-symbol → error, `dest_top` is_finite
+  guards, FIFO preflight `is_file`, PoisonError recovery, theme YAML
+  256 KiB cap, dead-code nit. All fixes verified by gates.
+
+## 2026-08-28 (main/dev divergence at release)
+
+- **Decision/Issue:** `main` had diverged from `dev` when the release
+  merge ran; reconciled at `dev`→`main` merge `8995b64`.
+- **Why:** The release-flow precondition (main must be ancestor of dev, or
+  divergence reconciled) was checked only at merge-2, not merge-1 — cost
+  one aborted merge cycle (clean abort, but late).
+- **Changed:** Doc conflicts resolved: `log.md`/`progress.md` UNIONED both
+  eras (phase-00 records kept); `handoff.md`/`status.md` took `dev`.
+  Lesson: check preconditions BEFORE merge-1 (memory 2026-08-28).
+
+## 2026-08-28 (v0.1.0 cut + private-repo blocker)
+
+- **Decision/Issue:** v0.1.0 cut: PR #21 merged into `dev` (`f864a15`),
+  `dev`→`main` `8995b64`, annotated tag `v0.1.0` pushed (→ `8995b64`).
+- **Why:** First release per `docs/roadmap.md`; tag must be the literal
+  `v0.1.0` (PKGBUILD source URL depends on it).
+- **Changed:** Blocker discovered — repo is PRIVATE, so the tag-tarball
+  source URL 404s anonymously; AUR push blocked until the user flips
+  visibility public. AUR one-time prep + day-of steps handed to the user.
+  Lesson: check `gh repo view` visibility before promising AUR readiness
+  (memory 2026-08-28).
