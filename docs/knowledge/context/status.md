@@ -4,31 +4,28 @@ Always-on context. Loaded automatically at session start — keep it SMALL (unde
 
 ## Project
 
-Candi — minimal document reader (TUI + GUI text) on a shared Rust core; dual PDF
-backends (MuPDF default, PDFium permissive).
+Candi — minimal document reader (GUI text) on a shared Rust core; dual PDF
+backends (MuPDF default, PDFium permissive). TUI (`candi-tui`) is internal.
 
 ## Current focus
 
-**v0.1.0 candidate complete** on `slice/02-01-gui-reader` (HEAD `b06ff39`, 8 commits
-local/unpushed): reader + polish + editable keybinds/themes/prefs + corrected docs +
-`docs/roadmap.md` + AUR packaging + real-book benches (gate passes ~3.4× headroom).
-Gates green; targeted re-review verdict pending. Next: user stop-gates — dogfood →
-tag `v0.1.0` (literal; PKGBUILD URL) → PR to `dev` → `dev`→`main`.
+**v0.1.0 SHIPPED** — tag `v0.1.0` on `main` (`8995b64`); `dev` at `f864a15`
+(PR #21). Next: repo visibility → public (user) → AUR push (blocked until
+public); then post-release fixes `v0.1.1` on `dev` (backlog in
+`docs/knowledge/handoff.md`).
 
 ## Active constraints
 
-- **Stop-gates:** dogfood, tag, `main` merge — explicit user authorization required.
-- **Versioning:** majors `v0.x` land on main; post-release fixes `v0.x.y`; features
-  go to `dev`; new feature branches only AFTER each cut (`docs/roadmap.md`).
-- **Platforms:** Linux dogfood; Windows CI deferred (Linux-only matrix).
-- **Entry points:** `candi-tui book.pdf`; `candi [book.pdf] [--backend …]`.
-- **Hooks/env:** `candi-cli` internal lib; `CANDI_NO_GUI=1` test hook;
-  `CANDI_UI_DEBUG=1` ui-capture hook; config in `$XDG_CONFIG_HOME/candi/`.
-- **RSS budget:** gate **`reader_peak`** only (full_pass recorded, not gated).
-- **Build hygiene:** big debug/test target dirs belong on `/mnt/personal/tmp`, not
-  `/tmp` tmpfs.
+- **Versioning:** post-release fixes `v0.1.x` on `dev`; features only after
+  the v0.1.1 cut; tags land on `main` (`docs/roadmap.md`).
+- **AUR blocker:** repo PRIVATE → PKGBUILD tag-tarball URL 404s; flip public first.
+- **Entry:** `candi [book.pdf] [--backend …]`; hooks `CANDI_NO_GUI=1`, `CANDI_UI_DEBUG=1`; config in `$XDG_CONFIG_HOME/candi/`.
+- Tests/benches: `PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` (DIRECTORY);
+  big target dirs on `/mnt/personal/tmp`, never `/tmp` tmpfs.
+- **`creds.yml` is NEVER read** (gitignored secrets; use git grep/excludes).
+- RSS gate: `reader_peak` only (full_pass recorded, not gated).
 
 ## Stack
 
-Rust 1.97.1, MuPDF 0.8.0, PDFium `pdfium-render 0.8.37`, ratatui 0.30.2, egui 0.30,
-serde_json/serde_yaml, GitHub Actions + cargo-deny.
+Rust 1.97.1, MuPDF 0.8.0, PDFium `pdfium-render 0.8.37`, ratatui 0.30.2,
+egui 0.30, serde_json/serde_yaml, GitHub Actions + cargo-deny.

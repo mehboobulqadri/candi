@@ -1,0 +1,80 @@
+# Tag-triggered prebuilt release. One tarball per tag: the default-feature
+# (MuPDF) binary built on ubuntu-22.04 — its glibc 2.35 baseline maximizes
+# compatibility with older distros (Arch runs it unmodified; runtime deps are
+# glibc, fontconfig/freetype, libx11/libxkbcommon, wayland). PDFium is not
+# built: that backend is runtime-dlopened and optional, so no PDFIUM_LIB here.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # Manual rebuilds: dispatch on a tag ref so GITHUB_REF_NAME is the tag.
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # mupdf-sys' bundled MuPDF compiles C sources with clang and resolves
+      # fontconfig through pkg-config (yeslogic-fontconfig-sys .pc lookup).
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang pkg-config libfontconfig1-dev
+
+      # Toolchain comes from rust-toolchain.toml; rustup on the runner picks it up.
+      - name: Build release binary
+        run: RUSTFLAGS='-C debuginfo=0' cargo build --locked --release --bin candi
+
+      # No debug symbols in the shipped binary, smaller download.
+      - name: Strip binary
+        run: strip target/release/candi
+
+      - name: Assemble dist directory
+        run: |
+          set -euo pipefail
+          # Tag push: strip the leading v. Manual dispatch on a branch ref
+          # falls back to the workspace version.
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$version" = "$GITHUB_REF_NAME" ]; then
+            version="$(awk -F'"' '/^version = /{print $2; exit}' Cargo.toml)"
+          fi
+          dist="candi-${version}-x86_64-linux-gnu"
+          mkdir -p "dist/$dist/icons"
+          cp target/release/candi "dist/$dist/candi"
+          cp packaging/install.sh packaging/candi.desktop "dist/$dist/"
+          chmod +x "dist/$dist/install.sh"
+          cp packaging/icons/candi-*.png "dist/$dist/icons/"
+          cat > "dist/$dist/INSTALL.md" <<'EOF'
+          # Installing candi
+
+          1. Installer (easiest): `./install.sh` — puts the binary, desktop
+             entry, and icons under `~/.local` (override with
+             `PREFIX=/usr ./install.sh`).
+          2. Manual: `install -Dm0755 candi ~/.local/bin/candi`.
+          3. Desktop entry: the installer registers `candi.desktop` and icons
+             into `$PREFIX/share` (menu entry + PDF association); for the
+             manual path, copy `candi.desktop` to `~/.local/share/applications/`.
+
+          If `~/.local/bin` is not on your `PATH`, add it, then run `candi book.pdf`.
+          EOF
+          tar -czf "dist/$dist.tar.gz" -C dist "$dist"
+          (cd dist && sha256sum "$dist.tar.gz" > "$dist.tar.gz.sha256")
+
+      - name: Publish release artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: a re-run on the same tag uploads over the existing release.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 \
+              --verify-tag --title "candi $GITHUB_REF_NAME" --generate-notes
+          fi
