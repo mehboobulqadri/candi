@@ -63,8 +63,11 @@ jobs:
 
           If `~/.local/bin` is not on your `PATH`, add it, then run `candi book.pdf`.
           EOF
+          # Two archive formats, checksums for both.
           tar -czf "dist/$dist.tar.gz" -C dist "$dist"
-          (cd dist && sha256sum "$dist.tar.gz" > "$dist.tar.gz.sha256")
+          (cd dist && zip -qr "$dist.zip" "$dist")
+          (cd dist && sha256sum "$dist.tar.gz" > "$dist.tar.gz.sha256" \
+            && sha256sum "$dist.zip" > "$dist.zip.sha256")
 
       - name: Publish release artifacts
         env:
@@ -73,8 +76,8 @@ jobs:
           set -euo pipefail
           # Idempotent: a re-run on the same tag uploads over the existing release.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --clobber
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 \
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.sha256 \
               --verify-tag --title "candi $GITHUB_REF_NAME" --generate-notes
           fi
