@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 mod app;
+mod highlight;
+mod icons;
+mod keybinds;
+mod render;
+mod search;
+mod sidebar;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use candi_cli::{open_document, parse_backend, save_reading_position};
 use clap::Parser;
+use eframe::egui;
 
 use app::ReaderApp;
 
@@ -38,7 +45,10 @@ fn main() -> ExitCode {
         return run_headless(args);
     }
 
-    let initial = args.file.as_deref().map(PathBuf::from).or_else(pick_pdf);
+    // No CLI path opens straight to the welcome state — a native picker
+    // dialog must never block before the window exists (design §19). The
+    // in-app Open action spawns the picker off-thread instead.
+    let initial = args.file.as_deref().map(PathBuf::from);
     let backend = match parse_backend(&args.backend) {
         Ok(kind) => kind,
         Err(err) => {
@@ -47,7 +57,15 @@ fn main() -> ExitCode {
         }
     };
 
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_app_id("candi")
+            .with_decorations(false)
+            .with_inner_size([1280.0, 800.0])
+            .with_min_inner_size([640.0, 400.0])
+            .with_icon(window_icon()),
+        ..Default::default()
+    };
     if let Err(err) = eframe::run_native(
         "Candi",
         options,
@@ -90,8 +108,19 @@ fn run_headless(args: Args) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn pick_pdf() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("PDF", &["pdf"])
-        .pick_file()
+fn window_icon() -> egui::IconData {
+    let png = include_bytes!("../assets/icon-256.png");
+    let img = image::load_from_memory(png).expect("bundled assets/icon-256.png is a valid PNG");
+    let rgba = img.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    egui::IconData {
+        width,
+        height,
+        rgba: rgba.into_raw(),
+    }
+}
+
+/// The single PDF file-picker construction shared by all open entry points.
+pub(crate) fn pdf_dialog() -> rfd::FileDialog {
+    rfd::FileDialog::new().add_filter("PDF", &["pdf"])
 }

@@ -2,21 +2,68 @@
 
 //! PDFium engine behind the `pdfium-backend` feature.
 
+use std::collections::HashSet;
 use std::io;
+use std::path::PathBuf;
 use std::ptr::null_mut;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use pdfium_render::prelude::*;
 
-use crate::{Backend, Block, Document, Error, Line, PagePositions, Word};
+use crate::{Backend, Block, Document, Error, Line, PageImage, PagePositions, TocItem, Word};
 
 const ZERO_PAGE_MALFORMED: &str = "truncated or empty document";
 const FPDF_ERR_FILE: u32 = 2;
 const FPDF_ERR_FORMAT: u32 = 3;
 const FPDF_ERR_PASSWORD: u32 = 4;
+/// Render annotations; matches pdfium-render's default `PdfRenderConfig`.
+const FPDF_ANNOT: std::ffi::c_int = 1;
+const OPAQUE_WHITE: std::ffi::c_ulong = 0xFFFF_FFFF;
 
 static ENGINE: OnceLock<Result<Arc<Pdfium>, Error>> = OnceLock::new();
 static PDFIUM_OPS: Mutex<()> = Mutex::new(());
+
+/// Raw `FPDF_RenderPageBitmap` signature. pdfium-render's typed binding
+/// declares the C function as returning unit, discarding its `FPDF_BOOL`
+/// success flag, so failures would surface as silent blank-white images.
+type RawRenderFn = unsafe extern "C" fn(
+    FPDF_BITMAP,
+    FPDF_PAGE,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+    std::ffi::c_int,
+) -> std::ffi::c_int;
+
+/// Resolve the pdfium library path the same way [`Pdfium::bind_to_library`]
+/// callers here do: `PDFIUM_LIB`, then the executable's directory.
+fn resolve_pdfium_lib() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("PDFIUM_LIB") {
+        let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
+        if lib.exists() {
+            return Some(lib);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let lib = Pdfium::pdfium_platform_library_name_at_path(exe.parent()?);
+    lib.exists().then_some(lib)
+}
+
+/// Bind the raw symbol straight from the library. The temporary
+/// [`libloading::Library`] is dropped on purpose: pdfium-render keeps its own
+/// reference to the same file for as long as the engine lives, so the mapping
+/// (and the pointer) stays valid.
+fn raw_render_fn() -> Option<RawRenderFn> {
+    static RAW: OnceLock<Option<RawRenderFn>> = OnceLock::new();
+    *RAW.get_or_init(|| {
+        let library = unsafe { libloading::Library::new(resolve_pdfium_lib()?) }.ok()?;
+        unsafe { library.get(b"FPDF_RenderPageBitmap") }
+            .ok()
+            .map(|symbol| *symbol)
+    })
+}
 
 /// PDFium-backed document engine.
 #[derive(Debug, Default)]
@@ -115,10 +162,265 @@ impl Document for PdfiumPdfDocument {
         })
         .map(Some)
     }
+
+    fn page_size(&self, page: usize) -> Result<(f32, f32), Error> {
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            Ok((
+                bindings.FPDF_GetPageWidthF(page_handle),
+                bindings.FPDF_GetPageHeightF(page_handle),
+            ))
+        })
+    }
+
+    // `FPDFBitmap_Create` always yields a 4-bytes-per-pixel BGRx/BGRA buffer
+    // (see the pdfium-render bindings docs), so normalization to RGBA is a
+    // channel swap plus forced opacity.
+    fn render_page(&self, page: usize, scale: f32) -> Result<PageImage, Error> {
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            let width_pt = bindings.FPDF_GetPageWidthF(page_handle);
+            let height_pt = bindings.FPDF_GetPageHeightF(page_handle);
+            let width = (width_pt * scale).round() as i32;
+            let height = (height_pt * scale).round() as i32;
+
+            let bitmap = bindings.FPDFBitmap_Create(width, height, 0);
+            if bitmap.is_null() {
+                return Err(Error::Other(format!(
+                    "could not allocate {width}x{height} render bitmap"
+                )));
+            }
+
+            bindings.FPDFBitmap_FillRect(bitmap, 0, 0, width, height, OPAQUE_WHITE);
+            let rendered = match raw_render_fn() {
+                // Safety: arguments mirror the typed binding; pdfium calls are
+                // serialized by `pdfium_lock`.
+                Some(render) => unsafe {
+                    render(bitmap, page_handle, 0, 0, width, height, 0, FPDF_ANNOT) != 0
+                },
+                // The loaded library lacks the render entry point; painting
+                // the white fill would masquerade as a successful blank page.
+                None => {
+                    return Err(Error::Other(
+                        "FPDF_RenderPageBitmap missing from loaded libpdfium".into(),
+                    ));
+                }
+            };
+
+            let mut buffer = bindings.FPDFBitmap_GetBuffer_as_vec(bitmap);
+            bindings.FPDFBitmap_Destroy(bitmap);
+
+            if !rendered {
+                return Err(Error::Other(format!(
+                    "render failed for page {}",
+                    page_index + 1
+                )));
+            }
+
+            for pixel in buffer.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+                pixel[3] = u8::MAX;
+            }
+
+            PageImage::from_rgba(width as u32, height as u32, buffer)
+        })
+    }
+
+    fn outline(&self) -> Result<Vec<TocItem>, Error> {
+        let _guard = pdfium_lock();
+        let mut seen = HashSet::new();
+        Ok(bookmark_children(
+            self.handle,
+            null_mut(),
+            self.pdfium.bindings(),
+            &mut seen,
+            self.page_count,
+            0,
+        ))
+    }
+
+    // FPDFText_GetRect yields PDFium page space (bottom-left origin, y-up),
+    // flipped here to the trait's top-left y-down points. No `match_case`
+    // flag is set, so matching is case-insensitive per the trait contract.
+    fn search_page(&self, page: usize, needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        if needle.is_empty() {
+            return Ok(Vec::new());
+        }
+        let _guard = pdfium_lock();
+        let page_index = page_index(page, self.page_count)?;
+        with_page(self, page_index, |bindings, page_handle| {
+            let height = bindings.FPDF_GetPageHeightF(page_handle);
+            let text_page = load_text_page(bindings, page_handle)?;
+
+            let mut rects = Vec::new();
+            // Flags 0: no FPDF_MATCHCASE, no FPDF_MATCHWHOLEWORD.
+            let search = bindings.FPDFText_FindStart_str(text_page, needle, 0, 0);
+            if search.is_null() {
+                bindings.FPDFText_ClosePage(text_page);
+                return Err(Error::Other("text search could not be started".into()));
+            }
+            while bindings.is_true(bindings.FPDFText_FindNext(search)) {
+                let start = bindings.FPDFText_GetSchResultIndex(search);
+                let count = bindings.FPDFText_GetSchCount(search);
+                if count <= 0 {
+                    continue;
+                }
+                for i in 0..bindings.FPDFText_CountRects(text_page, start, count) {
+                    let mut left = 0.0f64;
+                    let mut top = 0.0f64;
+                    let mut right = 0.0f64;
+                    let mut bottom = 0.0f64;
+                    if !bindings.is_true(bindings.FPDFText_GetRect(
+                        text_page,
+                        i,
+                        &mut left,
+                        &mut top,
+                        &mut right,
+                        &mut bottom,
+                    )) {
+                        continue;
+                    }
+                    rects.push([
+                        left as f32,
+                        height - top as f32,
+                        right as f32,
+                        height - bottom as f32,
+                    ]);
+                }
+            }
+            bindings.FPDFText_FindClose(search);
+            bindings.FPDFText_ClosePage(text_page);
+            Ok(rects)
+        })
+    }
+}
+
+/// Maximum outline nesting the walker descends into; malformed documents can
+/// build pathological trees and the visited set only guards against cycles.
+const MAX_OUTLINE_DEPTH: usize = 64;
+
+/// Converts the bookmark tree rooted at `parent` (`null` for the document
+/// root). Pdfium's bookmark API signals failure only through null handles and
+/// `-1` page indexes, so entries without a usable internal destination are
+/// skipped; there is no error channel that could carry a whole-tree failure.
+/// The visited set terminates cycles, which malformed documents can form
+/// through repeated `/Next` or `/First` references. Resolved pages outside
+/// `1..=page_count` are dropped.
+fn bookmark_children(
+    doc: FPDF_DOCUMENT,
+    parent: FPDF_BOOKMARK,
+    bindings: &dyn PdfiumLibraryBindings,
+    seen: &mut HashSet<usize>,
+    page_count: usize,
+    depth: usize,
+) -> Vec<TocItem> {
+    if depth > MAX_OUTLINE_DEPTH {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    let mut next = bindings.FPDFBookmark_GetFirstChild(doc, parent);
+    while !next.is_null() && seen.insert(next as usize) {
+        if let (Some(title), Some((page, dest_top))) = (
+            bookmark_title(bindings, next),
+            bookmark_page(doc, next, bindings),
+        ) && page <= page_count
+        {
+            items.push(TocItem {
+                title,
+                page,
+                dest_top,
+                children: bookmark_children(doc, next, bindings, seen, page_count, depth + 1),
+            });
+        }
+        next = bindings.FPDFBookmark_GetNextSibling(doc, next);
+    }
+    items
+}
+
+fn bookmark_title(bindings: &dyn PdfiumLibraryBindings, bookmark: FPDF_BOOKMARK) -> Option<String> {
+    let buffer_length = bindings.FPDFBookmark_GetTitle(bookmark, null_mut(), 0);
+    if buffer_length == 0 {
+        return None;
+    }
+
+    let mut buffer = vec![0u8; buffer_length as usize];
+    bindings.FPDFBookmark_GetTitle(bookmark, buffer.as_mut_ptr().cast(), buffer_length);
+    Some(decode_utf16_bytes(&buffer))
+}
+
+/// Resolves a bookmark's target as a 1-based page number plus its vertical
+/// landing point (points from the page's top edge, when the destination
+/// carries one). Bookmarks either carry a direct `/Dest` or a `/A` action;
+/// hyperref-generated documents use GoTo actions almost exclusively.
+fn bookmark_page(
+    doc: FPDF_DOCUMENT,
+    bookmark: FPDF_BOOKMARK,
+    bindings: &dyn PdfiumLibraryBindings,
+) -> Option<(usize, Option<f32>)> {
+    let mut dest = bindings.FPDFBookmark_GetDest(doc, bookmark);
+    if dest.is_null() {
+        let action = bindings.FPDFBookmark_GetAction(bookmark);
+        if !action.is_null()
+            && bindings.FPDFAction_GetType(action)
+                == PdfActionType::GoToDestinationInSameDocument as std::ffi::c_ulong
+        {
+            dest = bindings.FPDFAction_GetDest(doc, action);
+        }
+    }
+
+    if dest.is_null() {
+        return None;
+    }
+    let index = bindings.FPDFDest_GetDestPageIndex(doc, dest);
+    let page = usize::try_from(index).ok()?;
+    Some((page + 1, dest_top(doc, bindings, dest, index)))
+}
+
+/// Vertical landing point via `FPDFDest_GetLocationInPage`: PDFium reports
+/// the XYZ/FitH view point in PDF user space (origin bottom-left, y-up), so
+/// the flip to points from the top edge is `page_height - y`. Destinations
+/// without a vertical component (`has_y_val` unset, fit-style views) and
+/// unresolvable pages yield `None`.
+fn dest_top(
+    doc: FPDF_DOCUMENT,
+    bindings: &dyn PdfiumLibraryBindings,
+    dest: FPDF_DEST,
+    page_index: std::ffi::c_int,
+) -> Option<f32> {
+    let mut has_x: FPDF_BOOL = 0;
+    let mut has_y: FPDF_BOOL = 0;
+    let mut has_zoom: FPDF_BOOL = 0;
+    let mut x: FS_FLOAT = 0.0;
+    let mut y: FS_FLOAT = 0.0;
+    let mut zoom: FS_FLOAT = 0.0;
+    let reported = bindings.is_true(bindings.FPDFDest_GetLocationInPage(
+        dest,
+        &mut has_x,
+        &mut has_y,
+        &mut has_zoom,
+        &mut x,
+        &mut y,
+        &mut zoom,
+    )) && has_y != 0;
+    if !reported {
+        return None;
+    }
+    let page_handle = bindings.FPDF_LoadPage(doc, page_index);
+    if page_handle.is_null() {
+        return None;
+    }
+    let height = bindings.FPDF_GetPageHeightF(page_handle);
+    bindings.FPDF_ClosePage(page_handle);
+    // Non-finite results (crafted destinations) must not reach the scroll math.
+    let top = height - y;
+    top.is_finite().then_some(top)
 }
 
 fn pdfium_lock() -> std::sync::MutexGuard<'static, ()> {
-    PDFIUM_OPS.lock().expect("pdfium operations mutex poisoned")
+    // The guard carries no state; a poisoned lock is still a correct barrier.
+    PDFIUM_OPS.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn shared_engine() -> Result<Arc<Pdfium>, Error> {
@@ -131,27 +433,14 @@ fn shared_engine() -> Result<Arc<Pdfium>, Error> {
 }
 
 fn bind_pdfium_library() -> Result<Box<dyn PdfiumLibraryBindings>, Error> {
-    if let Ok(dir) = std::env::var("PDFIUM_LIB") {
-        let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
-        if lib.exists() {
-            return Pdfium::bind_to_library(&lib).map_err(map_bind_error);
-        }
+    match resolve_pdfium_lib() {
+        Some(lib) => Pdfium::bind_to_library(&lib).map_err(map_bind_error),
+        None => Err(Error::Other(
+            "libpdfium not found: set PDFIUM_LIB to the directory containing libpdfium.so, \
+             or place the library next to the executable"
+                .into(),
+        )),
     }
-
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let lib = Pdfium::pdfium_platform_library_name_at_path(dir);
-        if lib.exists() {
-            return Pdfium::bind_to_library(&lib).map_err(map_bind_error);
-        }
-    }
-
-    Err(Error::Other(
-        "libpdfium not found: set PDFIUM_LIB to the directory containing libpdfium.so, \
-         or place the library next to the executable"
-            .into(),
-    ))
 }
 
 fn with_page<T>(
@@ -474,13 +763,24 @@ fn page_index(page: usize, page_count: usize) -> Result<u16, Error> {
 fn preflight_path(path: &str) -> Result<(), Error> {
     match std::fs::metadata(path) {
         Err(err) => return Err(map_io_error(err)),
-        Ok(meta) if meta.is_dir() => {
-            return Err(Error::NotFound(format!("{path} is a directory")));
-        }
-        Ok(_) => {}
+        Ok(meta) => check_path_type(path, meta)?,
     }
     if let Err(err) = std::fs::File::open(path) {
         return Err(map_io_error(err));
+    }
+    Ok(())
+}
+
+/// Reject existing paths that must not reach the `File::open` probe:
+/// directories fail with the established NotFound, and non-regular files —
+/// named pipes above all, which would block the open until a writer
+/// appears — fail outright. (Shared semantics with the MuPDF backend.)
+fn check_path_type(path: &str, meta: std::fs::Metadata) -> Result<(), Error> {
+    if meta.is_dir() {
+        return Err(Error::NotFound(format!("{path} is a directory")));
+    }
+    if !meta.is_file() {
+        return Err(Error::Other(format!("{path} is not a regular file")));
     }
     Ok(())
 }
@@ -552,5 +852,38 @@ fn map_io_error(err: io::Error) -> Error {
         io::ErrorKind::NotFound => Error::NotFound(err.to_string()),
         io::ErrorKind::PermissionDenied => Error::PermissionDenied(err.to_string()),
         _ => Error::Other(err.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn preflight_rejects_named_pipes_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("candi-pdfium-fifo-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("pipe");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .expect("mkfifo exists")
+                .success()
+        );
+        let started = Instant::now();
+        let result = preflight_path(fifo.to_str().unwrap());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "a FIFO must be rejected, not opened (which would block)"
+        );
+        match result {
+            Err(Error::Other(msg)) if msg.contains("not a regular file") => {}
+            other => panic!("expected a FIFO rejection, got {other:?}"),
+        }
+        fs::remove_dir_all(&dir).ok();
     }
 }

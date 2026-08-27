@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use candi_pdf::{Document, Error};
+use candi_pdf::{Document, Error, TocItem};
 #[cfg(any(not(feature = "mupdf-backend"), not(feature = "pdfium-backend")))]
 use candi_pdf::BackendKind;
 
@@ -29,8 +29,17 @@ pub fn run_suite(open_fn: OpenFn) {
     hardening_unsupported(open_fn);
     hardening_zero_pages_malformed(open_fn);
     parity_tiny_opens_with_text(open_fn);
+    parity_search_finds_needle_within_page_bounds(open_fn);
+    parity_tiny_outline_is_empty(open_fn);
+    parity_ghost_outline_drops_unresolvable_entries(open_fn);
     parity_blank_first_page_not_no_text_layer(open_fn);
     parity_positions_sanity(open_fn);
+    parity_page_size_matches_mediabox(open_fn);
+    parity_render_buffer_matches_dimensions(open_fn);
+    parity_scale_two_doubles_pixels_per_axis(open_fn);
+    parity_out_of_range_page_fails_size_and_render(open_fn);
+    #[cfg(all(feature = "mupdf-backend", feature = "pdfium-backend"))]
+    cross_backend_render_dimensions_agree_within_one_px();
 }
 
 fn with_open_timeout<F>(label: &str, f: F)
@@ -175,6 +184,63 @@ pub fn parity_tiny_opens_with_text(open_fn: OpenFn) {
     });
 }
 
+/// tiny.pdf says "Hello Candi" on a 200x200 page: at least one case-insensitive
+/// hit rect must land inside the page bounds in top-left y-down points, misses
+/// and the empty needle return none.
+pub fn parity_search_finds_needle_within_page_bounds(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("search_finds_needle_within_page_bounds", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        let (w, h) = doc.page_size(0).unwrap();
+
+        for needle in ["hello", "HELLO", "candi"] {
+            let rects = doc.search_page(0, needle).expect("search call");
+            assert!(!rects.is_empty(), "no rects for {needle:?}");
+            for r in &rects {
+                assert!(
+                    r[0] >= 0.0 && r[1] >= 0.0 && r[2] <= w && r[3] <= h,
+                    "{needle:?} rect {r:?} outside {w}x{h} page"
+                );
+                assert!(r[0] < r[2] && r[1] < r[3], "{needle:?} degenerate {r:?}");
+            }
+        }
+
+        assert!(doc.search_page(0, "zebra").unwrap().is_empty());
+        assert!(doc.search_page(0, "").unwrap().is_empty());
+    });
+}
+
+/// tiny.pdf carries no `/Outlines` dictionary; both engines must report an
+/// empty outline rather than an error.
+pub fn parity_tiny_outline_is_empty(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("tiny_outline_is_empty", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        assert_eq!(doc.outline().unwrap(), Vec::new());
+    });
+}
+
+/// ghost-outline.pdf holds one valid entry plus a ghost whose destination is
+/// an orphan page object outside the page tree. Both engines must drop the
+/// unusable entry (MuPDF reports it as page -1, which must never surface as a
+/// huge or wrapped page number).
+pub fn parity_ghost_outline_drops_unresolvable_entries(open_fn: OpenFn) {
+    let path = fixtures::ghost_outline().to_str().unwrap().to_string();
+    with_open_timeout("ghost_outline_drops_unresolvable_entries", move || {
+        let doc = open_fn(&path, None).expect("ghost-outline.pdf should open");
+        assert_eq!(doc.page_count(), 2);
+        assert_eq!(
+            doc.outline().unwrap(),
+            vec![TocItem {
+                title: "Real".into(),
+                page: 1,
+                dest_top: None,
+                children: Vec::new(),
+            }]
+        );
+    });
+}
+
 pub fn parity_blank_first_page_not_no_text_layer(open_fn: OpenFn) {
     let path = fixtures::blank_first_page().to_str().unwrap().to_string();
     with_open_timeout("blank_first_page_not_no_text_layer", move || {
@@ -196,6 +262,84 @@ pub fn parity_positions_sanity(open_fn: OpenFn) {
         assert!(!positions.blocks.is_empty());
         assert!(!positions.blocks[0].lines.is_empty());
         assert!(!positions.blocks[0].lines[0].words.is_empty());
+    });
+}
+
+/// tiny.pdf carries a literal `/MediaBox [0 0 200 200]`; page_size must report
+/// it verbatim in PDF points.
+pub fn parity_page_size_matches_mediabox(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("page_size_matches_mediabox", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        assert_eq!(doc.page_count(), 1);
+        assert_eq!(doc.page_size(0).unwrap(), (200.0, 200.0));
+    });
+}
+
+pub fn parity_render_buffer_matches_dimensions(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("render_buffer_matches_dimensions", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        for scale in [1.0, 2.0] {
+            let image = doc.render_page(0, scale).unwrap();
+            assert!(image.width > 0 && image.height > 0);
+            assert_eq!(
+                image.rgba.len(),
+                image.width as usize * image.height as usize * 4,
+                "RGBA buffer must be width*height*4 at scale {scale}"
+            );
+        }
+    });
+}
+
+pub fn parity_scale_two_doubles_pixels_per_axis(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("scale_two_doubles_pixels_per_axis", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        let one = doc.render_page(0, 1.0).unwrap();
+        let two = doc.render_page(0, 2.0).unwrap();
+        assert!((two.width as i64 - 2 * one.width as i64).abs() <= 1);
+        assert!((two.height as i64 - 2 * one.height as i64).abs() <= 1);
+    });
+}
+
+pub fn parity_out_of_range_page_fails_size_and_render(open_fn: OpenFn) {
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("out_of_range_page_fails_size_and_render", move || {
+        let doc = open_fn(&path, None).expect("tiny.pdf should open");
+        assert!(matches!(doc.page_text(9), Err(Error::Other(_))));
+        assert!(matches!(doc.page_size(9), Err(Error::Other(_))));
+        assert!(matches!(doc.render_page(9, 1.0), Err(Error::Other(_))));
+    });
+}
+
+/// Cross-engine dimension agreement on the same fixture. Rendering is
+/// deterministic per engine and both derive dimensions from the same MediaBox,
+/// so this is not flaky; it compiles out in single-backend test modes where
+/// there is no second engine to compare against.
+#[cfg(all(feature = "mupdf-backend", feature = "pdfium-backend"))]
+pub fn cross_backend_render_dimensions_agree_within_one_px() {
+    use candi_pdf::BackendKind;
+
+    let path = fixtures::tiny().to_str().unwrap().to_string();
+    with_open_timeout("cross_backend_render_dimensions_agree", move || {
+        for scale in [1.0, 2.0] {
+            let mut dims = Vec::new();
+            for kind in [BackendKind::Mupdf, BackendKind::Pdfium] {
+                let doc = candi_pdf::open(kind, &path, None).expect("tiny.pdf should open");
+                let image = doc.render_page(0, scale).unwrap();
+                dims.push((image.width as i64, image.height as i64));
+            }
+
+            assert!(
+                (dims[0].0 - dims[1].0).abs() <= 1,
+                "width mismatch at scale {scale}: {dims:?}"
+            );
+            assert!(
+                (dims[0].1 - dims[1].1).abs() <= 1,
+                "height mismatch at scale {scale}: {dims:?}"
+            );
+        }
     });
 }
 

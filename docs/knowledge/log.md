@@ -188,3 +188,140 @@ Format per entry:
 - **Decision/Issue:** User standing rule — Mia may approve worker sandbox/network/git_write and slice PR merge to `dev` without user round-trip; destructive git and 01/11 tag/dogfood/main-merge still need user.
 - **Why:** Phase-01 cadence stalls when subagents bounce permission prompts to the human; orchestrator already owns delegation and merge sequencing.
 - **Changed:** memory, handoff, status, log updated; orchestration skill Guardrails one-liner. Post-merge CI run `32384136200` on `b9902d0` verified green (all 7 jobs) — handoff hazard cleared.
+
+## 2026-08-25 — v0.1 UX-perfection iteration (slice/02-01-gui-reader)
+
+- **What:** Lucide SVG chrome icons (egui_extras `svg`, ISC, assets
+  committed), spacing pass (bar heights, flat chrome, rail rhythm, GAP 16 /
+  MARGIN 20), and five layout bug fixes: sidebar section panel stacking,
+  nav-cluster LTR order, rail gear pinning (three attempts, settled by
+  eprintln instrumentation: horizontal uis clamp children to ~18 px), gear
+  spacer math, TOC right-aligned page numbers.
+- **Why:** font-glyph chrome rendered tofu boxes and mirrored `‹›` via font
+  fallbacks; hand-drawn painter icons failed the quality bar; spacing was
+  default-egui cramped versus the mockup.
+- **Root causes worth keeping:** (1) `ui.horizontal` clamps child height to
+  `interact_size.y` — give full-height rows an explicit `set_height`;
+  (2) `Layout::bottom_up` allocates from the cursor, not the rect bottom;
+  (3) `pkill -f` with a path regex self-matches the driving shell — the
+  long-running "stuck builder" plague; `pkill -x candi` instead;
+  (4) a missing fixture PDF shows the error card — earlier "broken UI"
+  captures were partly error states and blank synthetic pages.
+- **Process:** worked as direct dictation — exact-string python patches
+  with count asserts, build → shot.sh → visually read every PNG before the
+  next change. That loop is what found the real bugs; keep it.
+- **Release flow (user directive):** slices merge to `dev`; every 0.x tag
+  lands on `main`.
+
+## 2026-08-26 — six-state reference rebuild (slice/02-01-gui-reader)
+
+- **What:** chrome rebuilt to the user's six-state image: rail restored as
+  its own SidePanel, hamburger/wordmark back, tagline + duplicate zoom
+  stepper removed, Inter embedded, dark-first, empty state styled, Lucide
+  icons, exact_width panels, central-rect backdrop paint, PID-matched
+  shot.sh.
+- **Why:** the earlier rebuild followed the stale light mockup (nav rows, no
+  rail, no wordmark) — wrong target; the six-state image is authoritative.
+- **Root causes worth keeping:** (1) stale fixture + captured wallpaper/
+  overlay windows masqueraded as UI bugs — always verify WHAT was captured
+  (pid-matching now mandatory); (2) horizontal-layout height clamping keeps
+  biting — full-height content belongs in panels; (3) add_sized centers;
+  (4) `pkill -f` self-matches — the old "stuck builder" plague.
+- **Process:** iterate build → PID-matched capture → actually read the PNG →
+  fix. Ten-plus rounds; each visual defect (mirrored chevrons, tofu,
+  maroon band, side-by-side TOC, gear placement, centered titles, reversed
+  steppers) was caught by reading captures, not by reading code.
+- **Deferred by user:** search overlay, Appearance panel, window
+  decorations, dual/mobile modes, disk cleanup (opencode.db 26G).
+
+## 2026-08-26 (later) — seam chase + revert
+
+- **What:** five more capture-verified rounds: killed the transparent strip
+  class (central frame fill, zero-margin panel frames), restored hamburger +
+  wordmark + rail per the six-state reference, deduped zoom controls,
+  removed the tagline, tightened canvas margins, PID-hardened shot.sh.
+- **Reverted:** `2231aa8` embedded the section panel inside the central
+  surface to kill the panel seam by construction — it reintroduced the
+  horizontal height clamp (blank panel, clipped canvas). Reverted in
+  `8ee2110`; the SidePanel structure is correct, the remaining seam is a
+  ~1px divider + shadow, documented as a judgment call in the handoff.
+- **Lesson:** when a cosmetic fix requires restructuring working layout,
+  revert fast and document — three rounds of seam chasing bought two
+  regressions; the SidePanel version was one good review away from done.
+
+## 2026-08-26 (night) — feature-complete push
+
+- **Shipped in sequence:** install (PATH symlink + desktop entry; stale
+  cargo binary shadowed it), named bookmarks (schema v3, hand-rolled TOML
+  parse adapted for optional titles), Appearance panel (rail gear; accent
+  swatches apply via name-cache sync hack; text size = pixels_per_point
+  with reopen reset piggybacked on the `primed` hook), search overlay
+  (overlay owns the query field; panel is a pure results list), backend
+  rect search + in-page highlighting (MuPDF TextPage::search quads
+  top-left; PDFium find loop flipped y-up→y-down; orientation proven by a
+  probe against word coords, then deleted), page flows (rows-of-k layout,
+  page_at returns row-first, fit-width over widest ROW), in-app window
+  decorations (Minimized(bool) not Minimize; drag on the brand zone).
+- **Recurring root causes:** egui panel-seam class ended in a reverted
+  experiment (2231aa8) — keep SidePanels; patch scripts must be authored
+  against post-fmt state; capture evidence must be PID-matched and
+  actually READ before concluding.
+
+## 2026-08-27 (v0.1.0 candidate close-out)
+
+- **Decision/Issue:** v0.1.0 candidate assembled on `slice/02-01-gui-reader`
+  — 8 commits `a213302..b06ff39` atop origin `3866fa6`, all local/unpushed.
+  Search crash fix, chrome/sidebar polish (15 items), anchor-preserving
+  zoom/flow/resize/pinch, YAML theme editor + Dark default + prefs/recents/
+  accent retint, keybinds.json + custom themes, docs/architecture correction
+  + new `docs/roadmap.md`, AUR packaging, review round-2 doc fixes.
+  Independent review round-2 verdict FIX-FIRST on 5 docs/regression items →
+  all fixed in `b06ff39`; targeted re-review verdict pending at close-out.
+- **Why:** finish the GUI reader slice to shippable quality; every fix below
+  came from dogfood rounds or review, not speculation.
+- **Changed (root causes worth keeping):**
+  - *Char-boundary panic:* scan_one_page byte scan sliced mid-codepoint on
+    accented page text → UI thread panic. Fix = `as_bytes()` compare +
+    `is_char_boundary` guard + café/résumé regression test. ASCII-only
+    fixtures structurally hide byte-index bugs.
+  - *egui 0.30 batch:* `Layout::main_align` aligns inside a rect, not widget
+    streams (center the pill via screen-anchored `Area`);
+    `allocate_ui_with_layout` returns child min_rect (right edges need exact
+    rects + `ui.put`); Inter lacks ←→ glyphs (use words); slider rail+handle
+    both paint `widgets.inactive.bg_fill` → detached-dot illusion, fixed by
+    `trailing_fill(true)`; `Modifiers` not Hash (decompose to bools);
+    `widgets.open.weak_bg_fill` must be themed (dark-on-dark headers in Light).
+  - *Keybind shift parity:* OS-level combos typed with shift produce different
+    chars (Shift+= → '+'). Kept exact-modifier matching strict; enumerated
+    spelling variants (`"+","=","Shift+=","Ctrl+=","Ctrl++","Ctrl+Shift+="`)
+    in DEFAULTS instead.
+  - *Docs-from-memory fabrication:* the sidecar TOML example had invented
+    fields until checked against `serialize_session` — always quote
+    serializers, never reconstruct examples from recall.
+  - *Packaging:* makepkg injects `-flto` → lld cannot resolve bundled-C
+    bitcode at rustc link; `options=('!lto')` mandatory; pin RUSTFLAGS
+    (spurious `-C target-cpu=native` observed once — portability hazard);
+    check() needs backend exclusions when a dlopen-ed lib isn't packaged.
+  - *Shell hygiene:* backgrounded GUI launch inheriting stdout FD hangs the
+    driving tool — `nohup … < /dev/null & disown`.
+  - Minor: `warn()` helpers taking String force `.to_owned()` call-site
+    warts — future helpers take `impl Display` (2-line cleanup candidate).
+- **Benchmarks recorded** (7 unique real books `/mnt/personal/Books`,
+  0.8–50 MB, 148–1556 pp): core `reader_peak` avg mupdf 17.6 MB / pdfium
+  18.4 MB, worst 58 MB (silberschatz pdfium) → 200 MB gate passes ~3.4×
+  headroom; full_pass hazards NOT gated (sdi2 pdfium 1996 MB image sweep;
+  silberschatz mupdf 295 MB TLS store); GUI process RSS ~190 MB mupdf /
+  ~213 MB pdfium vs egui floor ~170 MB; open+first render avg 61 ms mupdf /
+  23 ms pdfium.
+- **User decisions captured:** versioning — majors are `v0.x` tags landing
+  on main; post-release fixes `v0.x.y`; features → dev; new feature branches
+  only AFTER each version cut. Roadmap v0.1 (base+polish, HERE) → v0.2
+  epub/password PDFs/optimizations → v0.3 Windows/other Linux/deployments →
+  v0.4 GitHub docs/cleaning → v0.5 AUR/Debian+CI (AUR pulled EARLY per user;
+  package ready in `packaging/`) → v0.6 Android beta. Infra flags: dev/main
+  UNPROTECTED (decision pending); `origin/slice/docs-catchup` prune candidate
+  (needs user); tag MUST literally be `v0.1.0` (PKGBUILD URL); Cargo.lock
+  conflicts expected with any revived cargo dependabot PR (none open;
+  dependabot PR #1 closed w/ comment, manual consolidated checkout bump
+  planned post-merge); `/tmp` tmpfs 7.7G overflows Rust target dirs → use
+  `/mnt/personal/tmp` (SIGBUS ×2 sessions).

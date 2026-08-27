@@ -36,6 +36,22 @@ impl Document for FakeDoc {
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
     }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
+    }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 struct ErrorOnPageDoc {
@@ -57,6 +73,22 @@ impl Document for ErrorOnPageDoc {
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
     }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
+    }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        Ok(Vec::new())
+    }
 }
 
 static ERROR_DOC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -75,6 +107,22 @@ impl Document for CountingErrorDoc {
 
     fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
         Ok(None)
+    }
+
+    fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+        Ok((612.0, 792.0))
+    }
+
+    fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+        Err(Error::Unsupported("test double cannot render".into()))
+    }
+
+    fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+        Ok(Vec::new())
+    }
+
+    fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+        Ok(Vec::new())
     }
 }
 
@@ -151,6 +199,33 @@ fn case_insensitive_match() {
     let mut session = SearchSession::new(&doc, "Foo", 0);
     let hit = session.next().unwrap().unwrap();
     assert_eq!(hit, (0, 6));
+}
+
+#[test]
+fn step_scans_exactly_one_page_per_call() {
+    let doc = FakeDoc::new(PAGES.to_vec());
+    let mut session = SearchSession::new(&doc, "foo", 0);
+
+    assert!(!session.step().unwrap(), "page 0 is not the last page");
+    let after_first = doc.page_text_call_count();
+    assert_eq!(after_first, 1, "one step = one page_text call");
+    assert!(session.results().contains(&(0, 6)));
+
+    assert!(!session.step().unwrap());
+    assert_eq!(doc.page_text_call_count(), 2);
+    assert_eq!(
+        session.results(),
+        &[(0, 6)],
+        "page 1 has no matches; earlier results persist"
+    );
+
+    assert!(session.step().unwrap(), "the scan ends at the last page");
+    assert_eq!(doc.page_text_call_count(), 3);
+    assert!(session.results().contains(&(2, 0)));
+    assert!(session.results().contains(&(2, 8)));
+
+    assert!(session.step().unwrap(), "stepping a complete scan is idle");
+    assert_eq!(doc.page_text_call_count(), 3);
 }
 
 #[test]
@@ -245,6 +320,17 @@ fn start_page_full_scan_does_not_rescan_start_page() {
 }
 
 #[test]
+fn non_ascii_page_text_does_not_panic_and_finds_hits() {
+    let doc = FakeDoc::new(vec!["café latte — résumé"]);
+    let mut session = SearchSession::new(&doc, "latte", 0);
+    assert_eq!(session.next().unwrap().unwrap(), (0, 6));
+    assert_eq!(session.results().len(), 1);
+
+    let mut session = SearchSession::new(&doc, "résumé", 0);
+    assert_eq!(session.next().unwrap().unwrap(), (0, 14));
+}
+
+#[test]
 fn search_matches_normalized_ligatures() {
     struct LigatureDoc {
         page: String,
@@ -265,6 +351,22 @@ fn search_matches_normalized_ligatures() {
 
         fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
             Ok(None)
+        }
+
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
         }
     }
 

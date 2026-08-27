@@ -4,6 +4,9 @@
 
 #![cfg(feature = "pdfium-backend")]
 
+#[path = "common/outline.rs"]
+mod outline;
+
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -139,6 +142,19 @@ fn attention_paper_when_present() {
         text.contains("Attention Is All You Need") || text.contains("Introduction"),
         "unexpected first text page snippet"
     );
+}
+
+#[test]
+fn attention_paper_outline_when_present() {
+    let Some(path) = attention_fixture() else {
+        eprintln!(
+            "SKIP: attention paper fixture absent (set CANDI_ATTENTION_PDF or add spikes/corpus/1706.03762-attention-is-all-you-need.pdf)"
+        );
+        return;
+    };
+    let path_str = path.to_str().unwrap();
+    let doc = open(BackendKind::Pdfium, path_str, None).unwrap();
+    assert_eq!(doc.outline().unwrap(), outline::attention_outline());
 }
 
 #[test]

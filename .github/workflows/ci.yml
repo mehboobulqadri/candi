@@ -25,13 +25,12 @@ jobs:
 
   rust-checks:
     strategy:
+      # One entry per feature mode: default (both backends) and the
+      # permissive pdfium-only build (zero AGPL third-party code). The empty
+      # string keeps default features; the second entry drops them.
       matrix:
-        os: [ubuntu-latest]
-        # One entry per feature mode: default (both backends) and the
-        # permissive pdfium-only build (zero AGPL third-party code). The empty
-        # string keeps default features; the second entry drops them.
         features: ["", "--no-default-features --features pdfium-backend"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
@@ -53,21 +52,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install libpdfium (chromium/7543, pdfium_7543)
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          PDFIUM_CACHE="$HOME/.cache/candi-pdfium"
-          PDFIUM_LIB_DIR="$PDFIUM_CACHE/chromium-7543"
-          mkdir -p "$PDFIUM_CACHE"
-          if [ ! -f "$PDFIUM_LIB_DIR/libpdfium.so" ]; then
-            curl -fsSL -o "$PDFIUM_CACHE/pdfium-linux-x64.tgz" \
-              "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7543/pdfium-linux-x64.tgz"
-            tar xzf "$PDFIUM_CACHE/pdfium-linux-x64.tgz" -C "$PDFIUM_CACHE"
-            mv "$PDFIUM_CACHE/lib" "$PDFIUM_LIB_DIR"
-          fi
-          echo "PDFIUM_LIB=$PDFIUM_LIB_DIR" >> "$GITHUB_ENV"
-          echo "2383a414050dd21ae5300b119ad8a72360ef92cff820b4c685c047dc272c2794  $PDFIUM_LIB_DIR/libpdfium.so" | sha256sum -c -
+      - uses: ./.github/actions/setup-pdfium
       - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
       - run: cargo build --release ${{ matrix.features }}
       - run: cargo test --all-targets ${{ matrix.features }}
@@ -95,20 +80,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install libpdfium (chromium/7543, pdfium_7543)
-        run: |
-          set -euo pipefail
-          PDFIUM_CACHE="$HOME/.cache/candi-pdfium"
-          PDFIUM_LIB_DIR="$PDFIUM_CACHE/chromium-7543"
-          mkdir -p "$PDFIUM_CACHE"
-          if [ ! -f "$PDFIUM_LIB_DIR/libpdfium.so" ]; then
-            curl -fsSL -o "$PDFIUM_CACHE/pdfium-linux-x64.tgz" \
-              "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F7543/pdfium-linux-x64.tgz"
-            tar xzf "$PDFIUM_CACHE/pdfium-linux-x64.tgz" -C "$PDFIUM_CACHE"
-            mv "$PDFIUM_CACHE/lib" "$PDFIUM_LIB_DIR"
-          fi
-          echo "PDFIUM_LIB=$PDFIUM_LIB_DIR" >> "$GITHUB_ENV"
-          echo "2383a414050dd21ae5300b119ad8a72360ef92cff820b4c685c047dc272c2794  $PDFIUM_LIB_DIR/libpdfium.so" | sha256sum -c -
+      - uses: ./.github/actions/setup-pdfium
       # Fixtures-only: CI has no corpus-local.toml, so real books and fixture
       # generation are skipped loudly; the committed fixture must still run.
       - run: cargo build --release --benches

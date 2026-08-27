@@ -215,3 +215,19 @@ fn stub_scripting_is_fully_configurable_through_public_fields() {
     let doc = backend.open("book.pdf", None).unwrap();
     assert_eq!(doc.page_text(1).unwrap(), "configured");
 }
+
+#[test]
+fn stub_renders_deterministic_letter_sized_pages() {
+    let doc = StubBackend::new(2).open("book.pdf", None).unwrap();
+
+    assert_eq!(doc.page_size(0).unwrap(), (612.0, 792.0));
+
+    let first = doc.render_page(0, 1.0).unwrap();
+    let again = doc.render_page(0, 1.0).unwrap();
+    assert_eq!(first, again);
+    assert_eq!(first.width, 612);
+    assert_eq!(first.height, 792);
+    assert_eq!(first.rgba.len(), 612 * 792 * 4);
+    assert_ne!(first.rgba, doc.render_page(1, 1.0).unwrap().rgba);
+    assert!(matches!(doc.render_page(2, 1.0), Err(Error::Other(_))));
+}

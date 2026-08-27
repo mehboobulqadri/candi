@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -21,6 +22,10 @@ pub fn zero_pages() -> PathBuf {
 
 pub fn blank_first_page() -> PathBuf {
     manifest_dir().join("tests/fixtures/blank-first-page.pdf")
+}
+
+pub fn ghost_outline() -> PathBuf {
+    manifest_dir().join("tests/fixtures/ghost-outline.pdf")
 }
 
 pub fn image_only() -> PathBuf {

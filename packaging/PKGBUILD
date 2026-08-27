@@ -1,0 +1,73 @@
+# Maintainer: Mehboob ul Qadri <mehboobulqadri@gmail.com>
+
+pkgname=candi
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Clean, minimal, distraction-free PDF reader'
+arch=('x86_64')
+url='https://github.com/mehboobulqadri/candi'
+license=('AGPL-3.0-only')
+# !lto: makepkg would otherwise append -flto to the C compiler flags used by
+# mupdf-sys' bundled MuPDF build, producing unresolvable LTO bitcode at the
+# final link step (Arch Rust packaging guideline). Cargo's own thin-LTO stays.
+options=('!lto')
+depends=('gcc-libs' 'fontconfig' 'freetype2' 'libx11' 'libxkbcommon' 'wayland')
+makedepends=('cargo' 'clang')
+source=("$url/archive/refs/tags/v$pkgver.tar.gz")
+# PLACEHOLDER until the v0.1.0 tag is cut; run `updpkgsums` immediately
+# before AUR submission (see packaging/AUR.md) to fill real sums.
+b2sums=('SKIP')
+
+prepare() {
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_INCREMENTAL=0
+  # Portable x86-64 baseline (never target-cpu=native); debuginfo stripped to
+  # keep build artifacts small. Same value in every function so cargo does not
+  # rebuild between prepare/build/check.
+  export RUSTFLAGS='-C debuginfo=0'
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked
+}
+
+build() {
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_INCREMENTAL=0
+  export RUSTFLAGS='-C debuginfo=0'
+  export CARGO_TARGET_DIR=target
+  cd "$pkgname-$pkgver"
+  # MuPDF only: the pdfium PDF backend is an optional runtime-dlopened extra;
+  # distro builds ship the default-feature build.
+  cargo build --frozen --release --bin candi
+}
+
+check() {
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_INCREMENTAL=0
+  export RUSTFLAGS='-C debuginfo=0'
+  export CARGO_TARGET_DIR=target
+  export CANDI_NO_GUI=1
+  cd "$pkgname-$pkgver"
+  # No standalone libpdfium.so exists in a distro build environment (the crate
+  # dlopens it) and each parity/integration test artifact drives both backends
+  # through one umbrella test, so those three artifacts are skipped wholesale;
+  # all remaining workspace and candi-pdf unit tests run unchanged.
+  cargo test --frozen --workspace --exclude candi-pdf
+  cargo test --frozen -p candi-pdf --lib
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm0755 -t "$pkgdir/usr/bin" \
+    target/release/candi
+
+  install -Dm0644 LICENSE.md \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
+
+  install -Dm0644 packaging/candi.desktop \
+    "$pkgdir/usr/share/applications/candi.desktop"
+
+  for _s in 16 24 32 48 64 128 256 512; do
+    install -Dm0644 "packaging/icons/candi-${_s}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${_s}x${_s}/apps/candi.png"
+  done
+}

@@ -427,6 +427,22 @@ mod tests {
         fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
             Ok(None)
         }
+
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
+        }
     }
 
     struct BlankFirstPageDoc;
@@ -447,6 +463,22 @@ mod tests {
         fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
             Ok(None)
         }
+
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
+        }
     }
 
     struct LigatureDoc;
@@ -462,6 +494,22 @@ mod tests {
 
         fn page_positions(&self, _page: usize) -> Result<Option<candi_pdf::PagePositions>, Error> {
             Ok(None)
+        }
+
+        fn page_size(&self, _page: usize) -> Result<(f32, f32), Error> {
+            Ok((612.0, 792.0))
+        }
+
+        fn render_page(&self, _page: usize, _scale: f32) -> Result<candi_pdf::PageImage, Error> {
+            Err(Error::Unsupported("test double cannot render".into()))
+        }
+
+        fn outline(&self) -> Result<Vec<candi_pdf::TocItem>, Error> {
+            Ok(Vec::new())
+        }
+
+        fn search_page(&self, _page: usize, _needle: &str) -> Result<Vec<[f32; 4]>, Error> {
+            Ok(Vec::new())
         }
     }
 }
