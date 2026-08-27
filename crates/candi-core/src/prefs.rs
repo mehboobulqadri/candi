@@ -196,7 +196,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn malformed_recents_entries_are_dropped_with_a_warning() {
+    fn malformed_recents_entries_are_dropped() {
         let dir = std::env::temp_dir().join(format!("candi-prefs-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();

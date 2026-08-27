@@ -40,9 +40,9 @@ sudo pacman -S --needed rust clang fontconfig pkg-config
 cargo build --release
 ```
 
-`clang` is needed once, to compile `mupdf-sys`'s bundled copy of MuPDF's C sources
-(statically linked — no system `mupdf` package is used); `fontconfig` and
-`pkg-config` satisfy its Linux link requirements.
+`clang` is needed at build time only, to compile `mupdf-sys`'s bundled copy of MuPDF's C
+sources (statically linked — no system `mupdf` package is used); it is not a runtime
+dependency. `fontconfig` and `pkg-config` satisfy its Linux link requirements.
 
 This produces two binaries:
 

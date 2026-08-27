@@ -5,9 +5,9 @@
 //! bare `"quit": "Q"` — with `"Ctrl+"`/`Shift+`/`Alt+`/`Meta+` modifiers.
 //! Reads are tolerant: corrupt entries, unknown actions, empty binding
 //! lists, and unparsable keys warn and fall back to defaults per entry,
-//! never panic. A missing file is
-//! seeded with the defaults so the schema is discoverable by hand-editing,
-//! following the app-config patterns in [`candi_core::prefs`].
+//! never panic. A missing file is seeded with the defaults so the schema
+//! is discoverable by hand-editing, following the app-config patterns in
+//! [`candi_core::prefs`].
 
 use std::fmt;
 use std::fs;
@@ -124,7 +124,7 @@ impl Action {
             Action::KeybindsWindow => &["Ctrl+K"],
             Action::FocusMode => &["F11"],
             Action::CloseOverlay => &["Esc"],
-            Action::ZoomIn => &["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="],
+            Action::ZoomIn => &["=", "+", "Shift++", "Ctrl+=", "Ctrl++", "Ctrl+Shift++"],
             Action::ZoomOut => &["-"],
             Action::FitWidth => &["0"],
             Action::CycleTheme => &["T"],
@@ -780,16 +780,18 @@ mod tests {
     #[test]
     fn zoom_in_reaches_every_physical_equals_spelling() {
         let keybinds = Keybinds::defaults(None);
-        // `=` arrives as Key::Equals with whatever modifiers are held; a bare
-        // `+` (numpad or plus-key layouts) as Key::Plus.
+        // Winit/XKB delivers the equals row physically: plain (and Ctrl-held)
+        // `=` arrives as Key::Equals, while every delivery of `+` — numpad,
+        // or Shift+= whose shifted glyph reaches egui as Character("+") — is
+        // Key::Plus.
         let cases = [
             (Key::Equals, egui::Modifiers::NONE),
             (Key::Plus, egui::Modifiers::NONE),
-            (Key::Equals, egui::Modifiers::SHIFT),
+            (Key::Plus, egui::Modifiers::SHIFT),
             (Key::Equals, egui::Modifiers::CTRL),
             (Key::Plus, egui::Modifiers::CTRL),
             (
-                Key::Equals,
+                Key::Plus,
                 egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
             ),
         ];
