@@ -67,6 +67,8 @@ package() {
   install -Dm0644 packaging/candi.desktop \
     "$pkgdir/usr/share/applications/candi.desktop"
 
-  install -Dm0644 packaging/candi.png \
-    "$pkgdir/usr/share/icons/hicolor/128x128/apps/candi.png"
+  for _s in 16 24 32 48 64 128 256 512; do
+    install -Dm0644 "packaging/icons/candi-${_s}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${_s}x${_s}/apps/candi.png"
+  done
 }

@@ -58,7 +58,8 @@ fn main() -> ExitCode {
             .with_app_id("candi")
             .with_decorations(false)
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            .with_icon(window_icon()),
         ..Default::default()
     };
     if let Err(err) = eframe::run_native(
@@ -101,6 +102,18 @@ fn run_headless(args: Args) -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+fn window_icon() -> egui::IconData {
+    let png = include_bytes!("../assets/icon-256.png");
+    let img = image::load_from_memory(png).expect("bundled assets/icon-256.png is a valid PNG");
+    let rgba = img.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    egui::IconData {
+        width,
+        height,
+        rgba: rgba.into_raw(),
+    }
 }
 
 fn pick_pdf() -> Option<PathBuf> {

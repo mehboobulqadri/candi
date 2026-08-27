@@ -7,7 +7,8 @@ suffix) from the GitHub tag tarball `v0.1.0`. Tag-day work is at the bottom.
 
 Two binaries installed to `/usr/bin`: `candi` (GUI) and `candi-tui`. The
 package installs the AGPL-3.0 license text, a freedesktop `.desktop` entry
-(Open With / menu integration for `application/pdf`) and a 128px hicolor icon.
+(Open With / menu integration for `application/pdf`) and a full hicolor icon
+set (16–512px, from `packaging/icons/`).
 The build uses the crate defaults (MuPDF statically linked into the binaries
 by `mupdf-sys`, which compiles a bundled copy of MuPDF's C sources with clang
 at build time), so there is no dynamic dependency on any system MuPDF library.
@@ -49,6 +50,20 @@ the app runs MuPDF-only, which is exactly what the distro build intends.
 3. `updpkgsums` (against packaging/PKGBUILD once the tag exists), then
    `makepkg --printsrcinfo > .SRCINFO`.
 4. Commit both files, mirror into the AUR clone, commit, push to `master`.
+
+## Local (dev) icon install
+
+Without the package, register the icon + desktop entry for the current user
+only:
+
+```
+mkdir -p ~/.local/share/icons/hicolor/{16x16,24x24,32x32,48x48,64x64,128x128,256x256,512x512}/apps
+for s in 16 24 32 48 64 128 256 512; do
+  cp packaging/icons/candi-$s.png ~/.local/share/icons/hicolor/${s}x${s}/apps/candi.png
+done
+cp packaging/candi.desktop ~/.local/share/applications/
+update-desktop-database ~/.local/share/applications
+```
 
 ## Rejection reasons avoided by this layout
 
