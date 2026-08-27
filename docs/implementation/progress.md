@@ -26,6 +26,10 @@ Windows CI deferred (Linux-only matrix).
 | 01-v0.1 | 11-v01-release | merged | d7ce832 — release checklist + acceptance evidence; merge 638f8bc (PR #16); tag/dogfood/`dev`→`main` still blocked on user |
 | 01-v0.1 | tui-readability | merged | 4db1529 — ligature normalize, centered column, opaque dark bg, mouse/j/k scroll, skip blank cover pages; merge 24dff95 (PR #17) |
 | 01-v0.1 | gui-text-linux | merged | egui/eframe GUI (`candi` bin in candi-gui), file dialog, text view + search + sidecar; candi-cli → lib; Windows matrix removed from CI; merge 54d9f26 (PR #18) |
+| 01-v0.1 | gui-reader polish | in-progress | slice/02-01-gui-reader — search crash fix, chrome/sidebar polish, anchor-preserving zoom, continuous/single/dual flow switch |
+| 01-v0.1 | gui-reader themes & persistence | in-progress | slice/02-01-gui-reader — YAML theme crate (5 built-ins), accent retint, page recolor, session persistence via schema-v3 sidecar, recents |
+| 01-v0.1 | gui-reader keybinds & authoring | in-progress | slice/02-01-gui-reader — editable keybinds file (~/.config/candi/keybinds.json), in-app theme editor + custom YAML themes |
+| 01-v0.1 | docs-v01-refresh | in-progress | docs/roadmap.md added (versioning rules + v0.1–v0.6 timeline); README/architecture refresh; root design mockups moved to docs/design/mockups/; Dependabot PR #1 closed (consolidated CI bump post-merge) |
 | 02-v0.2 | — | planned | phase README only |
 | 03-v0.3 | — | planned | phase README only |
 | 04-v0.4 | — | planned | phase README only |

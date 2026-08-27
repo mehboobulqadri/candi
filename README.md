@@ -6,40 +6,75 @@ A document reader with a TUI and a GUI.
 
 ## Status
 
-v0.1 text reader ships on `dev`: terminal UI (`candi-tui`) and graphical UI (`candi`).
-Dual PDF backends (MuPDF default, PDFium permissive build). Linux dogfood; not tagged,
-not on `main`, no packaging yet.
+v0.1 is feature-complete on `slice/02-01-gui-reader` pending tag: terminal UI
+(`candi-tui`) and graphical UI (`candi`) with real rendered PDF pages. Dual PDF backends
+(MuPDF default, PDFium permissive build). Linux dogfooding; not yet tagged or on `main`.
 
-- Spike 1 (PDF backend) resolved: MuPDF + PDFium ship in v1 as a dual, runtime-switchable
-  backend behind one trait; Poppler rejected. License: AGPL-3.0, with a permissive-build
-  escape hatch (pdfium-only feature build).
-- [Architecture](docs/architecture.md) guides the workspace layout and design decisions.
-- [Implementation](docs/implementation/README.md) — phase/slice plan;
-  [progress](docs/implementation/progress.md) tracks where we are (Phase 01 merged on
-  `dev`; release gates — dogfood, tag, `main` — need explicit user authorization).
+License: AGPL-3.0, with a permissive-build escape hatch (pdfium-only feature build).
+[Architecture](docs/architecture.md) covers design decisions;
+[progress](docs/implementation/progress.md) tracks where we are (release gates —
+dogfood, tag, `main` — need explicit user authorization).
 
-## Quick start
+## What you get
 
-Install (from a clone):
+- **`candi`** — GUI (egui). No args opens a file dialog; `candi book.pdf` opens that file:
+  - Rendered PDF pages with continuous scroll, single-page, dual-page spreads, fit-page /
+    fit-width flows, anchor-preserving zoom and pinch.
+  - Search across the document with in-page highlights; table-of-contents sidebar;
+    bookmarks with rename.
+  - Appearance panel: 5 built-in YAML themes, an in-app theme editor, accent retint, and
+    custom themes from `~/.config/candi/themes/*.yaml`.
+  - Editable keybindings (`~/.config/candi/keybinds.json`, seeded with the defaults),
+    recent-files list, per-PDF resume via a sidecar next to each book, drag-and-drop open.
+  - Optional `--backend mupdf|pdfium` (default `mupdf`).
+- **`candi-tui book.pdf`** — keyboard-first terminal reader (ligature-normalized text,
+  centered column, mouse wheel and j/k page scroll) — works over SSH.
+
+Shared open/resume/sidecar logic lives in the `candi-cli` library crate, wired by both
+frontends.
+
+## Building from source (Arch-based)
+
+```bash
+sudo pacman -S --needed rust mupdf fontconfig pkg-config
+cargo build --release
+```
+
+This produces two binaries:
+
+| Binary | Run |
+|---|---|
+| `target/release/candi` | the GUI |
+| `target/release/candi-tui` | the terminal UI |
+
+No prebuilt PDFium download is needed for a source build (MuPDF is the default backend);
+the optional permissive PDFium build is described in
+[docs/architecture.md](docs/architecture.md). Desktop entries can point at either binary —
+set `StartupWMClass=candi` so the window groups correctly.
+
+Or install straight from a clone:
 
 ```bash
 cargo install --path crates/candi-gui   # binary: candi
 cargo install --path crates/candi-tui   # binary: candi-tui
 ```
 
-Run:
+## Roadmap
 
-- **`candi`** — GUI (egui). No args opens a file dialog; `candi book.pdf` opens that
-  file. Scrollable extracted text, page navigation, search, reading-position sidecar.
-  Optional `--backend mupdf|pdfium` (default `mupdf`).
-- **`candi-tui book.pdf`** — keyboard-first terminal reader (ligature-normalized text,
-  centered column, mouse wheel and j/k page scroll).
+Versioned releases; feature work merges to `dev`, `dev` merges to `main` for major
+releases. Full rules and details: [docs/roadmap.md](docs/roadmap.md).
 
-There is no user-facing CLI reader binary. Shared open/resume/sidecar logic lives in the
-`candi-cli` library crate, wired by both frontends.
+- **v0.1** — shipped base + UI fixes: TUI reader, GUI reader, dual backends, themes,
+  bookmarks, custom themes & keybinds.
+- **v0.2** — EPUB & other formats, password-locked PDFs, optimizations/cleanup.
+- **v0.3** — multi-OS (Windows, other Linux distros), deployments.
+- **v0.4** — GitHub documentation site + cleaning.
+- **v0.5** — AUR/Debian packaging + CI.
+- **v0.6** — Android (beta), Android UI optimization, CI.
 
 ## Project documents
 
+- [Roadmap & versioning rules](docs/roadmap.md)
 - [Project](docs/project.md)
 - [Requirements](docs/REQUIREMENTS.md)
 - [Spikes and options](docs/spikes.md)
