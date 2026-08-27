@@ -9,14 +9,15 @@ use std::fs;
 use std::ops::{Range, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use candi_cli::{open_session, save_session};
 use candi_core::{
-    DEFAULT_THEME, Prefs, SearchSession, SessionState, ZoomMode, config_dir, config_path,
-    load_prefs, normalize_reader_text, store_prefs, write_file_atomically,
+    DEFAULT_THEME, Prefs, SessionState, ZoomMode, config_dir, config_path, load_prefs, store_prefs,
+    write_file_atomically,
 };
-use candi_pdf::{BackendKind, Document, Error as PdfError, PageImage};
+use candi_pdf::{BackendKind, Document, PageImage};
 use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, retint, to_yaml};
 use eframe::egui;
 use egui::Key;
@@ -27,9 +28,8 @@ use crate::keybinds::{Action, Keybinds};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, Flow, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
-use crate::sidebar::{
-    SearchHit, SidebarSection, TocRow, active_toc_row, date_only, extract_snippet, flatten_toc,
-};
+use crate::search::SearchJob;
+use crate::sidebar::{SearchHit, SidebarSection, TocRow, active_toc_row, date_only, flatten_toc};
 
 /// Pages kept as textures around the current page; texture memory outside this
 /// window is released while the original bitmaps stay cached.
@@ -60,6 +60,171 @@ const EDITOR_FONT_RANGE: RangeInclusive<f32> = 8.0..=40.0;
 /// Multiplicative step of one editor font-zoom key press.
 const EDITOR_FONT_STEP: f32 = 1.1;
 const SWATCH_SIZE: f32 = 22.0;
+/// Per-page render retry backoff by failure count: the first three failures
+/// schedule an automatic retry, the fourth leaves the page terminal until
+/// the reader clicks it.
+const RETRY_BACKOFFS: [Duration; 3] = [
+    Duration::from_millis(250),
+    Duration::from_millis(1_000),
+    Duration::from_millis(4_000),
+];
+/// Page toast: full opacity for this long after the last page change,
+const TOAST_HOLD: Duration = Duration::from_millis(700);
+/// then a linear fade over this long.
+const TOAST_FADE: Duration = Duration::from_millis(200);
+
+/// Per-page render failure ledger entry: failures so far at the current
+/// scale, when the next automatic retry fires — `None` once the backoffs
+/// are exhausted (terminal; the page shows click-to-retry) — and the last
+/// error detail, surfaced as hover text on that state.
+#[derive(Debug, Clone, PartialEq)]
+struct FailState {
+    attempt: usize,
+    next_retry: Option<Instant>,
+    detail: String,
+}
+
+/// Record a render failure for `key`; the retry schedule follows
+/// [`RETRY_BACKOFFS`], ending in the terminal state.
+fn note_render_failure(
+    failed: &mut HashMap<CacheKey, FailState>,
+    key: CacheKey,
+    now: Instant,
+    detail: String,
+) {
+    let attempt = failed.get(&key).map_or(0, |state| state.attempt) + 1;
+    let next_retry = RETRY_BACKOFFS
+        .get(attempt - 1)
+        .map(|backoff| now + *backoff);
+    failed.insert(
+        key,
+        FailState {
+            attempt,
+            next_retry,
+            detail,
+        },
+    );
+}
+
+/// Whether a page needs a render request right now: never queued, or a
+/// failure whose retry backoff has elapsed. Terminal failures and futures
+/// backoffs wait; the clock comes in as a parameter so the schedule is
+/// testable.
+fn wants_render(
+    pending: &HashSet<CacheKey>,
+    failed: &HashMap<CacheKey, FailState>,
+    key: CacheKey,
+    now: Instant,
+) -> bool {
+    if pending.contains(&key) {
+        return false;
+    }
+    match failed.get(&key) {
+        None => true,
+        Some(FailState {
+            next_retry: Some(due),
+            ..
+        }) => *due <= now,
+        Some(FailState {
+            next_retry: None, ..
+        }) => false,
+    }
+}
+
+/// Zoom changed: forget failures (they were scale-specific) and drop
+/// pending entries queued at other scales — their results are superseded
+/// and their keys would otherwise leak in the queue forever.
+fn prune_stale_scale(
+    pending: &mut HashSet<CacheKey>,
+    failed: &mut HashMap<CacheKey, FailState>,
+    scale_q: u16,
+) {
+    failed.clear();
+    pending.retain(|key| key.scale_q == scale_q);
+}
+
+/// Outcome of offering a batch of renders to the pipeline.
+enum Submission {
+    /// Queued on the worker; the keys were recorded as pending.
+    Queued,
+    /// No worker — the renderer already stopped and its banner stands.
+    NoRenderer,
+    /// The worker refused the batch; it just stopped.
+    Refused,
+}
+
+/// Submit `wanted` and record the keys as pending only after an accepted
+/// submit, so a dead worker can never leave phantom queue entries behind
+/// that nothing will ever drain.
+fn queue_renders(
+    pipeline: Option<&Pipeline>,
+    wanted: &[RenderRequest],
+    pending: &mut HashSet<CacheKey>,
+) -> Submission {
+    let Some(pipeline) = pipeline else {
+        return Submission::NoRenderer;
+    };
+    if !pipeline.submit(wanted) {
+        return Submission::Refused;
+    }
+    pending.extend(wanted.iter().map(|req| req.key()));
+    Submission::Queued
+}
+
+/// Opacity (1 → 0) of a toast last refreshed at `shown`: full while the
+/// hold lasts, then a linear fade to zero.
+fn toast_opacity(shown: Instant, now: Instant) -> f32 {
+    let elapsed = now.saturating_duration_since(shown);
+    if elapsed < TOAST_HOLD {
+        return 1.0;
+    }
+    let fade = elapsed - TOAST_HOLD;
+    if fade >= TOAST_FADE {
+        return 0.0;
+    }
+    1.0 - fade.as_secs_f32() / TOAST_FADE.as_secs_f32()
+}
+
+/// Per-frame registry of the frame's text-edit widgets, feeding the
+/// focus-release decision: every editable field registers itself, and ones
+/// that explicitly request focus mark the frame so the blur pass cannot
+/// clobber a request with the very click that caused it.
+#[derive(Default)]
+struct FocusGuard {
+    editables: Vec<(egui::Id, egui::Rect)>,
+    requested: bool,
+}
+
+impl FocusGuard {
+    fn register(&mut self, response: &egui::Response) {
+        self.editables.push((response.id, response.rect));
+    }
+
+    fn request(&mut self, response: &egui::Response) {
+        self.requested = true;
+        response.request_focus();
+    }
+}
+
+/// Whether a pointer interaction should release a focused text field: a
+/// click or wheel scroll anywhere outside every editable field, while a
+/// field holds focus and nothing requested focus this frame (a same-frame
+/// request must not be clobbered by the click that triggered it).
+fn should_release_focus(
+    clicked: Option<egui::Pos2>,
+    scrolled: Option<egui::Pos2>,
+    focus: Option<egui::Id>,
+    editables: &[(egui::Id, egui::Rect)],
+    focus_requested: bool,
+) -> bool {
+    if focus_requested || focus.is_none() {
+        return false;
+    }
+    let outside = |pos: Option<egui::Pos2>| {
+        pos.is_some_and(|pos| !editables.iter().any(|(_, rect)| rect.contains(pos)))
+    };
+    outside(clicked) || outside(scrolled)
+}
 
 /// A promoted GPU texture for one page plus the scale it was rendered at.
 struct PageTexture {
@@ -134,9 +299,9 @@ pub struct ReaderApp {
     pipeline: Option<Pipeline>,
     /// Render jobs queued on the worker, awaiting their result.
     pending: HashSet<CacheKey>,
-    /// Render jobs that already failed at `failed_scale_q`; skipped until the
-    /// zoom or document changes so a bad page cannot retry forever.
-    failed: HashSet<CacheKey>,
+    /// Per-page failure ledger at `failed_scale_q`: automatic retries with
+    /// bounded backoff, then a terminal click-to-retry state.
+    failed: HashMap<CacheKey, FailState>,
     failed_scale_q: u16,
     /// Promoted textures keyed by page; dropped on theme switches.
     textures: HashMap<usize, PageTexture>,
@@ -173,6 +338,13 @@ pub struct ReaderApp {
 
     sidebar_open: bool,
     section: SidebarSection,
+    /// Text-edit widgets painted this frame, for the focus-release pass.
+    focus: FocusGuard,
+    /// Toast showing the viewport-center page: (page, last change).
+    toast: Option<(usize, Instant)>,
+    /// Last TOC row clicked with the page it pointed at; preferred over the
+    /// computed accent until the reader leaves that page.
+    toc_follow: Option<(usize, usize)>,
     /// Slider-driven UI text scale on top of [`Self::base_ppp`].
     ui_scale: f32,
     /// Native pixels-per-point captured at startup; [`Self::ui_scale`]
@@ -192,6 +364,11 @@ pub struct ReaderApp {
     jump_invalid: bool,
     search_query: String,
     search_hits: Option<Vec<SearchHit>>,
+    /// Running full-document scan; results stream into `search_hits`.
+    search_job: Option<SearchJob>,
+    /// In-flight native file picker; `Some` while the dialog is open, so
+    /// requests stay single-flight and the UI thread never blocks.
+    dialog_result: Option<Receiver<Option<PathBuf>>>,
     /// Hit rects of one painted page: (page, lowercase query, [x0, y0, x1,
     /// y1] points top-left origin). Refreshed lazily per visible page.
     highlight: Option<(usize, String, Vec<[f32; 4]>)>,
@@ -268,7 +445,7 @@ impl ReaderApp {
             cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
             pipeline: None,
             pending: HashSet::new(),
-            failed: HashSet::new(),
+            failed: HashMap::new(),
             failed_scale_q: 0,
             textures: HashMap::new(),
             icons: IconRender::default(),
@@ -284,6 +461,9 @@ impl ReaderApp {
             debug_picker: false,
             sidebar_open: false,
             section: SidebarSection::Contents,
+            focus: FocusGuard::default(),
+            toast: None,
+            toc_follow: None,
             ui_scale: 1.0,
             base_ppp: cc.egui_ctx.pixels_per_point(),
             focus_search: false,
@@ -296,6 +476,8 @@ impl ReaderApp {
             jump_invalid: false,
             search_query: String::new(),
             search_hits: None,
+            search_job: None,
+            dialog_result: None,
             highlight: None,
             toc_rows: Vec::new(),
             about_open: false,
@@ -321,7 +503,13 @@ impl ReaderApp {
                 "search" => {
                     app.section = SidebarSection::Search;
                     app.search_query = "attention".into();
-                    app.run_search();
+                    // Capture scaffolding: run the scan to completion before
+                    // the first frame so the shot shows the final rows.
+                    app.start_search();
+                    while app.search_job.is_some() {
+                        app.poll_search();
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
                 }
                 "search-empty" => app.section = SidebarSection::Search,
                 "appearance" => app.section = SidebarSection::Appearance,
@@ -380,7 +568,7 @@ impl ReaderApp {
                     // Mid-document capture states: page 8, then the flow or
                     // zoom change whose anchored relayout is under test.
                     if app.document.is_some() {
-                        app.goto_page(7);
+                        app.goto_page(7, None);
                         match mode.as_str() {
                             "deep-dual" => app.set_flow(Flow::Dual),
                             "deep-single" => app.set_flow(Flow::Single),
@@ -390,7 +578,7 @@ impl ReaderApp {
                     }
                 }
                 "delay-dual" | "delay-single" | "delay-percent" if app.document.is_some() => {
-                    app.goto_page(7);
+                    app.goto_page(7, None);
                     app.debug_relayout = Some(match mode.as_str() {
                         "delay-dual" => DebugRelayout::Dual,
                         "delay-single" => DebugRelayout::Single,
@@ -405,7 +593,7 @@ impl ReaderApp {
 
     fn open_path(&mut self, path: PathBuf) {
         self.error = None;
-        self.search_hits = None;
+        self.cancel_search();
         self.search_query.clear();
         self.highlight = None;
         self.renaming = None;
@@ -430,6 +618,8 @@ impl ReaderApp {
                 self.fit_page = false;
                 self.flow = Flow::Continuous;
                 self.ui_scale = 1.0;
+                self.toast = None;
+                self.toc_follow = None;
 
                 let theme_name = opened.session.theme.clone();
                 self.session = opened.session;
@@ -657,7 +847,7 @@ impl ReaderApp {
         self.document.as_ref().map_or(0, |doc| doc.page_count())
     }
 
-    fn goto_page(&mut self, page: usize) {
+    fn goto_page(&mut self, page: usize, dest_top: Option<f32>) {
         let count = self.page_count();
         if count == 0 {
             return;
@@ -667,7 +857,13 @@ impl ReaderApp {
         // An explicit jump is more specific than any pending relayout anchor.
         self.scroll_anchor = None;
         if let Some(rect) = self.layout.rects.get(page) {
-            self.pending_scroll = Some((rect.y - GAP).max(0.0));
+            let mut y = (rect.y - GAP).max(0.0);
+            if let Some(dest) = dest_top {
+                // The destination lands `dest` points below the page top —
+                // `dest * zoom` in content coordinates, kept inside the page.
+                y += (dest * self.layout.zoom).clamp(0.0, rect.h);
+            }
+            self.pending_scroll = Some(y);
         }
     }
 
@@ -730,26 +926,96 @@ impl ReaderApp {
         }
     }
 
+    /// Offer a native PDF picker without blocking the UI thread: the modal
+    /// runs on its own thread and reports through a channel that the frame
+    /// loop polls. Requests while one is already open are ignored.
     fn open_dialog(&mut self) {
-        if let Some(path) = crate::pdf_dialog().pick_file() {
+        if self.dialog_result.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dialog = crate::pdf_dialog();
+        std::thread::Builder::new()
+            .name("candi-dialog".into())
+            .spawn(move || {
+                let _ = tx.send(dialog.pick_file());
+            })
+            .expect("spawn candi-dialog thread");
+        self.dialog_result = Some(rx);
+    }
+
+    /// Apply a finished file-picker result, if any.
+    fn poll_dialog(&mut self) {
+        let mut picked = None;
+        if let Some(rx) = self.dialog_result.as_ref() {
+            match rx.try_recv() {
+                Ok(result) => picked = Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+            }
+        } else {
+            return;
+        }
+        self.dialog_result = None;
+        if let Some(path) = picked.flatten() {
             self.open_path(path);
         }
     }
 
-    fn run_search(&mut self) {
+    /// Start a full-document scan for the sidebar query on a worker thread.
+    /// Any running scan is cancelled first; results stream in via
+    /// [`ReaderApp::poll_search`].
+    fn start_search(&mut self) {
+        self.cancel_search();
         let query = self.search_query.trim().to_owned();
         if query.is_empty() {
             self.search_hits = None;
             return;
         }
-        match self.collect_matches(&query) {
-            Ok(hits) => {
-                if let Some(first) = hits.first() {
-                    self.goto_page(first.page);
+        let Some(document) = self.document.clone() else {
+            return;
+        };
+        self.search_hits = Some(Vec::new());
+        self.search_job = Some(SearchJob::spawn(document, query));
+    }
+
+    /// Stop any running scan and forget its results (query changed or the
+    /// document closed).
+    fn cancel_search(&mut self) {
+        if let Some(job) = self.search_job.take() {
+            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.search_hits = None;
+    }
+
+    /// Drain the running scan's finished batches: rows appear progressively,
+    /// the first hit jumps into view once available, and a terminal backend
+    /// error surfaces as the usual banner.
+    fn poll_search(&mut self) {
+        let Some(mut job) = self.search_job.take() else {
+            return;
+        };
+        let (batches, done) = job.poll();
+        let mut jump = None;
+        let mut hits = self.search_hits.take().unwrap_or_default();
+        for batch in batches {
+            match batch {
+                Ok(rows) => {
+                    if !rows.is_empty() && !job.jumped {
+                        job.jumped = true;
+                        jump = Some(rows[0].page);
+                    }
+                    hits.extend(rows);
                 }
-                self.search_hits = Some(hits);
+                Err(err) => self.error = Some(err),
             }
-            Err(err) => self.error = Some(err.to_string()),
+        }
+        self.search_hits = Some(hits);
+        if !done {
+            self.search_job = Some(job);
+        }
+        if let Some(page) = jump {
+            self.goto_page(page, None);
         }
     }
 
@@ -760,42 +1026,7 @@ impl ReaderApp {
             return;
         };
         let page = cycle_hit_page(hits, self.session.page, dir);
-        self.goto_page(page);
-    }
-
-    /// Every match in the document as a result row, in document order.
-    /// `SearchSession` cycles its cursor once the scan is complete, so the
-    /// collection stops when the first hit comes around again.
-    fn collect_matches(&self, query: &str) -> Result<Vec<SearchHit>, PdfError> {
-        let Some(document) = self.document.as_ref() else {
-            return Ok(Vec::new());
-        };
-        let mut session = SearchSession::new(document.as_ref(), query, 0);
-        let mut first: Option<(usize, usize)> = None;
-        while let Some(hit) = session.next()? {
-            if first.is_none() {
-                first = Some(hit);
-            } else if first == Some(hit) {
-                break;
-            }
-        }
-
-        // Hits arrive grouped by page in ascending order; the page text is
-        // fetched once per group. Offsets index into exactly this
-        // normalized+lowercased form of the page text.
-        let needle_len = query.to_lowercase().len();
-        let mut hits = Vec::new();
-        for group in session.results().chunk_by(|a, b| a.0 == b.0) {
-            let page = group[0].0;
-            let text = normalize_reader_text(&document.page_text(page)?).to_lowercase();
-            for &(_, offset) in group {
-                hits.push(SearchHit {
-                    page,
-                    snippet: extract_snippet(&text, offset, needle_len),
-                });
-            }
-        }
-        Ok(hits)
+        self.goto_page(page, None);
     }
 
     /// Hit rects for one painted page, in trait order: lowercase the live
@@ -831,6 +1062,9 @@ impl ReaderApp {
             match result {
                 RenderResult::Ready { request, image } => {
                     self.pending.remove(&request.key());
+                    // A success revokes the failure ledger entry, so a
+                    // recovered page never keeps a retry schedule alive.
+                    self.failed.remove(&request.key());
                     if request.scale_q == self.current_scale_q(ctx) {
                         self.promote_texture(ctx, request.page, request.scale_q, Some(&image));
                     }
@@ -852,8 +1086,11 @@ impl ReaderApp {
                 }
                 RenderResult::Failed { request, error } => {
                     self.pending.remove(&request.key());
-                    self.failed.insert(request.key());
-                    self.error = Some(format!("rendering page {}: {error}", request.page + 1));
+                    // Failures at a superseded scale are irrelevant — their
+                    // keys can never match a current-scale request again.
+                    if request.scale_q == self.current_scale_q(ctx) {
+                        note_render_failure(&mut self.failed, request.key(), Instant::now(), error);
+                    }
                 }
             }
         }
@@ -964,8 +1201,9 @@ impl ReaderApp {
                 self.cache.insert(key, width, height, rgba);
             }
             Err(err) => {
-                self.failed.insert(key);
-                self.error = Some(format!("rendering page {}: {err}", page + 1));
+                // The per-page failure ledger surfaces this as a
+                // click-to-retry state instead of a banner.
+                note_render_failure(&mut self.failed, key, Instant::now(), err.to_string());
             }
         }
     }
@@ -1024,19 +1262,19 @@ impl ReaderApp {
 
         let scale_q = self.current_scale_q(ctx);
         if self.failed_scale_q != scale_q {
-            self.failed.clear();
+            prune_stale_scale(&mut self.pending, &mut self.failed, scale_q);
             self.failed_scale_q = scale_q;
         }
         let scale = self.current_scale(ctx.pixels_per_point());
+        let now = Instant::now();
         let mut wanted = Vec::new();
         for page in candidates {
             let key = CacheKey { page, scale_q };
-            if self.pending.contains(&key)
-                || self.failed.contains(&key)
-                || self
-                    .textures
-                    .get(&page)
-                    .is_some_and(|t| t.scale_q == scale_q)
+            if self
+                .textures
+                .get(&page)
+                .is_some_and(|t| t.scale_q == scale_q)
+                || !wants_render(&self.pending, &self.failed, key, now)
             {
                 continue;
             }
@@ -1049,22 +1287,22 @@ impl ReaderApp {
                 scale_q,
                 scale,
             });
-            self.pending.insert(key);
         }
-        if !wanted.is_empty()
-            && let Some(pipeline) = &self.pipeline
-            && !pipeline.submit(&wanted)
-        {
-            self.renderer_stopped();
+        if !wanted.is_empty() {
+            match queue_renders(self.pipeline.as_ref(), &wanted, &mut self.pending) {
+                Submission::Refused => self.renderer_stopped(),
+                Submission::Queued | Submission::NoRenderer => {}
+            }
         }
     }
 
     /// The worker thread died; nothing will ever drain `pending`. Drop the
-    /// pipeline so placeholders stop promising progress and surface the
-    /// failure instead of spinning silently.
+    /// pipeline and the failure ledger so placeholders stop promising
+    /// progress and surface the failure instead of spinning silently.
     fn renderer_stopped(&mut self) {
         self.pipeline = None;
         self.pending.clear();
+        self.failed.clear();
         self.error = Some("renderer stopped; restart Candi to keep reading".into());
     }
 
@@ -1101,17 +1339,21 @@ impl ReaderApp {
         );
 
         let mut pending_save = None;
+        // Collected under the `editor` borrow, merged into the registry
+        // after it ends. The editor never auto-requests focus.
+        let mut editor_focus = FocusGuard::default();
         {
             let Some(editor) = self.editor.as_mut() else {
                 return;
             };
             ui.horizontal(|ui| {
                 ui.label("Save as");
-                ui.add(
+                let field = ui.add(
                     egui::TextEdit::singleline(&mut editor.saved_name)
                         .hint_text("My Theme")
                         .desired_width(140.0),
                 );
+                editor_focus.register(&field);
                 if ui.button("Save").clicked() && !editor.saved_name.trim().is_empty() {
                     pending_save = Some(editor.saved_name.clone());
                 }
@@ -1159,6 +1401,7 @@ impl ReaderApp {
                 .font(egui::TextStyle::Monospace)
                 .layouter(&mut layouter);
             let response = ui.add_sized([ui.available_width(), ui.available_height()], edit_box);
+            editor_focus.register(&response);
             if response.changed() {
                 editor.edit(buffer)
             } else {
@@ -1166,6 +1409,7 @@ impl ReaderApp {
                 None
             }
         };
+        self.focus.editables.append(&mut editor_focus.editables);
         if let Some(theme) = edited {
             self.apply_edited_theme(theme);
         }
@@ -1245,6 +1489,8 @@ impl ReaderApp {
             clip_h: 0.0,
         };
 
+        let mut retry_click = None;
+        let scale_q = self.current_scale_q(&ctx);
         let output = area.show(ui, |ui| {
             let content_w = ui.available_width();
             let (content_rect, _) = ui.allocate_exact_size(
@@ -1299,13 +1545,55 @@ impl ReaderApp {
                     }
                     None => {
                         painter.rect_filled(screen, PAGE_ROUNDING, paper);
-                        painter.text(
-                            screen.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "rendering…",
-                            hint_font.clone(),
-                            fg.gamma_multiply(0.6),
-                        );
+                        let key = CacheKey { page, scale_q };
+                        match self.failed.get(&key) {
+                            Some(
+                                state @ FailState {
+                                    next_retry: None, ..
+                                },
+                            ) => {
+                                let retry = ui
+                                    .interact(
+                                        screen,
+                                        egui::Id::new(("page_retry", page)),
+                                        egui::Sense::click(),
+                                    )
+                                    .on_hover_text(&state.detail);
+                                let tint = if retry.hovered() {
+                                    ERROR_RED
+                                } else {
+                                    ERROR_RED.gamma_multiply(0.8)
+                                };
+                                self.icons.paint_at(
+                                    ui,
+                                    egui::Rect::from_center_size(
+                                        screen.center() - egui::vec2(0.0, 12.0),
+                                        egui::vec2(22.0, 22.0),
+                                    ),
+                                    Icon::X,
+                                    tint,
+                                );
+                                painter.text(
+                                    screen.center() + egui::vec2(0.0, 14.0),
+                                    egui::Align2::CENTER_CENTER,
+                                    "Render failed — click to retry",
+                                    hint_font.clone(),
+                                    fg.gamma_multiply(0.7),
+                                );
+                                if retry.clicked() {
+                                    retry_click = Some(key);
+                                }
+                            }
+                            _ => {
+                                painter.text(
+                                    screen.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    "rendering…",
+                                    hint_font.clone(),
+                                    fg.gamma_multiply(0.6),
+                                );
+                            }
+                        }
                     }
                 }
                 let hits = self.page_highlight(page);
@@ -1329,8 +1617,20 @@ impl ReaderApp {
             }
         });
 
+        if let Some(key) = retry_click {
+            // Clear the terminal state; the next request_pages requeues it.
+            self.failed.remove(&key);
+        }
+
         if self.page_count() > 0 {
             if let Some(page) = self.layout.page_at(view.center_y) {
+                if self
+                    .toast
+                    .as_ref()
+                    .is_none_or(|(shown_page, _)| *shown_page != page)
+                {
+                    self.toast = Some((page, Instant::now()));
+                }
                 self.session.page = page;
             }
             self.canvas_center_y = view.center_y;
@@ -1558,7 +1858,7 @@ impl ReaderApp {
                                     .on_hover_text("Previous page (Left / PgUp)")
                                     .clicked()
                                 {
-                                    self.goto_page(current - 1);
+                                    self.goto_page(current - 1, None);
                                 }
                             });
                             match self.page_jump.as_mut() {
@@ -1569,10 +1869,11 @@ impl ReaderApp {
                                         count,
                                         &mut self.page_jump_focus,
                                         &mut self.jump_invalid,
+                                        &mut self.focus,
                                     );
                                     match outcome {
                                         JumpOutcome::Commit(page) => {
-                                            self.goto_page(page);
+                                            self.goto_page(page, None);
                                             done = true;
                                         }
                                         JumpOutcome::Cancel => done = true,
@@ -1607,7 +1908,7 @@ impl ReaderApp {
                                     .on_hover_text("Next page (Right / PgDn)")
                                     .clicked()
                                 {
-                                    self.goto_page(current + 1);
+                                    self.goto_page(current + 1, None);
                                 }
                             });
                         });
@@ -1822,16 +2123,31 @@ impl ReaderApp {
             ui.label(egui::RichText::new("No table of contents").weak());
             return;
         }
-        let active = active_toc_row(&self.toc_rows, self.session.page);
+        // The last-clicked row keeps the accent until the reader scrolls to
+        // a different page.
+        if let Some((_, page)) = self.toc_follow
+            && page != self.session.page
+        {
+            self.toc_follow = None;
+        }
+        // Reading height within the current page, in points from its top —
+        // the same space as the outline destinations.
+        let pos = self.layout.rects.get(self.session.page).map(|rect| {
+            let within = ((self.canvas_center_y - rect.y) / self.layout.zoom).max(0.0);
+            (self.session.page, within)
+        });
+        let computed = active_toc_row(&self.toc_rows, pos);
+        let active = self.toc_follow.map_or(computed, |(row, _)| Some(row));
         let accent = color_of(self.theme.accent);
         let mut jump = None;
         for (idx, row) in self.toc_rows.iter().enumerate() {
             if toc_row_ui(ui, row, active == Some(idx), accent).clicked() {
-                jump = Some(row.page);
+                jump = Some((row.page, row.dest_top));
+                self.toc_follow = Some((idx, row.page));
             }
         }
-        if let Some(page) = jump {
-            self.goto_page(page);
+        if let Some((page, dest)) = jump {
+            self.goto_page(page, dest);
         }
     }
 
@@ -1861,8 +2177,9 @@ impl ReaderApp {
                         egui::TextEdit::singleline(&mut self.rename_buffer)
                             .desired_width(ui.available_width() - 30.0),
                     );
+                    self.focus.register(&field);
                     if self.rename_focus {
-                        field.request_focus();
+                        self.focus.request(&field);
                         self.rename_focus = false;
                     }
                     if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -1923,7 +2240,7 @@ impl ReaderApp {
             self.rename_focus = true;
         }
         if let Some(page) = jump {
-            self.goto_page(page);
+            self.goto_page(page, None);
         }
         if let Some(page) = remove {
             self.session.remove_bookmark(page);
@@ -1937,20 +2254,24 @@ impl ReaderApp {
                 .hint_text("Find in document")
                 .desired_width(ui.available_width()),
         );
+        self.focus.register(&field);
         if self.focus_search {
-            field.request_focus();
+            self.focus.request(&field);
             self.focus_search = false;
         }
         if field.changed() {
-            self.search_hits = None;
+            self.cancel_search();
         }
         if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-            self.run_search();
+            self.start_search();
         }
 
         let total = self.search_hits.as_deref().map_or(0, <[SearchHit]>::len);
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("{total} matches")).weak());
+            if self.search_job.is_some() {
+                ui.label(egui::RichText::new("searching…").weak());
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_enabled_ui(total > 0, |ui| {
                     if self
@@ -1992,7 +2313,7 @@ impl ReaderApp {
             }
         };
         if let Some(page) = jump {
-            self.goto_page(page);
+            self.goto_page(page, None);
         }
     }
 
@@ -2344,11 +2665,12 @@ impl ReaderApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .fixed_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
-                ui.add(
+                let filter = ui.add(
                     egui::TextEdit::singleline(&mut self.shortcut_filter)
                         .hint_text("Filter shortcuts")
                         .desired_width(ui.available_width()),
                 );
+                self.focus.register(&filter);
                 let needle = self.shortcut_filter.trim().to_lowercase();
                 egui::ScrollArea::vertical()
                     .max_height(ctx.screen_rect().height() * 0.6)
@@ -2376,15 +2698,50 @@ impl ReaderApp {
                 ui.label(egui::RichText::new(hint).weak().small());
             });
     }
+    /// Floating "Page N of M" toast anchored above the bottom bar: it
+    /// refreshes on every viewport-center page change, holds while
+    /// scrolling, and fades out shortly after scrolling settles.
+    fn show_page_toast(&mut self, ctx: &egui::Context) {
+        let Some((page, shown)) = self.toast else {
+            return;
+        };
+        let opacity = toast_opacity(shown, Instant::now());
+        if opacity <= 0.0 {
+            self.toast = None;
+            return;
+        }
+        let fg = color_of(self.theme.ui_fg);
+        let count = self.page_count();
+        egui::Area::new(egui::Id::new("page_toast"))
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, 54.0))
+            .show(ctx, |ui| {
+                egui::Frame::default()
+                    .fill(color_of(self.theme.ui_bg).gamma_multiply(opacity))
+                    .stroke(egui::Stroke::new(
+                        1.0_f32,
+                        fg.gamma_multiply(0.25 * opacity),
+                    ))
+                    .rounding(6.0)
+                    .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("Page {} of {}", page + 1, count))
+                                .font(egui::FontId::proportional(13.0))
+                                .color(fg.gamma_multiply(opacity)),
+                        );
+                    });
+            });
+    }
 }
 
 impl ReaderApp {
     /// Handle the frame's keyboard input, dispatching through the loaded
-    /// keybind map (`keybinds.json`). Plain-key actions stay gated on no
-    /// text widget holding focus; the ctrl-style ones match everywhere,
-    /// exactly like their pre-keybind hardcoded arms.
+    /// keybind map (`keybinds.json`). Plain-key actions stay gated on
+    /// keyboard freedom — no text widget holding focus — while the
+    /// ctrl-style ones match everywhere, exactly like their pre-keybind
+    /// hardcoded arms.
     fn handle_input(&mut self, ctx: &egui::Context) {
-        let plain = !ctx.wants_keyboard_input();
+        let keyboard_free = !ctx.wants_keyboard_input();
         ctx.input(|input| {
             for event in &input.events {
                 let egui::Event::Key {
@@ -2423,20 +2780,26 @@ impl ReaderApp {
                     Action::KeybindsWindow => self.shortcuts_open = true,
                     // Document zoom keys are scoped to the canvas: the theme
                     // editor owns its own font-zoom keys.
-                    Action::ZoomIn if plain && self.editor.is_none() && self.page_count() > 0 => {
+                    Action::ZoomIn
+                        if keyboard_free && self.editor.is_none() && self.page_count() > 0 =>
+                    {
                         self.zoom_step(5);
                     }
-                    Action::ZoomOut if plain && self.editor.is_none() && self.page_count() > 0 => {
+                    Action::ZoomOut
+                        if keyboard_free && self.editor.is_none() && self.page_count() > 0 =>
+                    {
                         self.zoom_step(-5);
                     }
-                    Action::FitWidth if plain && self.editor.is_none() && self.page_count() > 0 => {
+                    Action::FitWidth
+                        if keyboard_free && self.editor.is_none() && self.page_count() > 0 =>
+                    {
                         self.zoom_fit_width();
                     }
-                    Action::CycleTheme if plain => self.cycle_theme(),
-                    Action::Bookmark if plain && self.page_count() > 0 => {
+                    Action::CycleTheme if keyboard_free => self.cycle_theme(),
+                    Action::Bookmark if keyboard_free && self.page_count() > 0 => {
                         self.session.toggle_bookmark(self.session.page);
                     }
-                    Action::Quit if plain => {
+                    Action::Quit if keyboard_free => {
                         self.save_state();
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -2456,14 +2819,16 @@ impl ReaderApp {
                             && self.section == SidebarSection::Search
                             && !self.search_query.is_empty()
                         {
-                            self.search_hits = None;
+                            self.cancel_search();
                             self.search_query.clear();
                         }
                     }
-                    Action::PrevPage if plain => {
-                        self.goto_page(self.session.page.saturating_sub(1));
+                    Action::PrevPage if keyboard_free => {
+                        self.goto_page(self.session.page.saturating_sub(1), None);
                     }
-                    Action::NextPage if plain => self.goto_page(self.session.page + 1),
+                    Action::NextPage if keyboard_free => {
+                        self.goto_page(self.session.page + 1, None)
+                    }
                     _ => {}
                 }
             }
@@ -2471,7 +2836,7 @@ impl ReaderApp {
             // report a multiplicative delta anchored at the viewport center,
             // mirroring the keyboard steps' percent-switch semantics.
             let pinch = input.zoom_delta();
-            if plain && pinch != 1.0 && self.editor.is_none() && self.page_count() > 0 {
+            if keyboard_free && pinch != 1.0 && self.editor.is_none() && self.page_count() > 0 {
                 self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
             }
         });
@@ -2643,6 +3008,7 @@ fn jump_input(
     count: usize,
     focus: &mut bool,
     invalid: &mut bool,
+    guard: &mut FocusGuard,
 ) -> JumpOutcome {
     let mut edit = egui::TextEdit::singleline(buffer)
         .desired_width(64.0)
@@ -2651,8 +3017,9 @@ fn jump_input(
         edit = edit.text_color(ERROR_RED);
     }
     let field = ui.add(edit);
+    guard.register(&field);
     if *focus {
-        field.request_focus();
+        guard.request(&field);
         *focus = false;
     }
     if !field.lost_focus() {
@@ -2822,6 +3189,7 @@ impl eframe::App for ReaderApp {
             apply_theme(ctx, &self.theme);
             self.applied_theme.clone_from(&self.theme.name);
         }
+        self.focus = FocusGuard::default();
 
         self.collect_results(ctx);
         // A file dropped onto the window opens like any other (design spec
@@ -2887,15 +3255,66 @@ impl eframe::App for ReaderApp {
                 }
             });
 
+        self.show_page_toast(ctx);
         self.about_window(ctx);
         self.info_window(ctx);
         self.shortcuts_window(ctx);
         self.handle_input(ctx);
+        self.poll_search();
+        self.poll_dialog();
+
+        // A click or wheel scroll outside the text fields releases their
+        // focus, so plain keys reach the keybind dispatcher again.
+        let focus = ctx.memory(|mem| mem.focused());
+        let (click_pos, scroll_pos) = ctx.input(|input| {
+            let pos = input.pointer.interact_pos();
+            let clicked = input.pointer.primary_clicked().then_some(pos).flatten();
+            let scrolled = (input.raw_scroll_delta != egui::Vec2::ZERO)
+                .then_some(pos)
+                .flatten();
+            (clicked, scrolled)
+        });
+        if let Some(focused) = focus
+            && should_release_focus(
+                click_pos,
+                scroll_pos,
+                Some(focused),
+                &self.focus.editables,
+                self.focus.requested,
+            )
+        {
+            ctx.memory_mut(|mem| mem.surrender_focus(focused));
+        }
 
         // Completed renders must wake the UI even when no input arrives;
-        // poll at a fixed cadence while anything is outstanding.
+        // poll at a fixed cadence while anything is outstanding. Retry
+        // backoffs wake exactly when they come due (elapsed ones are
+        // requeued only if their page turns visible again), streaming
+        // searches and open dialogs poll at the fixed cadence, and the
+        // toast repaints while it holds and fades.
+        let now = Instant::now();
         if !self.pending.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(50));
+        } else if let Some(next) = self
+            .failed
+            .values()
+            .filter_map(|state| state.next_retry)
+            .filter(|due| *due > now)
+            .min()
+        {
+            ctx.request_repaint_after(next - now);
+        }
+        if self.search_job.is_some() || self.dialog_result.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        if let Some((_, shown)) = self.toast {
+            let elapsed = Instant::now().saturating_duration_since(shown);
+            let wait = if elapsed < TOAST_HOLD {
+                TOAST_HOLD - elapsed
+            } else {
+                TOAST_FADE / 8
+            };
+            ctx.request_repaint_after(wait);
         }
     }
 
@@ -2911,6 +3330,10 @@ impl eframe::App for ReaderApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    use candi_pdf::Backend as _;
+    use candi_pdf::stub::StubBackend;
 
     fn builtin_theme(name: &str) -> Theme {
         builtin(name).unwrap_or_else(|| panic!("{name} must exist"))
@@ -3203,5 +3626,208 @@ mod tests {
         );
         assert_eq!(anchored_offset(&last, (0, 0.0), vh), Some(0.0));
         assert_eq!(anchored_offset(&Layout::default(), (0, 0.0), vh), None);
+    }
+
+    fn key(page: usize, scale_q: u16) -> CacheKey {
+        CacheKey { page, scale_q }
+    }
+
+    #[test]
+    fn render_failures_back_off_then_terminate() {
+        let now = Instant::now();
+        let mut failed = HashMap::new();
+        note_render_failure(&mut failed, key(3, 100), now, "boom".into());
+        assert_eq!(failed[&key(3, 100)].attempt, 1);
+        assert_eq!(
+            failed[&key(3, 100)].next_retry.unwrap() - now,
+            RETRY_BACKOFFS[0]
+        );
+        // The retry's failure builds on the recorded attempt count.
+        note_render_failure(&mut failed, key(3, 100), now, "boom".into());
+        assert_eq!(failed[&key(3, 100)].attempt, 2);
+        assert_eq!(
+            failed[&key(3, 100)].next_retry.unwrap() - now,
+            RETRY_BACKOFFS[1]
+        );
+        note_render_failure(&mut failed, key(3, 100), now, "boom".into());
+        assert_eq!(
+            failed[&key(3, 100)].next_retry.unwrap() - now,
+            RETRY_BACKOFFS[2]
+        );
+        // The fourth failure exhausts the schedule: terminal.
+        note_render_failure(&mut failed, key(3, 100), now, "boom".into());
+        assert_eq!(failed[&key(3, 100)].attempt, 4);
+        assert_eq!(failed[&key(3, 100)].next_retry, None);
+    }
+
+    #[test]
+    fn wants_render_respects_pending_and_retry_schedule() {
+        let now = Instant::now();
+        let mut pending = HashSet::new();
+        let mut failed = HashMap::new();
+
+        // Fresh page: render it.
+        assert!(wants_render(&pending, &failed, key(0, 100), now));
+        // Already queued: don't double-book.
+        pending.insert(key(0, 100));
+        assert!(!wants_render(&pending, &failed, key(0, 100), now));
+        pending.clear();
+
+        // A backoff still in the future waits; an elapsed one requeues.
+        failed.insert(
+            key(1, 100),
+            FailState {
+                attempt: 1,
+                next_retry: Some(now + Duration::from_secs(1)),
+                detail: "boom".into(),
+            },
+        );
+        assert!(!wants_render(&pending, &failed, key(1, 100), now));
+        assert!(wants_render(
+            &pending,
+            &failed,
+            key(1, 100),
+            now + Duration::from_secs(2)
+        ));
+        // Terminal failures only revive by click (the ledger entry removed).
+        failed.insert(
+            key(2, 100),
+            FailState {
+                attempt: 4,
+                next_retry: None,
+                detail: "boom".into(),
+            },
+        );
+        assert!(!wants_render(&pending, &failed, key(2, 100), now));
+    }
+
+    #[test]
+    fn zoom_change_prunes_stale_scale_state() {
+        let mut pending = HashSet::from([key(0, 100), key(1, 100), key(1, 125), key(2, 125)]);
+        let mut failed = HashMap::from([
+            (
+                key(3, 100),
+                FailState {
+                    attempt: 1,
+                    next_retry: None,
+                    detail: "old scale".into(),
+                },
+            ),
+            (
+                key(4, 125),
+                FailState {
+                    attempt: 2,
+                    next_retry: None,
+                    detail: "current scale".into(),
+                },
+            ),
+        ]);
+        prune_stale_scale(&mut pending, &mut failed, 125);
+        assert_eq!(
+            pending,
+            HashSet::from([key(1, 125), key(2, 125)]),
+            "only current-scale queue entries survive"
+        );
+        assert!(failed.is_empty(), "failures never outlive their scale");
+    }
+
+    #[test]
+    fn queue_renders_records_keys_only_after_an_accepted_submit() {
+        let doc: Arc<dyn Document> = Arc::from(StubBackend::new(3).open("x.pdf", None).unwrap());
+        let pipeline = Pipeline::spawn(doc);
+        let mut pending = HashSet::new();
+        let wanted = vec![RenderRequest {
+            page: 0,
+            scale_q: 100,
+            scale: 1.0,
+        }];
+        assert!(matches!(
+            queue_renders(Some(&pipeline), &wanted, &mut pending),
+            Submission::Queued
+        ));
+        assert_eq!(pending, HashSet::from([key(0, 100)]));
+
+        // No renderer: nothing queues, nothing regrows.
+        pending.clear();
+        assert!(matches!(
+            queue_renders(None, &wanted, &mut pending),
+            Submission::NoRenderer
+        ));
+        assert!(pending.is_empty(), "a dead renderer grows no pending keys");
+    }
+
+    #[test]
+    fn toast_fades_after_the_hold() {
+        let shown = Instant::now();
+        assert_eq!(toast_opacity(shown, shown), 1.0);
+        assert_eq!(toast_opacity(shown, shown + TOAST_HOLD), 1.0);
+        let mid = toast_opacity(shown, shown + TOAST_HOLD + TOAST_FADE / 2);
+        assert!(mid > 0.2 && mid < 0.8, "mid-fade opacity {mid}");
+        assert_eq!(
+            toast_opacity(shown, shown + TOAST_HOLD + TOAST_FADE),
+            0.0,
+            "gone after the fade"
+        );
+        assert_eq!(
+            toast_opacity(shown, shown + TOAST_HOLD + TOAST_FADE * 3),
+            0.0
+        );
+    }
+
+    #[test]
+    fn should_release_focus_decides_by_click_and_scroll_targets() {
+        let field_id = egui::Id::new("field");
+        let field = (
+            field_id,
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(60.0, 20.0)),
+        );
+        let editables = [field];
+        let inside = egui::pos2(30.0, 10.0);
+        let outside = egui::pos2(300.0, 300.0);
+        let with_focus = Some(field_id);
+
+        // Nothing to release.
+        assert!(!should_release_focus(
+            Some(outside),
+            None,
+            None,
+            &editables,
+            false
+        ));
+        // A same-frame focus request wins over the blur.
+        assert!(!should_release_focus(
+            Some(outside),
+            None,
+            with_focus,
+            &editables,
+            true
+        ));
+        // Clicking inside the field never blurs it.
+        assert!(!should_release_focus(
+            Some(inside),
+            None,
+            with_focus,
+            &editables,
+            false
+        ));
+        // Clicks and scrolls outside release it.
+        assert!(should_release_focus(
+            Some(outside),
+            None,
+            with_focus,
+            &editables,
+            false
+        ));
+        assert!(should_release_focus(
+            None,
+            Some(outside),
+            with_focus,
+            &editables,
+            false
+        ));
+        // No interaction, no release.
+        assert!(!should_release_focus(
+            None, None, with_focus, &editables, false
+        ));
     }
 }

@@ -102,6 +102,11 @@ impl PageImage {
 pub struct TocItem {
     pub title: String,
     pub page: usize,
+    /// Vertical landing point within the page, in points measured from the
+    /// page's top edge (the same top-left point space as `search_page`
+    /// rects), when the destination carries one; `None` for page-only or
+    /// fit-style destinations.
+    pub dest_top: Option<f32>,
     pub children: Vec<TocItem>,
 }
 

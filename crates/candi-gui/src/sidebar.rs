@@ -15,11 +15,14 @@ pub(crate) enum SidebarSection {
     Appearance,
 }
 
-/// One visible contents row; `page` is 0-based.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One visible contents row; `page` is 0-based and `dest_top` is the
+/// destination's landing height in points from the page's top edge, when
+/// the outline entry carries one.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TocRow {
     pub title: String,
     pub page: usize,
+    pub dest_top: Option<f32>,
     pub depth: u32,
 }
 
@@ -36,28 +39,48 @@ fn walk(items: &[TocItem], depth: u32, rows: &mut Vec<TocRow>) {
         rows.push(TocRow {
             title: item.title.clone(),
             page: item.page - 1,
+            dest_top: item.dest_top,
             depth,
         });
         walk(&item.children, depth + 1, rows);
     }
 }
 
-/// Row index of the single deepest outline entry whose range contains
-/// `page`. An entry spans from its start page to the start of the next entry
-/// at its own depth or shallower; beyond that it is superseded. Ancestors of
-/// the reading position stay unaccented so stale siblings never light up
-/// together with the live entry. `None` when the position precedes the first
-/// heading.
-pub(crate) fn active_toc_row(rows: &[TocRow], page: usize) -> Option<usize> {
+/// Row index of the single deepest outline entry containing the reading
+/// position `pos = (page, height-in-points within the page)`. An entry spans
+/// from its landing point to the landing point of the next entry at its own
+/// depth or shallower; past that it is superseded. Entries without a landing
+/// point start at the page top and never supersede a same-page predecessor
+/// (earlier sibling wins). Ancestors of the reading position stay unaccented
+/// so stale siblings never light up together with the live entry. `None`
+/// when the position precedes the first heading.
+pub(crate) fn active_toc_row(rows: &[TocRow], pos: Option<(usize, f32)>) -> Option<usize> {
+    let (page, y) = pos?;
+    // A row begins once the reading position reaches its page (page-top for
+    // entries without a landing point) or drops to its landing height.
+    let started = |row: &TocRow| {
+        row.page < page || (row.page == page && row.dest_top.is_none_or(|top| top <= y))
+    };
+    // A row supersedes its predecessor at the same depth once its landing
+    // point is reached; without a landing point it only supersedes on a
+    // later page, so same-page siblings without a y never skip ahead.
+    let supersedes = |row: &TocRow| {
+        row.page < page || (row.page == page && row.dest_top.is_some_and(|top| top <= y))
+    };
     let mut chain: Vec<Option<usize>> = Vec::new();
     for (idx, row) in rows.iter().enumerate() {
-        if row.page > page {
+        if !started(row) {
             break;
         }
         if chain.len() <= row.depth as usize {
             chain.resize(row.depth as usize + 1, None);
         }
-        chain[row.depth as usize] = Some(idx);
+        let slot = &mut chain[row.depth as usize];
+        let same_page_stale =
+            slot.is_some_and(|prev| rows[prev].page == row.page) && !supersedes(row);
+        if !same_page_stale {
+            *slot = Some(idx);
+        }
     }
     chain
         .into_iter()
@@ -67,7 +90,7 @@ pub(crate) fn active_toc_row(rows: &[TocRow], page: usize) -> Option<usize> {
             rows[idx + 1..]
                 .iter()
                 .find(|row| row.depth <= depth)
-                .is_none_or(|bound| bound.page > page)
+                .is_none_or(|bound| !supersedes(bound))
         })
         .max_by_key(|&idx| rows[idx].depth)
 }
@@ -133,9 +156,14 @@ mod tests {
     use super::*;
 
     fn toc(title: &str, page: usize, children: Vec<TocItem>) -> TocItem {
+        toc_at(title, page, None, children)
+    }
+
+    fn toc_at(title: &str, page: usize, dest_top: Option<f32>, children: Vec<TocItem>) -> TocItem {
         TocItem {
             title: title.to_owned(),
             page,
+            dest_top,
             children,
         }
     }
@@ -153,26 +181,31 @@ mod tests {
                 TocRow {
                     title: "Intro".into(),
                     page: 0,
+                    dest_top: None,
                     depth: 0
                 },
                 TocRow {
                     title: "Part I".into(),
                     page: 1,
+                    dest_top: None,
                     depth: 0
                 },
                 TocRow {
                     title: "Chapter 1".into(),
                     page: 2,
+                    dest_top: None,
                     depth: 1
                 },
                 TocRow {
                     title: "Part II".into(),
                     page: 4,
+                    dest_top: None,
                     depth: 0
                 },
                 TocRow {
                     title: "Appendix".into(),
                     page: 6,
+                    dest_top: None,
                     depth: 1
                 },
             ]
@@ -196,30 +229,80 @@ mod tests {
         ]);
         // Reading page 6 (0-based 5): inside 2. Data; Part I and the
         // superseded 1. Intro stay unaccented.
-        assert_eq!(active_toc_row(&rows, 5), Some(2));
+        assert_eq!(active_toc_row(&rows, Some((5, 300.0))), Some(2));
         // Past every heading: only Part II — the already-ended 2. Data never
         // outshines it.
-        assert_eq!(active_toc_row(&rows, 100), Some(3));
+        assert_eq!(active_toc_row(&rows, Some((100, 300.0))), Some(3));
         // Between headings the deeper sibling keeps the accent.
-        assert_eq!(active_toc_row(&rows, 3), Some(1));
+        assert_eq!(active_toc_row(&rows, Some((3, 300.0))), Some(1));
     }
 
     #[test]
     fn active_toc_row_is_none_before_the_first_heading() {
         let rows = flatten_toc(&[toc("Chapter 1", 4, vec![])]);
-        assert_eq!(active_toc_row(&rows, 0), None);
+        assert_eq!(active_toc_row(&rows, Some((0, 300.0))), None);
     }
 
     #[test]
-    fn active_toc_row_prefers_the_latest_equal_depth_entry() {
-        // Two depth-1 entries on the same start page: the later one wins, so
-        // duplicate-page outlines do not keep a stale sibling lit.
+    fn same_page_siblings_resolve_by_destination_height() {
+        // Two depth-1 entries starting on the same page with distinct
+        // landing points: the accent follows the reading depth.
         let rows = flatten_toc(&[toc(
+            "Cover",
+            1,
+            vec![
+                toc_at("Left page", 1, Some(50.0), vec![]),
+                toc_at("Right page", 1, Some(400.0), vec![]),
+            ],
+        )]);
+        assert_eq!(
+            active_toc_row(&rows, Some((0, 100.0))),
+            Some(1),
+            "above the later heading the earlier one is active"
+        );
+        assert_eq!(
+            active_toc_row(&rows, Some((0, 450.0))),
+            Some(2),
+            "past its landing point the later heading takes over"
+        );
+        // Siblings without landing points keep the earlier entry active so a
+        // duplicate-page outline never skips ahead.
+        let plain = flatten_toc(&[toc(
             "Cover",
             1,
             vec![toc("Left page", 1, vec![]), toc("Right page", 1, vec![])],
         )]);
-        assert_eq!(active_toc_row(&rows, 1), Some(2));
+        assert_eq!(active_toc_row(&plain, Some((0, 300.0))), Some(1));
+    }
+
+    #[test]
+    fn a_landing_point_supersedes_the_same_page_predecessor() {
+        // The regression case: two top-level sections starting on the same
+        // page. Reading between their landing points accents the earlier
+        // one even though the later sibling already started by page number.
+        let rows = flatten_toc(&[
+            toc("Training", 7, vec![]),
+            toc_at("Regression", 7, Some(550.0), vec![]),
+            toc("Results", 9, vec![]),
+        ]);
+        assert_eq!(active_toc_row(&rows, Some((6, 300.0))), Some(0));
+        assert_eq!(active_toc_row(&rows, Some((6, 600.0))), Some(1));
+        // The later sibling's span carries into the following pages.
+        assert_eq!(active_toc_row(&rows, Some((7, 100.0))), Some(1));
+
+        // When the later sibling instead lands mid-page on the NEXT page,
+        // the predecessor keeps the accent until its landing point.
+        let rows = flatten_toc(&[
+            toc("Training", 7, vec![]),
+            toc_at("Regression", 8, Some(550.0), vec![]),
+            toc("Results", 10, vec![]),
+        ]);
+        assert_eq!(
+            active_toc_row(&rows, Some((7, 100.0))),
+            Some(0),
+            "above the landing on its start page"
+        );
+        assert_eq!(active_toc_row(&rows, Some((7, 600.0))), Some(1));
     }
 
     #[test]
@@ -236,11 +319,11 @@ mod tests {
                 toc("Ch. 2", 7, vec![]),
             ],
         )]);
-        assert_eq!(active_toc_row(&rows, 3), Some(2));
-        assert_eq!(active_toc_row(&rows, 5), Some(3));
+        assert_eq!(active_toc_row(&rows, Some((3, 300.0))), Some(2));
+        assert_eq!(active_toc_row(&rows, Some((5, 300.0))), Some(3));
         // Inside Ch. 2 the finished 1.x sections are no longer accentable;
         // the highlight climbs back to the chapter that is actually open.
-        assert_eq!(active_toc_row(&rows, 8), Some(4));
+        assert_eq!(active_toc_row(&rows, Some((8, 300.0))), Some(4));
     }
 
     #[test]

@@ -175,15 +175,30 @@ fn toc_from_outlines(outlines: &[mupdf::Outline], page_count: usize) -> Vec<TocI
     outlines
         .iter()
         .filter_map(|outline| {
-            let number = i64::from(outline.dest.as_ref()?.loc.page_number);
+            let dest = outline.dest.as_ref()?;
+            let number = i64::from(dest.loc.page_number);
             let page = usize::try_from(number).ok()? + 1;
             (page <= page_count).then_some(TocItem {
                 title: outline.title.clone(),
                 page,
+                dest_top: dest_top(&dest.kind),
                 children: toc_from_outlines(&outline.down, page_count),
             })
         })
         .collect()
+}
+
+/// Vertical landing point of a destination, in MuPDF page space — top-left
+/// origin, y-down, the same space as rendered page bounds — so the value is
+/// points from the page's top edge. Destinations without a vertical
+/// component (`/Fit`, page-only links) yield `None`.
+fn dest_top(kind: &mupdf::DestinationKind) -> Option<f32> {
+    match kind {
+        mupdf::DestinationKind::XYZ { top, .. }
+        | mupdf::DestinationKind::FitH { top }
+        | mupdf::DestinationKind::FitBH { top } => *top,
+        _ => None,
+    }
 }
 
 fn page_index(page: usize, page_count: usize) -> Result<i32, Error> {

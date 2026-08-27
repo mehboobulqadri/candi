@@ -5,6 +5,7 @@ mod highlight;
 mod icons;
 mod keybinds;
 mod render;
+mod search;
 mod sidebar;
 
 use std::path::{Path, PathBuf};
@@ -44,7 +45,10 @@ fn main() -> ExitCode {
         return run_headless(args);
     }
 
-    let initial = args.file.as_deref().map(PathBuf::from).or_else(pick_pdf);
+    // No CLI path opens straight to the welcome state — a native picker
+    // dialog must never block before the window exists (design §19). The
+    // in-app Open action spawns the picker off-thread instead.
+    let initial = args.file.as_deref().map(PathBuf::from);
     let backend = match parse_backend(&args.backend) {
         Ok(kind) => kind,
         Err(err) => {
@@ -114,10 +118,6 @@ fn window_icon() -> egui::IconData {
         height,
         rgba: rgba.into_raw(),
     }
-}
-
-fn pick_pdf() -> Option<PathBuf> {
-    pdf_dialog().pick_file()
 }
 
 /// The single PDF file-picker construction shared by all open entry points.

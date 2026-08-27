@@ -225,6 +225,22 @@ fn modifier_prefix(rest: &str) -> Option<([bool; 4], &str)> {
         .find_map(|(prefix, bits)| rest.strip_prefix(prefix).map(|tail| (bits, tail)))
 }
 
+/// Version of the default binding lists this build ships. Bump whenever
+/// `Action::defaults` changes so files seeded by older versions can be
+/// healed on load; the seeded document carries it as `schema_version`.
+const DEFAULTS_SCHEMA_VERSION: u64 = 2;
+
+/// Default binding lists that older schema versions shipped, with the
+/// version that superseded them: `(superseded_in, action, legacy specs)`.
+/// A stored entry exactly equal to a legacy list was never touched by the
+/// user and is re-healed to the current defaults on load; anything else is
+/// preserved as a customization.
+const LEGACY_DEFAULTS: &[(u64, &str, &[&str])] = &[(
+    2,
+    "zoom_in",
+    &["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="],
+)];
+
 const DIGITS: [Key; 10] = [
     Key::Num0,
     Key::Num1,
@@ -461,7 +477,15 @@ impl Keybinds {
             }
         };
         match serde_json::from_str::<serde_json::Value>(&contents) {
-            Ok(document @ serde_json::Value::Object(_)) => Self::merged(Some(path), &document),
+            Ok(document @ serde_json::Value::Object(_)) => match migrate_document(&document) {
+                Some(migrated) => {
+                    if let Err(err) = write_migrated_file(&path, &migrated) {
+                        warn(format!("writing migrated keybinds file: {err}"));
+                    }
+                    Self::merged(Some(path), &migrated)
+                }
+                None => Self::merged(Some(path), &document),
+            },
             Ok(_) => {
                 warn("keybinds file is not a JSON object — using defaults".to_owned());
                 Keybinds::defaults(Some(path))
@@ -523,6 +547,46 @@ impl Keybinds {
         }
         resolve_claims(path, claims)
     }
+}
+
+/// Heal a defaults document written by an older schema version: entries that
+/// exactly match a known legacy default list are replaced with the current
+/// defaults (the user never customized them), genuinely customized entries
+/// are preserved, and the version is bumped. `None` when the document is
+/// already current or carries no version, in which case the file is left
+/// untouched.
+fn migrate_document(document: &serde_json::Value) -> Option<serde_json::Value> {
+    let object = document.as_object()?;
+    let version = object
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64);
+    if version.is_none_or(|v| v >= DEFAULTS_SCHEMA_VERSION) {
+        return None;
+    }
+    let version = version.unwrap_or(0);
+    let mut healed = object.clone();
+    for &(superseded_in, name, legacy) in LEGACY_DEFAULTS {
+        if version >= superseded_in {
+            continue;
+        }
+        if object
+            .get(name)
+            .is_some_and(|stored| value_specs(Some(stored)).is_some_and(|specs| specs == legacy))
+            && let Some(current) = default_value(name)
+        {
+            healed.insert(name.to_owned(), current);
+        }
+    }
+    healed.insert(
+        "schema_version".to_owned(),
+        serde_json::Value::Number(DEFAULTS_SCHEMA_VERSION.into()),
+    );
+    Some(serde_json::Value::Object(healed))
+}
+
+fn write_migrated_file(path: &Path, migrated: &serde_json::Value) -> io::Result<()> {
+    let body = serde_json::to_string_pretty(migrated).expect("migrated keybinds serialize");
+    candi_core::write_file_atomically(path, &body)
 }
 
 /// Whether this exact binding was shipped as a default — rebinding one of
@@ -588,28 +652,36 @@ fn seed_defaults_file(dir: &Path, path: &Path) -> io::Result<()> {
 
 /// The canonical default document: alphabetical, single bindings as plain
 /// strings, multi-bindings as arrays, plus a `schema_version` the loader
-/// ignores as metadata (reserved for future migrations).
+/// treats as migration metadata.
 fn defaults_document() -> String {
-    use serde_json::Value;
     let mut map = serde_json::Map::new();
-    map.insert("schema_version".to_owned(), Value::Number(1.into()));
+    map.insert(
+        "schema_version".to_owned(),
+        serde_json::Value::Number(DEFAULTS_SCHEMA_VERSION.into()),
+    );
     for action in Action::ALL {
-        let specs = action.defaults();
-        map.insert(
-            action.name().to_owned(),
-            if specs.len() == 1 {
-                Value::String(specs[0].to_owned())
-            } else {
-                Value::Array(
-                    specs
-                        .iter()
-                        .map(|spec| Value::String((*spec).to_owned()))
-                        .collect(),
-                )
-            },
-        );
+        if let Some(value) = default_value(action.name()) {
+            map.insert(action.name().to_owned(), value);
+        }
     }
-    serde_json::to_string_pretty(&Value::Object(map)).expect("default keybinds serialize")
+    serde_json::to_string_pretty(&serde_json::Value::Object(map))
+        .expect("default keybinds serialize")
+}
+
+/// The JSON shape of an action's current default bindings: single bindings
+/// as plain strings, multi-bindings as arrays.
+fn default_value(name: &str) -> Option<serde_json::Value> {
+    let specs = Action::from_name(name)?.defaults();
+    Some(if specs.len() == 1 {
+        serde_json::Value::String(specs[0].to_owned())
+    } else {
+        serde_json::Value::Array(
+            specs
+                .iter()
+                .map(|spec| serde_json::Value::String((*spec).to_owned()))
+                .collect(),
+        )
+    })
 }
 
 fn warn(message: String) {
@@ -696,7 +768,10 @@ mod tests {
             serde_json::json!(["Right", "PgDn"]),
             "multi-bindings serialize as arrays"
         );
-        assert_eq!(doc["schema_version"], serde_json::json!(1));
+        assert_eq!(
+            doc["schema_version"],
+            serde_json::json!(DEFAULTS_SCHEMA_VERSION)
+        );
         assert_eq!(doc["quit"], serde_json::json!("Q"));
         // The seeded file round-trips to the same bindings as the defaults.
         for (label, keys) in keybinds.rows() {
@@ -727,6 +802,78 @@ mod tests {
         assert_eq!(
             keybinds.action_for(Key::Minus, egui::Modifiers::default()),
             Some(Action::ZoomOut)
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stale_seed_heals_the_changed_defaults() {
+        let dir = temp_dir("migrate-heal");
+        fs::create_dir_all(&dir).unwrap();
+        // A file seeded before d177be3: schema_version 1 plus the zoom_in
+        // default list of that era, verbatim.
+        fs::write(
+            dir.join("keybinds.json"),
+            r#"{"schema_version": 1, "zoom_in": ["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="]}"#,
+        )
+        .unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Plus, egui::Modifiers::SHIFT),
+            Some(Action::ZoomIn),
+            "the shifted-plus delivery only the current list covers is healed"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
+                .expect("migrated file is valid JSON");
+        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["zoom_in"], serde_json::json!(Action::ZoomIn.defaults()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn customized_actions_survive_migration() {
+        let dir = temp_dir("migrate-custom");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("keybinds.json"),
+            r#"{"schema_version": 1, "zoom_in": "Ctrl+Up", "quit": "W"}"#,
+        )
+        .unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::ArrowUp, egui::Modifiers::CTRL),
+            Some(Action::ZoomIn),
+            "a user-customized zoom_in is preserved, not healed"
+        );
+        assert_eq!(
+            keybinds.action_for(Key::W, egui::Modifiers::NONE),
+            Some(Action::Quit)
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
+                .expect("migrated file is valid JSON");
+        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["zoom_in"], serde_json::json!("Ctrl+Up"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fresh_seed_is_current_and_not_rewritten() {
+        let dir = temp_dir("migrate-fresh");
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Equals, egui::Modifiers::NONE),
+            Some(Action::ZoomIn)
+        );
+        let seeded = fs::read_to_string(dir.join("keybinds.json")).unwrap();
+        // A second load must recognize the file as current and leave the
+        // bytes alone.
+        Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            fs::read_to_string(dir.join("keybinds.json")).unwrap(),
+            seeded,
+            "an already-current seed is untouched"
         );
         fs::remove_dir_all(&dir).ok();
     }

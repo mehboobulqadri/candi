@@ -318,7 +318,7 @@ fn bookmark_children(
     let mut items = Vec::new();
     let mut next = bindings.FPDFBookmark_GetFirstChild(doc, parent);
     while !next.is_null() && seen.insert(next as usize) {
-        if let (Some(title), Some(page)) = (
+        if let (Some(title), Some((page, dest_top))) = (
             bookmark_title(bindings, next),
             bookmark_page(doc, next, bindings),
         ) && page <= page_count
@@ -326,6 +326,7 @@ fn bookmark_children(
             items.push(TocItem {
                 title,
                 page,
+                dest_top,
                 children: bookmark_children(doc, next, bindings, seen, page_count, depth + 1),
             });
         }
@@ -345,14 +346,15 @@ fn bookmark_title(bindings: &dyn PdfiumLibraryBindings, bookmark: FPDF_BOOKMARK)
     Some(decode_utf16_bytes(&buffer))
 }
 
-/// Resolves a bookmark's target as a 1-based page number. Bookmarks either
-/// carry a direct `/Dest` or a `/A` action; hyperref-generated documents use
-/// GoTo actions almost exclusively.
+/// Resolves a bookmark's target as a 1-based page number plus its vertical
+/// landing point (points from the page's top edge, when the destination
+/// carries one). Bookmarks either carry a direct `/Dest` or a `/A` action;
+/// hyperref-generated documents use GoTo actions almost exclusively.
 fn bookmark_page(
     doc: FPDF_DOCUMENT,
     bookmark: FPDF_BOOKMARK,
     bindings: &dyn PdfiumLibraryBindings,
-) -> Option<usize> {
+) -> Option<(usize, Option<f32>)> {
     let mut dest = bindings.FPDFBookmark_GetDest(doc, bookmark);
     if dest.is_null() {
         let action = bindings.FPDFBookmark_GetAction(bookmark);
@@ -367,9 +369,47 @@ fn bookmark_page(
     if dest.is_null() {
         return None;
     }
-    usize::try_from(bindings.FPDFDest_GetDestPageIndex(doc, dest))
-        .ok()
-        .map(|index| index + 1)
+    let index = bindings.FPDFDest_GetDestPageIndex(doc, dest);
+    let page = usize::try_from(index).ok()?;
+    Some((page + 1, dest_top(doc, bindings, dest, index)))
+}
+
+/// Vertical landing point via `FPDFDest_GetLocationInPage`: PDFium reports
+/// the XYZ/FitH view point in PDF user space (origin bottom-left, y-up), so
+/// the flip to points from the top edge is `page_height - y`. Destinations
+/// without a vertical component (`has_y_val` unset, fit-style views) and
+/// unresolvable pages yield `None`.
+fn dest_top(
+    doc: FPDF_DOCUMENT,
+    bindings: &dyn PdfiumLibraryBindings,
+    dest: FPDF_DEST,
+    page_index: std::ffi::c_int,
+) -> Option<f32> {
+    let mut has_x: FPDF_BOOL = 0;
+    let mut has_y: FPDF_BOOL = 0;
+    let mut has_zoom: FPDF_BOOL = 0;
+    let mut x: FS_FLOAT = 0.0;
+    let mut y: FS_FLOAT = 0.0;
+    let mut zoom: FS_FLOAT = 0.0;
+    let reported = bindings.is_true(bindings.FPDFDest_GetLocationInPage(
+        dest,
+        &mut has_x,
+        &mut has_y,
+        &mut has_zoom,
+        &mut x,
+        &mut y,
+        &mut zoom,
+    )) && has_y != 0;
+    if !reported {
+        return None;
+    }
+    let page_handle = bindings.FPDF_LoadPage(doc, page_index);
+    if page_handle.is_null() {
+        return None;
+    }
+    let height = bindings.FPDF_GetPageHeightF(page_handle);
+    bindings.FPDF_ClosePage(page_handle);
+    Some(height - y)
 }
 
 fn pdfium_lock() -> std::sync::MutexGuard<'static, ()> {

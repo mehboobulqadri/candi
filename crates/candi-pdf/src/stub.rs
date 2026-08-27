@@ -126,20 +126,24 @@ impl Document for StubDocument {
             TocItem {
                 title: "Part One".into(),
                 page: 1,
+                dest_top: None,
                 children: vec![TocItem {
                     title: "Chapter 1".into(),
                     page: 2,
+                    dest_top: None,
                     children: Vec::new(),
                 }],
             },
             TocItem {
                 title: "Part Two".into(),
                 page: 3,
+                dest_top: None,
                 children: Vec::new(),
             },
             TocItem {
                 title: "Part Three".into(),
                 page: 4,
+                dest_top: None,
                 children: Vec::new(),
             },
         ])

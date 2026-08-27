@@ -90,6 +90,18 @@ impl<'a, D: Document + ?Sized> SearchSession<'a, D> {
         Ok(None)
     }
 
+    /// Advance the background scan by exactly one page, returning whether the
+    /// scan is complete afterwards. Unlike [`SearchSession::next`] this never
+    /// scans past a page boundary, so callers can interleave cancellation
+    /// checks or incremental result consumption between steps.
+    pub fn step(&mut self) -> Result<bool, Error> {
+        if self.scan_complete() {
+            return Ok(true);
+        }
+        self.scan_one_page()?;
+        Ok(self.scan_complete())
+    }
+
     pub fn prev(&mut self) -> Result<Option<(usize, usize)>, Error> {
         if self.query.is_empty() {
             return Ok(None);

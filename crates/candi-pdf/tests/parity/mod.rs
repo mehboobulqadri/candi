@@ -234,6 +234,7 @@ pub fn parity_ghost_outline_drops_unresolvable_entries(open_fn: OpenFn) {
             vec![TocItem {
                 title: "Real".into(),
                 page: 1,
+                dest_top: None,
                 children: Vec::new(),
             }]
         );

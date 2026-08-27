@@ -202,6 +202,33 @@ fn case_insensitive_match() {
 }
 
 #[test]
+fn step_scans_exactly_one_page_per_call() {
+    let doc = FakeDoc::new(PAGES.to_vec());
+    let mut session = SearchSession::new(&doc, "foo", 0);
+
+    assert!(!session.step().unwrap(), "page 0 is not the last page");
+    let after_first = doc.page_text_call_count();
+    assert_eq!(after_first, 1, "one step = one page_text call");
+    assert!(session.results().contains(&(0, 6)));
+
+    assert!(!session.step().unwrap());
+    assert_eq!(doc.page_text_call_count(), 2);
+    assert_eq!(
+        session.results(),
+        &[(0, 6)],
+        "page 1 has no matches; earlier results persist"
+    );
+
+    assert!(session.step().unwrap(), "the scan ends at the last page");
+    assert_eq!(doc.page_text_call_count(), 3);
+    assert!(session.results().contains(&(2, 0)));
+    assert!(session.results().contains(&(2, 8)));
+
+    assert!(session.step().unwrap(), "stepping a complete scan is idle");
+    assert_eq!(doc.page_text_call_count(), 3);
+}
+
+#[test]
 fn empty_query_no_page_text_calls() {
     let doc = FakeDoc::new(PAGES.to_vec());
     let mut session = SearchSession::new(&doc, "", 0);
