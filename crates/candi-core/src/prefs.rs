@@ -114,6 +114,9 @@ pub fn load(path: &Path) -> Prefs {
                 .take(MAX_RECENTS)
                 .filter_map(|recent| {
                     if recent.path.is_empty() || recent.last_opened.is_empty() {
+                        warn(
+                            "config recents entry missing path or timestamp — dropping".to_owned(),
+                        );
                         None
                     } else {
                         Some(Recent {
@@ -191,6 +194,31 @@ struct RecentSection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_recents_entries_are_dropped_with_a_warning() {
+        let dir = std::env::temp_dir().join(format!("candi-prefs-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        fs::write(
+            &path,
+            "schema_version = 1\n\
+             \n\
+             [[recents]]\n\
+             path = \"/tmp/book.pdf\"\n\
+             last_opened = \"2026-08-01T00:00:00Z\"\n\
+             \n\
+             [[recents]]\n\
+             path = \"\"\n\
+             last_opened = \"2026-08-02T00:00:00Z\"\n",
+        )
+        .unwrap();
+        let prefs = load(&path);
+        assert_eq!(prefs.recents.len(), 1, "the malformed entry is dropped");
+        assert_eq!(prefs.recents[0].path, PathBuf::from("/tmp/book.pdf"));
+        fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn config_dir_prefers_xdg_then_home_then_none() {

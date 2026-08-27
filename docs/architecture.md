@@ -224,8 +224,14 @@ onto the theme's page colors while protecting saturated figure pixels, and
 [`retint`](crates/candi-theme/src/retint.rs) blends a small, luma-gated fraction of the
 accent into the chrome backgrounds.
 
-Validation: parse failure or missing tokens → fall back to the nearest built-in theme
-with a useful error; unknown extra tokens ignored with a warning, never fatal.
+Validation: the schema is strict — unknown fields are a fatal `Schema` error
+(`deny_unknown_fields`), never silently ignored — while each missing color token
+defaults from the embedded Light palette, so a theme may override as little as one
+token. A theme file that fails to parse is reported and skipped where it loads; in
+the GUI's theme editor every edit reparses live and surfaces the error inline while
+the last-good theme stays active. User theme YAMLs carry no version field today:
+`deny_unknown_fields` would reject one, and the nested/flat parser flattening is
+the compatibility layer.
 
 ## Security
 

@@ -36,9 +36,13 @@ frontends.
 ## Building from source (Arch-based)
 
 ```bash
-sudo pacman -S --needed rust mupdf fontconfig pkg-config
+sudo pacman -S --needed rust clang fontconfig pkg-config
 cargo build --release
 ```
+
+`clang` is needed once, to compile `mupdf-sys`'s bundled copy of MuPDF's C sources
+(statically linked — no system `mupdf` package is used); `fontconfig` and
+`pkg-config` satisfy its Linux link requirements.
 
 This produces two binaries:
 

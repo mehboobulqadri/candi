@@ -3,8 +3,9 @@
 //! User-editable keybinds (`keybinds.json` in the XDG config dir): a flat
 //! map of action name to key string — `"next_page": ["Right", "PgDn"]` or a
 //! bare `"quit": "Q"` — with `"Ctrl+"`/`Shift+`/`Alt+`/`Meta+` modifiers.
-//! Reads are tolerant: corrupt entries, unknown actions, and unparsable keys
-//! warn and fall back to defaults per entry, never panic. A missing file is
+//! Reads are tolerant: corrupt entries, unknown actions, empty binding
+//! lists, and unparsable keys warn and fall back to defaults per entry,
+//! never panic. A missing file is
 //! seeded with the defaults so the schema is discoverable by hand-editing,
 //! following the app-config patterns in [`candi_core::prefs`].
 
@@ -123,7 +124,7 @@ impl Action {
             Action::KeybindsWindow => &["Ctrl+K"],
             Action::FocusMode => &["F11"],
             Action::CloseOverlay => &["Esc"],
-            Action::ZoomIn => &["+", "="],
+            Action::ZoomIn => &["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="],
             Action::ZoomOut => &["-"],
             Action::FitWidth => &["0"],
             Action::CycleTheme => &["T"],
@@ -473,7 +474,8 @@ impl Keybinds {
     }
 
     /// Defaults overlaid with valid file entries; every corrupt or unknown
-    /// entry warns and silently keeps that action's default bindings.
+    /// entry warns and silently keeps that action's default bindings. The
+    /// `schema_version` metadata key is ignored (a non-numeric value warns).
     fn merged(path: Option<PathBuf>, document: &serde_json::Value) -> Keybinds {
         let mut claims: Vec<(Binding, Action, bool)> = Keybinds::defaults(None)
             .entries
@@ -486,6 +488,13 @@ impl Keybinds {
         let mut names: Vec<&String> = object.keys().collect();
         names.sort_unstable();
         for name in names {
+            if name == "schema_version" {
+                match object.get(name) {
+                    Some(serde_json::Value::Number(_)) => {}
+                    _ => warn("schema_version must be a number — ignoring".to_string()),
+                }
+                continue;
+            }
             let Some(action) = Action::from_name(name) else {
                 warn(format!("unknown action {name:?} in keybinds file"));
                 continue;
@@ -496,6 +505,12 @@ impl Keybinds {
                 ));
                 continue;
             };
+            if specs.is_empty() {
+                warn(format!(
+                    "entry {name:?} is an empty binding list — keeping defaults"
+                ));
+                continue;
+            }
             let parsed: Option<Vec<_>> = specs.iter().map(|spec| Binding::parse(spec)).collect();
             let Some(parsed) = parsed else {
                 warn(format!(
@@ -572,10 +587,12 @@ fn seed_defaults_file(dir: &Path, path: &Path) -> io::Result<()> {
 }
 
 /// The canonical default document: alphabetical, single bindings as plain
-/// strings, multi-bindings as arrays.
+/// strings, multi-bindings as arrays, plus a `schema_version` the loader
+/// ignores as metadata (reserved for future migrations).
 fn defaults_document() -> String {
     use serde_json::Value;
     let mut map = serde_json::Map::new();
+    map.insert("schema_version".to_owned(), Value::Number(1.into()));
     for action in Action::ALL {
         let specs = action.defaults();
         map.insert(
@@ -679,6 +696,7 @@ mod tests {
             serde_json::json!(["Right", "PgDn"]),
             "multi-bindings serialize as arrays"
         );
+        assert_eq!(doc["schema_version"], serde_json::json!(1));
         assert_eq!(doc["quit"], serde_json::json!("Q"));
         // The seeded file round-trips to the same bindings as the defaults.
         for (label, keys) in keybinds.rows() {
@@ -755,6 +773,81 @@ mod tests {
                 .iter()
                 .all(|(binding, _)| binding.key != Key::X),
             "unknown actions claim nothing"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn zoom_in_reaches_every_physical_equals_spelling() {
+        let keybinds = Keybinds::defaults(None);
+        // `=` arrives as Key::Equals with whatever modifiers are held; a bare
+        // `+` (numpad or plus-key layouts) as Key::Plus.
+        let cases = [
+            (Key::Equals, egui::Modifiers::NONE),
+            (Key::Plus, egui::Modifiers::NONE),
+            (Key::Equals, egui::Modifiers::SHIFT),
+            (Key::Equals, egui::Modifiers::CTRL),
+            (Key::Plus, egui::Modifiers::CTRL),
+            (
+                Key::Equals,
+                egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+            ),
+        ];
+        for (key, modifiers) in cases {
+            assert_eq!(
+                keybinds.action_for(key, modifiers),
+                Some(Action::ZoomIn),
+                "{modifiers:?} {key:?} must reach zoom_in"
+            );
+        }
+        assert_eq!(
+            keybinds.action_for(Key::Equals, egui::Modifiers::ALT),
+            None,
+            "unrelated modifier combos stay unmapped"
+        );
+    }
+
+    #[test]
+    fn schema_version_is_ignored_metadata() {
+        let dir = temp_dir("schema-version");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("keybinds.json"),
+            r#"{"schema_version": 1, "quit": ["Q", "W"]}"#,
+        )
+        .unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::W, egui::Modifiers::NONE),
+            Some(Action::Quit),
+            "file entries still apply beside the metadata key"
+        );
+        fs::write(dir.join("keybinds.json"), r#"{"schema_version": "one"}"#).unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Q, egui::Modifiers::NONE),
+            Some(Action::Quit),
+            "a non-numeric version warns only"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn empty_binding_list_falls_back_to_defaults() {
+        let dir = temp_dir("empty-list");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("keybinds.json"), r#"{"quit": []}"#).unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Q, egui::Modifiers::default()),
+            Some(Action::Quit)
+        );
+        assert!(
+            keybinds
+                .entries
+                .iter()
+                .any(|(binding, _)| binding.key == Key::Q),
+            "an empty list cannot unbind the action"
         );
         fs::remove_dir_all(&dir).ok();
     }
