@@ -2,19 +2,23 @@
 
 //! Luma-gating and blend-fraction behavior of accent retinting.
 
-use candi_theme::{Color, builtin, retint};
+use candi_theme::{Color, builtin, canvas_bg, retint};
+
+fn luma(color: Color) -> i32 {
+    (77 * i32::from(color.r()) + 151 * i32::from(color.g()) + 28 * i32::from(color.b())) >> 8
+}
 
 fn purple() -> Color {
     Color::from([0x7C, 0x5C, 0xFF, 0xFF])
 }
 
 #[test]
-fn dark_chrome_takes_the_full_six_percent_blend() {
+fn dark_chrome_takes_the_full_twelve_percent_blend() {
     let dark = builtin("Dark").unwrap();
     let tinted = retint(&dark, purple());
-    // ui_bg #1D2026 → 6% toward #7C5CFF.
+    // ui_bg #1D2026 → 12% toward #7C5CFF.
     let mix = |bg: u8, accent: u8| -> u8 {
-        ((u32::from(bg) * 240 + u32::from(accent) * 15 + 127) / 255) as u8
+        ((u32::from(bg) * 225 + u32::from(accent) * 30 + 127) / 255) as u8
     };
     assert_eq!(tinted.ui_bg.r(), mix(0x1D, 0x7C));
     assert_eq!(tinted.ui_bg.g(), mix(0x20, 0x5C));
@@ -69,4 +73,50 @@ fn accent_matching_the_background_luma_is_declined() {
     let tinted = retint(&light, white);
     assert_eq!(tinted.ui_bg, light.ui_bg);
     assert_eq!(tinted.panel_bg, light.panel_bg);
+}
+
+#[test]
+fn canvas_surround_is_darker_than_the_panel_on_every_theme() {
+    for name in ["Light", "Sepia", "Warm Dark", "Dark", "True Dark"] {
+        let theme = builtin(name).unwrap();
+        let canvas = canvas_bg(&theme);
+        let panel_luma = luma(theme.panel_bg);
+        let canvas_luma = luma(canvas);
+        assert!(canvas_luma < panel_luma, "{name} canvas darkens");
+    }
+}
+
+#[test]
+fn canvas_surround_leaves_pages_untouched_and_pops_on_light() {
+    let light = builtin("Light").unwrap();
+    let canvas = canvas_bg(&light);
+    assert_ne!(
+        canvas, light.page_bg,
+        "light pages pop against the surround"
+    );
+    // The white page must stay lighter than the surround it sits on.
+    assert!(luma(light.page_bg) > luma(canvas));
+}
+
+#[test]
+fn dark_themes_take_a_stronger_canvas_pull_than_light() {
+    // Relative pull per channel: dark chrome drops ~20% toward black,
+    // light chrome ~10%.
+    let pull = |name: &str| -> f32 {
+        let theme = builtin(name).unwrap();
+        let canvas = canvas_bg(&theme);
+        let channels = [theme.panel_bg.r(), theme.panel_bg.g(), theme.panel_bg.b()];
+        let deltas = [
+            f32::from(theme.panel_bg.r().abs_diff(canvas.r())),
+            f32::from(theme.panel_bg.g().abs_diff(canvas.g())),
+            f32::from(theme.panel_bg.b().abs_diff(canvas.b())),
+        ];
+        deltas
+            .iter()
+            .zip(channels)
+            .map(|(d, c)| d / f32::from(c))
+            .sum::<f32>()
+            / 3.0
+    };
+    assert!(pull("Dark") > pull("Light"));
 }

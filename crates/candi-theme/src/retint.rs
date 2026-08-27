@@ -13,14 +13,20 @@ use crate::color::Color;
 use crate::recolor::luma;
 use crate::theme::Theme;
 
-/// Blend numerator out of 255 for dark chrome (~6%).
-const TINT_DARK: u32 = 15;
-/// Blend numerator out of 255 for light chrome (~3%).
-const TINT_LIGHT: u32 = 8;
+/// Blend numerator out of 255 for dark chrome (~12%).
+const TINT_DARK: u32 = 30;
+/// Blend numerator out of 255 for light chrome (~6%).
+const TINT_LIGHT: u32 = 16;
 /// Minimum luma the tinted surface must keep from the accent.
 const MIN_ACCENT_GAP: i32 = 24;
 /// Minimum luma the tinted surface must keep from the foreground.
 const MIN_FG_GAP: i32 = 24;
+
+/// Blend numerator out of 255 toward black for the canvas surround on dark
+/// chrome (~20%) — it must read visibly darker than the sidebar/panel.
+const CANVAS_DARK: u32 = 51;
+/// The same blend on light chrome (~10%), enough for white pages to pop.
+const CANVAS_LIGHT: u32 = 25;
 
 /// The theme with `accent` blended into its chrome surfaces.
 ///
@@ -38,6 +44,24 @@ pub fn retint(theme: &Theme, accent: Color) -> Theme {
     tinted.panel_bg = tint(theme.panel_bg, theme.ui_fg, accent, factor);
     tinted.ui_bg = tint(theme.ui_bg, theme.ui_fg, accent, factor);
     tinted
+}
+
+/// The darker surround the page canvas paints on: `panel_bg` pulled toward
+/// black so pages and the sidebar (which keep `panel_bg`) both stand apart
+/// from it. Dark chrome takes a stronger pull than light chrome.
+pub fn canvas_bg(theme: &Theme) -> Color {
+    let factor = if luma(theme.ui_bg.r(), theme.ui_bg.g(), theme.ui_bg.b()) < 128 {
+        CANVAS_DARK
+    } else {
+        CANVAS_LIGHT
+    };
+    let mix = |channel: u8| -> u8 { ((u32::from(channel) * (255 - factor) + 127) / 255) as u8 };
+    Color::from([
+        mix(theme.panel_bg.r()),
+        mix(theme.panel_bg.g()),
+        mix(theme.panel_bg.b()),
+        theme.panel_bg.a(),
+    ])
 }
 
 /// Blend `factor`/255 of `accent` into `bg` when the result keeps safe luma

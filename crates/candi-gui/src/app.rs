@@ -18,7 +18,9 @@ use candi_core::{
     write_file_atomically,
 };
 use candi_pdf::{BackendKind, Document, PageImage};
-use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, retint, to_yaml};
+use candi_theme::{
+    BUILTIN_NAMES, Color, Theme, builtin, canvas_bg, parse, recolor, retint, to_yaml,
+};
 use eframe::egui;
 use egui::Key;
 
@@ -42,6 +44,9 @@ const PAGE_ROUNDING: f32 = 3.0;
 /// Sidebar contents indentation per outline nesting level.
 const INDENT_PER_LEVEL: f32 = 12.0;
 const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(0xE5, 0x48, 0x4D);
+/// Muted placeholder shown by doc-scoped surfaces (info window, sidebar
+/// sections) while no document is open.
+const NO_DOC: &str = "No document loaded";
 /// Accent choices in the appearance panel, as RGB bytes.
 const ACCENT_SWATCHES: [[u8; 3]; 8] = [
     [0x7C, 0x5C, 0xFF],
@@ -512,6 +517,7 @@ impl ReaderApp {
                     }
                 }
                 "search-empty" => app.section = SidebarSection::Search,
+                "bookmarks" => app.section = SidebarSection::Bookmarks,
                 "appearance" => app.section = SidebarSection::Appearance,
                 "theme-picker" => {
                     app.section = SidebarSection::Appearance;
@@ -1432,8 +1438,9 @@ impl ReaderApp {
         }
         // Backdrop over the entire clip rect: at high zoom the content block
         // is narrower than the viewport and unpainted regions showed through.
+        // Pulled darker than the sidebar so pages read as sheets on it.
         ui.painter()
-            .rect_filled(ui.clip_rect(), 0.0, color_of(self.theme.panel_bg));
+            .rect_filled(ui.clip_rect(), 0.0, canvas_surface(&self.theme));
         let ctx = ui.ctx().clone();
         if !self.primed {
             self.primed = true;
@@ -1468,7 +1475,14 @@ impl ReaderApp {
         }
         let jump = self.pending_scroll.take();
 
-        ui.style_mut().spacing.scroll.bar_width = 4.0;
+        // Reading scrollbar: a floating, always-visible fg-colored thumb —
+        // wider than the old 4 pt hairline, no layout side-effects, and the
+        // sidebar's own scroll style is untouched.
+        let scroll = &mut ui.style_mut().spacing.scroll;
+        scroll.bar_width = 8.0;
+        scroll.floating_width = 7.0;
+        scroll.dormant_handle_opacity = 0.7;
+        scroll.active_handle_opacity = 0.85;
         ui.visuals_mut().extreme_bg_color = egui::Color32::TRANSPARENT;
         let mut area = egui::ScrollArea::vertical()
             .id_salt("page_canvas")
@@ -1509,7 +1523,7 @@ impl ReaderApp {
             view.center_y = top + clip.height() * 0.5;
             view.clip_h = clip.height();
 
-            let panel = color_of(self.theme.panel_bg);
+            let panel = canvas_surface(&self.theme);
             let paper = color_of(self.theme.page_bg);
             let fg = color_of(self.theme.ui_fg);
             let border = egui::Stroke::new(1.0_f32, fg.gamma_multiply(0.25));
@@ -1660,7 +1674,7 @@ impl ReaderApp {
             let brand = ui.label(
                 egui::RichText::new("Candi")
                     .strong()
-                    .size(16.0)
+                    .size(19.0)
                     .color(accent),
             );
             // Decorations are off, so the brand zone doubles as the drag
@@ -1708,7 +1722,11 @@ impl ReaderApp {
                 }
             });
         });
-        self.nav_cluster(ui, fg);
+        // The pill is page chrome — a floating "n / N" makes no sense on
+        // the welcome screen, so it only exists with a document.
+        if self.page_count() > 0 {
+            self.nav_cluster(ui, fg);
+        }
     }
 
     /// Icon button that opens a popup menu — the font-free replacement for
@@ -1924,7 +1942,7 @@ impl ReaderApp {
     fn section_panel(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-            .fill(color_of(self.theme.panel_bg))
+            .fill(color_of(tinted_chrome(&self.theme).panel_bg))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     let (label, salt, body): (&str, &str, fn(&mut ReaderApp, &mut egui::Ui)) =
@@ -2119,6 +2137,10 @@ impl ReaderApp {
     }
 
     fn show_contents(&mut self, ui: &mut egui::Ui) {
+        if self.page_count() == 0 {
+            ui.label(egui::RichText::new(NO_DOC).weak());
+            return;
+        }
         if self.toc_rows.is_empty() {
             ui.label(egui::RichText::new("No table of contents").weak());
             return;
@@ -2152,8 +2174,12 @@ impl ReaderApp {
     }
 
     fn show_bookmarks(&mut self, ui: &mut egui::Ui) {
+        if self.page_count() == 0 {
+            ui.label(egui::RichText::new(NO_DOC).weak());
+            return;
+        }
         let fg = color_of(self.theme.ui_fg);
-        if self.page_count() > 0 && ui.button("Add bookmark").clicked() {
+        if ui.button("Add bookmark").clicked() {
             self.session.add_bookmark(self.session.page);
         }
         if self.session.bookmarks.is_empty() {
@@ -2204,7 +2230,16 @@ impl ReaderApp {
                             date_only(&bookmark.created_at)
                         )
                     };
-                    if click_row(ui, row.into()).clicked() {
+                    let reserve =
+                        2.0 * icon_button_width(ui, 18.0) + 2.0 * ui.spacing().item_spacing.x;
+                    if click_row(
+                        ui,
+                        &row,
+                        ui.visuals().text_color(),
+                        ui.available_width() - reserve,
+                    )
+                    .clicked()
+                    {
                         jump = Some(bookmark.page);
                     }
                     if self
@@ -2248,6 +2283,16 @@ impl ReaderApp {
     }
 
     fn show_search(&mut self, ui: &mut egui::Ui) {
+        if self.page_count() == 0 {
+            ui.add_enabled(
+                false,
+                egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text("Find in document")
+                    .desired_width(ui.available_width()),
+            );
+            ui.label(egui::RichText::new(NO_DOC).weak());
+            return;
+        }
         let fg = color_of(self.theme.ui_fg);
         let field = ui.add(
             egui::TextEdit::singleline(&mut self.search_query)
@@ -2304,7 +2349,8 @@ impl ReaderApp {
             }
             Some(hits) => {
                 for hit in hits {
-                    if click_row(ui, format!("p. {} — {}", hit.page + 1, hit.snippet).into())
+                    let label = format!("p. {} — {}", hit.page + 1, hit.snippet);
+                    if click_row(ui, &label, ui.visuals().text_color(), ui.available_width())
                         .clicked()
                     {
                         jump = Some(hit.page);
@@ -2333,13 +2379,9 @@ impl ReaderApp {
                 }
                 self.theme_picker(ui, fg);
             });
-            columns[1].with_layout(
-                egui::Layout::left_to_right(egui::Align::Center)
-                    .with_main_align(egui::Align::Center),
-                |ui| {
-                    self.zoom_slider(ui, fg);
-                },
-            );
+            columns[1].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                self.zoom_slider(ui, fg);
+            });
             columns[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 self.view_modes(ui, fg);
             });
@@ -2357,11 +2399,24 @@ impl ReaderApp {
             egui::Color32::TRANSPARENT
         };
         ui.painter().rect_filled(rect, 6.0, fill);
+        // Truncate long names so the chevron keeps a clear gap at every
+        // name length (both picker placements share this function).
+        let name_font = egui::FontId::proportional(13.0);
+        let name = truncate_to_width(
+            &|s: &str| {
+                ui.painter()
+                    .layout_no_wrap(s.to_owned(), name_font.clone(), fg)
+                    .rect
+                    .width()
+            },
+            &self.theme.name,
+            rect.width() - 10.0 - 25.0,
+        );
         ui.painter().text(
             egui::pos2(rect.left() + 10.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
-            &self.theme.name,
-            egui::FontId::proportional(13.0),
+            &name,
+            name_font,
             fg,
         );
         self.icons.paint_at(
@@ -2405,32 +2460,38 @@ impl ReaderApp {
                         .iter()
                         .map(|(theme, _)| theme.name.clone())
                         .collect();
-                    if !custom_names.is_empty() {
-                        ui.separator();
-                        for name in &custom_names {
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .selectable_label(self.theme.name == *name, name)
-                                    .clicked()
-                                {
-                                    self.set_theme(name);
-                                    ui.memory_mut(|mem| mem.close_popup());
-                                }
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if self
-                                            .icons
-                                            .button(ui, Icon::X, 14.0, fg)
-                                            .on_hover_text("Delete this custom theme")
-                                            .clicked()
-                                        {
-                                            self.delete_custom_theme(name);
-                                        }
-                                    },
-                                );
-                            });
-                        }
+                    ui.separator();
+                    ui.label(egui::RichText::new("My Themes").weak().small());
+                    if custom_names.is_empty() {
+                        ui.label(
+                            egui::RichText::new("Create one via Save As in the editor")
+                                .weak()
+                                .small(),
+                        );
+                    }
+                    for name in &custom_names {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(self.theme.name == *name, name)
+                                .clicked()
+                            {
+                                self.set_theme(name);
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if self
+                                        .icons
+                                        .button(ui, Icon::X, 14.0, fg)
+                                        .on_hover_text("Delete this custom theme")
+                                        .clicked()
+                                    {
+                                        self.delete_custom_theme(name);
+                                    }
+                                },
+                            );
+                        });
                     }
                     ui.separator();
                     if ui.selectable_label(false, "Edit Config (YAML)…").clicked() {
@@ -2445,16 +2506,26 @@ impl ReaderApp {
     /// 100% − slider + (states 1–6 bottom bar).
     fn zoom_slider(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let can_zoom = self.page_count() > 0;
+        let pct_font = egui::FontId::proportional(13.0);
+        let label = format!("{}%", self.zoom_pct);
+        // Measured cluster width: two 22 pt icon buttons (9 pt padding each
+        // side, per chrome_style), the % label, and the spacing between the
+        // four widgets.
+        let cluster_w = 80.0
+            + 3.0 * ui.spacing().item_spacing.x
+            + ui.painter()
+                .layout_no_wrap(label.clone(), pct_font.clone(), egui::Color32::WHITE)
+                .rect
+                .width();
+        let (lead, slider_w) = zoom_centering(ui.available_width(), cluster_w);
+        ui.add_space(lead);
         ui.add_enabled_ui(can_zoom, |ui| {
             if self.icons.button(ui, Icon::Minus, 22.0, fg).clicked() {
                 self.zoom_step(-5);
             }
         });
-        ui.label(
-            egui::RichText::new(format!("{}%", self.zoom_pct))
-                .font(egui::FontId::proportional(13.0)),
-        )
-        .on_hover_text("Zoom");
+        ui.label(egui::RichText::new(&label).font(pct_font))
+            .on_hover_text("Zoom");
         ui.add_enabled_ui(can_zoom, |ui| {
             if self.icons.button(ui, Icon::Plus, 22.0, fg).clicked() {
                 self.zoom_step(5);
@@ -2462,11 +2533,10 @@ impl ReaderApp {
         });
         let mut pct = i32::from(self.zoom_pct);
         let slider = ui.scope(|ui| {
-            // Take exactly what is left of the bottom-bar third (the −/+/%
-            // cluster is already spent from available_width) so the cluster
-            // never overflows into the view-mode toggles at the 640 px
-            // minimum window width.
-            ui.spacing_mut().slider_width = ui.available_width().clamp(24.0, 160.0);
+            // The width zoom_centering allotted; shrinking it first keeps the
+            // cluster inside its bottom-bar third at the 640 px minimum
+            // window width.
+            ui.spacing_mut().slider_width = slider_w;
             ui.spacing_mut().interact_size.y = 12.0;
             ui.add_enabled(
                 can_zoom,
@@ -2531,7 +2601,8 @@ impl ReaderApp {
     }
 
     /// §40 empty state: brand, one call to action, drag-drop hint, and the
-    /// recent-documents list when the config has any.
+    /// recent-documents list when the config has any — the whole block
+    /// centered on both axes of the canvas area.
     fn empty_state(&mut self, ui: &mut egui::Ui) {
         let recents: Vec<(PathBuf, String)> = self
             .config
@@ -2545,7 +2616,10 @@ impl ReaderApp {
         let mut open = None;
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             let accent = color_of(self.theme.accent);
-            ui.add_space(ui.available_height() * 0.16);
+            ui.add_space(centered_top_offset(
+                ui.available_height(),
+                welcome_block_height(ui, recents.len()),
+            ));
             let (rect, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
             self.icons
                 .paint_at(ui, rect, Icon::Page, accent.gamma_multiply(0.9));
@@ -2576,7 +2650,15 @@ impl ReaderApp {
                 ui.label(egui::RichText::new("Recent").weak().small());
                 ui.add_space(2.0);
                 for (path, name) in &recents {
-                    if click_row(ui, egui::RichText::new(name).weak())
+                    let weak = ui.visuals().weak_text_color();
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let strip = ui
+                        .painter()
+                        .layout_no_wrap(name.clone(), font, weak)
+                        .rect
+                        .width()
+                        + 12.0;
+                    if click_row(ui, name, weak, strip)
                         .on_hover_text(path.display().to_string())
                         .clicked()
                     {
@@ -2634,6 +2716,10 @@ impl ReaderApp {
             .pivot(egui::Align2::CENTER_CENTER)
             .fixed_pos(ctx.screen_rect().center())
             .show(ctx, |ui| {
+                if self.page_count() == 0 {
+                    ui.label(egui::RichText::new(NO_DOC).weak());
+                    return;
+                }
                 egui::Grid::new("doc_info")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -2696,6 +2782,13 @@ impl ReaderApp {
                     });
                 ui.add_space(2.0);
                 ui.label(egui::RichText::new(hint).weak().small());
+                ui.label(
+                    egui::RichText::new(
+                        "Pinch-zoom isn't supported on Linux/Wayland yet — use Ctrl+scroll (planned v0.1.1).",
+                    )
+                    .weak()
+                    .small(),
+                );
             });
     }
     /// Floating "Page N of M" toast anchored above the bottom bar: it
@@ -2906,6 +2999,18 @@ fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
 }
 
+/// The theme as painted on the big chrome masses (rail, sidebar, central
+/// panel): accent-retinted so the chosen accent seeps there too, not just
+/// into the egui visuals the bars and windows use.
+fn tinted_chrome(theme: &Theme) -> Theme {
+    retint(theme, theme.accent)
+}
+
+/// The canvas surround: the accent-tinted chrome pulled darker.
+fn canvas_surface(theme: &Theme) -> egui::Color32 {
+    color_of(canvas_bg(&tinted_chrome(theme)))
+}
+
 /// Restrict a saved-theme name to the filename charset; `None` when nothing
 /// survives (the caller reports an inline error).
 fn sanitize_theme_name(raw: &str) -> Option<String> {
@@ -2970,6 +3075,34 @@ fn theme_icon(theme: &Theme) -> Icon {
     if luma >= 128 { Icon::Sun } else { Icon::Moon }
 }
 
+/// Shorten `text` with an ellipsis so it measures at most `max_w` wide
+/// according to `width_of`; unchanged when it already fits.
+fn truncate_to_width(width_of: &dyn Fn(&str) -> f32, text: &str, max_w: f32) -> String {
+    if width_of(text) <= max_w {
+        return text.to_owned();
+    }
+    let budget = max_w - width_of("…");
+    let mut kept = String::new();
+    for c in text.chars() {
+        let mut candidate = kept.clone();
+        candidate.push(c);
+        if width_of(&candidate) > budget {
+            break;
+        }
+        kept = candidate;
+    }
+    format!("{kept}…")
+}
+
+/// Leading offset and slider width that center the −/%/+ cluster plus slider
+/// inside a `container_w`-wide column. The slider gives up width before the
+/// cluster can overflow the bottom-bar third.
+fn zoom_centering(container_w: f32, cluster_w: f32) -> (f32, f32) {
+    let slider_w = (container_w - cluster_w).clamp(24.0, 160.0);
+    let lead = ((container_w - cluster_w - slider_w) / 2.0).max(0.0);
+    (lead, slider_w)
+}
+
 /// What the center pane shows this frame. The theme editor wins over
 /// everything; an open failure replaces the welcome state; runtime errors on
 /// a live document stay a banner over the canvas.
@@ -2991,6 +3124,37 @@ fn center_pane(editor_open: bool, has_document: bool, has_error: bool) -> Center
     } else {
         CenterPane::Empty
     }
+}
+
+/// Top offset that vertically centers a `block`-tall group in an
+/// `available`-tall region (clamped when the block overflows).
+fn centered_top_offset(available: f32, block: f32) -> f32 {
+    ((available - block) / 2.0).max(0.0)
+}
+
+/// Measured height of the welcome block: icon, title, hints, CTA, and the
+/// recents list — widget heights plus one item-spacing per allocation, the
+/// model [`centered_top_offset`] centers against.
+fn welcome_block_height(ui: &egui::Ui, recents: usize) -> f32 {
+    let body = ui.text_style_height(&egui::TextStyle::Body);
+    let small = ui.text_style_height(&egui::TextStyle::Small);
+    let title = ui
+        .painter()
+        .layout_no_wrap(
+            "No file open".to_owned(),
+            egui::FontId::proportional(18.0),
+            egui::Color32::WHITE,
+        )
+        .rect
+        .height();
+    let spacing = ui.spacing().item_spacing.y;
+    let mut allocations = 9.0;
+    let mut h = 72.0 + 14.0 + title + 4.0 + body + 18.0 + 36.0 + 10.0 + small;
+    if recents > 0 {
+        allocations += 3.0 + recents as f32;
+        h += 26.0 + small + 2.0 + recents as f32 * body;
+    }
+    h + allocations * spacing
 }
 
 /// Short cause for the open-failure card: the first line of the backend
@@ -3046,15 +3210,10 @@ fn jump_input(
     JumpOutcome::Cancel
 }
 
-/// Width reserved for a contents row's right-aligned page number.
-const TOC_PAGE_COL: f32 = 34.0;
-
 /// One contents row spanning the panel's full width exactly like the search
-/// and bookmark rows: title indented 12 pt per outline level, truncated; page
-/// number at a fixed right column. Rows containing the reading position are
-/// accent-tinted (design spec §12/§24). Both boxes reserve their full width —
-/// a plain hugging label would advance the cursor by its content width and
-/// pull the page column left of the panel edge (the old right-side gap).
+/// and bookmark rows: title indented 12 pt per outline level, truncated.
+/// Rows containing the reading position are accent-tinted (design spec
+/// §12/§24) and hover fills underlay the row like every other list.
 fn toc_row_ui(
     ui: &mut egui::Ui,
     row: &TocRow,
@@ -3067,17 +3226,18 @@ fn toc_row_ui(
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(indent);
         let mut title = egui::RichText::new(&row.title);
-        let mut page = egui::RichText::new(format!("p. {}", row.page + 1)).weak();
         if active {
             title = title.color(accent);
-            page = page.color(accent);
         }
-        let title_w = (full_w - indent - TOC_PAGE_COL).max(40.0);
-        let (title_rect, _) =
-            ui.allocate_exact_size(egui::vec2(title_w, 20.0), egui::Sense::hover());
-        let title_resp = ui
-            .allocate_new_ui(
-                egui::UiBuilder::new().max_rect(title_rect).layout(
+        let title_w = (full_w - indent).max(40.0);
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(title_w, 20.0), egui::Sense::click());
+        if resp.hovered() {
+            ui.painter()
+                .rect_filled(rect.expand2(egui::vec2(4.0, 2.0)), 4.0, row_hover_fill(ui));
+        }
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+            | ui.allocate_new_ui(
+                egui::UiBuilder::new().max_rect(rect).layout(
                     egui::Layout::left_to_right(egui::Align::Center)
                         .with_main_align(egui::Align::LEFT)
                         .with_main_justify(true),
@@ -3085,27 +3245,52 @@ fn toc_row_ui(
                 |ui| ui.add(egui::Label::new(title).truncate()),
             )
             .inner
-            .interact(egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        let (page_rect, _) =
-            ui.allocate_exact_size(egui::vec2(TOC_PAGE_COL, 20.0), egui::Sense::hover());
-        let page_resp = ui
-            .put(page_rect, egui::Label::new(page).truncate())
-            .interact(egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        title_resp.union(page_resp)
     })
     .inner
 }
 
-/// Full-width single-line label that truncates instead of wrapping.
-fn click_row(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
-    ui.add(
-        egui::Label::new(text)
-            .truncate()
-            .sense(egui::Sense::click()),
-    )
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
+/// Subtle list-row hover fill: a whisper of the foreground so it reads on
+/// both light and dark chrome without competing with the accent selection.
+fn row_hover_fill(ui: &egui::Ui) -> egui::Color32 {
+    let fg = ui.visuals().text_color();
+    egui::Color32::from_rgba_unmultiplied(fg.r(), fg.g(), fg.b(), 20)
+}
+
+/// Clickable list row (recents, bookmarks, search hits): the label truncates
+/// instead of wrapping and a hover fill paints under the text. `width` is the
+/// hover strip width — full column for sidebar lists, text-hugging for the
+/// centered welcome recents.
+fn click_row(ui: &mut egui::Ui, text: &str, color: egui::Color32, width: f32) -> egui::Response {
+    let height = ui.text_style_height(&egui::TextStyle::Body);
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(width.max(40.0), height), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, row_hover_fill(ui));
+    }
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let shown = truncate_to_width(
+        &|s: &str| {
+            ui.painter()
+                .layout_no_wrap(s.to_owned(), font.clone(), color)
+                .rect
+                .width()
+        },
+        text,
+        rect.width() - 8.0,
+    );
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        &shown,
+        font,
+        color,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Width of an [`IconRender::button`]: the shrunk icon plus button padding.
+fn icon_button_width(ui: &egui::Ui, side: f32) -> f32 {
+    (side - 10.0).max(8.0) + 2.0 * ui.spacing().button_padding.x
 }
 
 fn uv_unit_rect() -> egui::Rect {
@@ -3204,7 +3389,7 @@ impl eframe::App for ReaderApp {
                 .show(ctx, |ui| self.top_bar(ui));
             let panel_frame = egui::Frame::default()
                 .inner_margin(0.0)
-                .fill(color_of(self.theme.panel_bg));
+                .fill(color_of(tinted_chrome(&self.theme).panel_bg));
             egui::SidePanel::left("rail")
                 .exact_width(52.0)
                 .resizable(false)
@@ -3225,34 +3410,34 @@ impl eframe::App for ReaderApp {
                 .show(ctx, |ui| self.bottom_bar(ui));
         }
 
+        let pane = center_pane(
+            self.editor.is_some(),
+            self.document.is_some(),
+            self.error.is_some(),
+        );
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .inner_margin(0.0)
-                    .fill(color_of(self.theme.panel_bg)),
-            )
-            .show(ctx, |ui| {
-                match center_pane(
-                    self.editor.is_some(),
-                    self.document.is_some(),
-                    self.error.is_some(),
-                ) {
-                    CenterPane::Editor => self.show_theme_editor(ui),
-                    CenterPane::Canvas => {
-                        if let Some(error) = self.error.clone() {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.colored_label(ERROR_RED, error);
-                                if ui.small_button("dismiss").clicked() {
-                                    self.error = None;
-                                }
-                            });
-                            ui.separator();
-                        }
-                        self.show_canvas(ui);
+            .frame(egui::Frame::default().inner_margin(0.0).fill(match pane {
+                // The canvas paints its own darker surround; every
+                // other pane keeps the chrome surface.
+                CenterPane::Canvas => canvas_surface(&self.theme),
+                _ => color_of(tinted_chrome(&self.theme).panel_bg),
+            }))
+            .show(ctx, |ui| match pane {
+                CenterPane::Editor => self.show_theme_editor(ui),
+                CenterPane::Canvas => {
+                    if let Some(error) = self.error.clone() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.colored_label(ERROR_RED, error);
+                            if ui.small_button("dismiss").clicked() {
+                                self.error = None;
+                            }
+                        });
+                        ui.separator();
                     }
-                    CenterPane::OpenError => self.open_error_view(ui),
-                    CenterPane::Empty => self.empty_state(ui),
+                    self.show_canvas(ui);
                 }
+                CenterPane::OpenError => self.open_error_view(ui),
+                CenterPane::Empty => self.empty_state(ui),
             });
 
         self.show_page_toast(ctx);
@@ -3362,6 +3547,68 @@ mod tests {
         assert_eq!(sanitize_theme_name("a/b\\c"), Some("abc".to_owned()));
         assert_eq!(sanitize_theme_name("!!!"), None);
         assert_eq!(sanitize_theme_name(""), None);
+    }
+
+    #[test]
+    fn picker_names_fit_their_budget_or_gain_an_ellipsis() {
+        let width_of = |s: &str| s.chars().count() as f32 * 10.0;
+        assert_eq!(
+            truncate_to_width(&width_of, "Dark", 57.0),
+            "Dark",
+            "short names pass through"
+        );
+        let long = truncate_to_width(&width_of, "Sepia But Warmer Still", 57.0);
+        assert!(long.ends_with('…'));
+        // The result plus ellipsis fits the budget exactly (4 kept chars).
+        assert_eq!(long, "Sepi…");
+        assert!(width_of(&long) <= 57.0);
+    }
+
+    #[test]
+    fn a_tiny_budget_collapses_to_a_bare_ellipsis() {
+        let width_of = |s: &str| s.chars().count() as f32 * 10.0;
+        assert_eq!(truncate_to_width(&width_of, "Warm Dark", 5.0), "…");
+    }
+
+    #[test]
+    fn zoom_cluster_centers_and_never_overflows_its_column() {
+        // Wide column: full slider, symmetric lead.
+        let (lead, slider_w) = zoom_centering(400.0, 140.0);
+        assert_eq!(slider_w, 160.0);
+        assert_eq!(lead, (400.0 - 140.0 - 160.0) / 2.0);
+        // Narrow column: slider shrinks first; it bottoms out at 24 only
+        // when the column drops below cluster + 24.
+        let (lead, slider_w) = zoom_centering(213.0, 180.0);
+        assert_eq!((lead, slider_w), (0.0, 33.0));
+        let (lead, slider_w) = zoom_centering(198.0, 180.0);
+        assert_eq!((lead, slider_w), (0.0, 24.0));
+        // Degenerate: no negative offsets.
+        let (lead, slider_w) = zoom_centering(100.0, 180.0);
+        assert_eq!((lead, slider_w), (0.0, 24.0));
+    }
+
+    #[test]
+    fn centered_top_offset_clamps_at_zero() {
+        assert_eq!(centered_top_offset(500.0, 300.0), 100.0);
+        assert_eq!(centered_top_offset(100.0, 300.0), 0.0);
+    }
+
+    #[test]
+    fn welcome_block_grows_with_recents() {
+        let ctx = egui::Context::default();
+        let measure = |recents: usize| -> f32 {
+            let height = std::cell::Cell::new(0.0_f32);
+            let _ = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    height.set(welcome_block_height(ui, recents));
+                });
+            });
+            height.get()
+        };
+        let none = measure(0);
+        let three = measure(3);
+        assert!(none > 0.0);
+        assert!(three > none + 3.0, "each recent row adds its height");
     }
 
     #[test]

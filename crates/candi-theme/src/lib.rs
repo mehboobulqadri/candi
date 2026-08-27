@@ -19,5 +19,5 @@ pub use builtin::{BUILTIN_NAMES, builtin};
 pub use color::Color;
 pub use error::ThemeError;
 pub use recolor::recolor;
-pub use retint::retint;
+pub use retint::{canvas_bg, retint};
 pub use theme::{Theme, parse, to_yaml};
