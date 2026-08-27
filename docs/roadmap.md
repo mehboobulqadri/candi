@@ -35,6 +35,8 @@ The working reader.
 
 - Windows support alongside Linux on other distributions.
 - Deployment story per platform (installers/bundles).
+- AUR package (deferred here from v0.5 until multi-OS; `packaging/` already
+  contains a validated PKGBUILD).
 
 ### v0.4 — documentation
 
@@ -42,9 +44,8 @@ The working reader.
 
 ### v0.5 — packaging + CI
 
-- AUR package and Debian packaging, plus CI to keep them fresh.
-  *Note:* the user wants the AUR attempt pulled early — expect first packaging
-  experiments inside the v0.1.x/v0.2 timeframe ahead of this milestone.
+- Debian packaging, plus CI to keep it fresh. (AUR deferred until after
+  multi-OS — see v0.3.)
 
 ### v0.6 — Android
 
