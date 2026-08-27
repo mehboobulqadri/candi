@@ -3,7 +3,7 @@
 pkgname=candi
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='Clean, minimal, distraction-free PDF reader (GUI and TUI)'
+pkgdesc='Clean, minimal, distraction-free PDF reader'
 arch=('x86_64')
 url='https://github.com/mehboobulqadri/candi'
 license=('AGPL-3.0-only')
@@ -37,7 +37,7 @@ build() {
   cd "$pkgname-$pkgver"
   # MuPDF only: the pdfium PDF backend is an optional runtime-dlopened extra;
   # distro builds ship the default-feature build.
-  cargo build --frozen --release --bin candi --bin candi-tui
+  cargo build --frozen --release --bin candi
 }
 
 check() {
@@ -58,8 +58,7 @@ check() {
 package() {
   cd "$pkgname-$pkgver"
   install -Dm0755 -t "$pkgdir/usr/bin" \
-    target/release/candi \
-    target/release/candi-tui
+    target/release/candi
 
   install -Dm0644 LICENSE.md \
     "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"

@@ -1,13 +1,13 @@
 # Candi — a minimal, fast, cross-platform document reader
 
-A document reader with a TUI and a GUI.
+A clean, minimal, distraction-free PDF reader.
 
-> One reader. One core. Two interfaces.
+> One reader. One core. One interface.
 
 ## Status
 
-v0.1 is feature-complete on `slice/02-01-gui-reader` pending tag: terminal UI
-(`candi-tui`) and graphical UI (`candi`) with real rendered PDF pages. Dual PDF backends
+v0.1 is feature-complete on `slice/02-01-gui-reader` pending tag: the graphical
+reader (`candi`) with real rendered PDF pages. Dual PDF backends
 (MuPDF default, PDFium permissive build). Linux dogfooding; not yet tagged or on `main`.
 
 License: AGPL-3.0, with a permissive-build escape hatch (pdfium-only feature build).
@@ -27,11 +27,9 @@ dogfood, tag, `main` — need explicit user authorization).
   - Editable keybindings (`~/.config/candi/keybinds.json`, seeded with the defaults),
     recent-files list, per-PDF resume via a sidecar next to each book, drag-and-drop open.
   - Optional `--backend mupdf|pdfium` (default `mupdf`).
-- **`candi-tui book.pdf`** — keyboard-first terminal reader (ligature-normalized text,
-  centered column, mouse wheel and j/k page scroll) — works over SSH.
 
-Shared open/resume/sidecar logic lives in the `candi-cli` library crate, wired by both
-frontends.
+Shared open/resume/sidecar logic lives in the `candi-cli` library crate, wired by the GUI
+frontend.
 
 ## Building from source (Arch-based)
 
@@ -44,23 +42,21 @@ cargo build --release
 sources (statically linked — no system `mupdf` package is used); it is not a runtime
 dependency. `fontconfig` and `pkg-config` satisfy its Linux link requirements.
 
-This produces two binaries:
+This produces:
 
 | Binary | Run |
 |---|---|
 | `target/release/candi` | the GUI |
-| `target/release/candi-tui` | the terminal UI |
 
 No prebuilt PDFium download is needed for a source build (MuPDF is the default backend);
 the optional permissive PDFium build is described in
-[docs/architecture.md](docs/architecture.md). Desktop entries can point at either binary —
+[docs/architecture.md](docs/architecture.md). Desktop entries can point at `candi` —
 set `StartupWMClass=candi` so the window groups correctly.
 
 Or install straight from a clone:
 
 ```bash
 cargo install --path crates/candi-gui   # binary: candi
-cargo install --path crates/candi-tui   # binary: candi-tui
 ```
 
 ## Roadmap
@@ -68,7 +64,7 @@ cargo install --path crates/candi-tui   # binary: candi-tui
 Versioned releases; feature work merges to `dev`, `dev` merges to `main` for major
 releases. Full rules and details: [docs/roadmap.md](docs/roadmap.md).
 
-- **v0.1** — shipped base + UI fixes: TUI reader, GUI reader, dual backends, themes,
+- **v0.1** — shipped base + UI fixes: GUI reader, dual backends, themes,
   bookmarks, custom themes & keybinds.
 - **v0.2** — EPUB & other formats, password-locked PDFs, optimizations/cleanup.
 - **v0.3** — multi-OS (Windows, other Linux distros), deployments.

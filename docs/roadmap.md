@@ -18,7 +18,7 @@ nav_order: 6
 
 The working reader.
 
-- Terminal reader (`candi-tui`) and graphical reader (`candi`): rendered PDF pages,
+- Graphical reader (`candi`): rendered PDF pages,
   continuous / single / dual flows, fit-width & fit-page, anchored zoom, search with
   in-page highlights, bookmarks, table of contents.
 - Dual PDF backends behind one trait (MuPDF default; PDFium permissive build), per-PDF
@@ -29,7 +29,7 @@ The working reader.
 
 - EPUB and other document formats beyond PDF.
 - Password-locked PDF support with a proper unlock flow.
-- Optimizations and cleanup across the core and both frontends.
+- Optimizations and cleanup across the core and the frontend.
 
 ### v0.3 — multi-OS
 

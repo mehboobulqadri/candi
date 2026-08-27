@@ -5,11 +5,11 @@ suffix) from the GitHub tag tarball `v0.1.0`. Tag-day work is at the bottom.
 
 ## What the package contains
 
-Two binaries installed to `/usr/bin`: `candi` (GUI) and `candi-tui`. The
+One binary installed to `/usr/bin`: `candi` (GUI). The
 package installs the AGPL-3.0 license text, a freedesktop `.desktop` entry
 (Open With / menu integration for `application/pdf`) and a full hicolor icon
 set (16–512px, from `packaging/icons/`).
-The build uses the crate defaults (MuPDF statically linked into the binaries
+The build uses the crate defaults (MuPDF statically linked into the binary
 by `mupdf-sys`, which compiles a bundled copy of MuPDF's C sources with clang
 at build time), so there is no dynamic dependency on any system MuPDF library.
 The PDFium backend is compiled in but only ever used if a standalone
@@ -76,6 +76,6 @@ update-desktop-database ~/.local/share/applications
 ## Local validation performed for this version
 
 Full `makepkg -f` cycle (prepare/build/check/package) passed against a local
-snapshot of this tree; packaged tree verified to contain both binaries,
-license, desktop file and icon; binaries execute. Note: this machine has no
+snapshot of this tree; packaged tree verified to contain the binary,
+license, desktop file and icon; the binary executes. Note: this machine has no
 `namcap` installed, so namcap linting was skipped.
