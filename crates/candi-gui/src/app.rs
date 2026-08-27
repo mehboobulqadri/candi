@@ -92,6 +92,13 @@ impl ThemeEditor {
     }
 }
 
+/// Deferred relayout kind for [`ReaderApp::debug_relayout`] capture states.
+enum DebugRelayout {
+    Dual,
+    Single,
+    Percent,
+}
+
 pub struct ReaderApp {
     backend: BackendKind,
     path: Option<PathBuf>,
@@ -127,6 +134,16 @@ pub struct ReaderApp {
     fit_page: bool,
     /// Page flow (continuous / 1-up / 2-up); session-local, not persisted.
     flow: Flow,
+    /// Content-y under the viewport center from the last painted canvas
+    /// frame; the reference point for relayout anchors.
+    canvas_center_y: f32,
+    /// Relayout anchor — page and depth-fraction to keep under the viewport
+    /// center after the next zoom or flow rebuild.
+    scroll_anchor: Option<(usize, f32)>,
+    /// Capture scaffolding: a flow or zoom relayout deferred to after the
+    /// first painted frame, so anchored-relayout evidence needs no input
+    /// injection (`CANDI_UI_DEBUG=delay-dual|delay-single|delay-percent`).
+    debug_relayout: Option<DebugRelayout>,
 
     sidebar_open: bool,
     section: SidebarSection,
@@ -214,6 +231,9 @@ impl ReaderApp {
             zoom_pct: layout::MIN_ZOOM_PERCENT,
             fit_page: false,
             flow: Flow::Continuous,
+            canvas_center_y: 0.0,
+            scroll_anchor: None,
+            debug_relayout: None,
             sidebar_open: false,
             section: SidebarSection::Contents,
             ui_scale: 1.0,
@@ -261,6 +281,27 @@ impl ReaderApp {
                 }
                 "shortcuts-all" => app.shortcuts_open = true,
                 "info" => app.info_open = true,
+                "deep" | "deep-dual" | "deep-single" | "deep-percent" => {
+                    // Mid-document capture states: page 8, then the flow or
+                    // zoom change whose anchored relayout is under test.
+                    if app.document.is_some() {
+                        app.goto_page(7);
+                        match mode.as_str() {
+                            "deep-dual" => app.set_flow(Flow::Dual),
+                            "deep-single" => app.set_flow(Flow::Single),
+                            "deep-percent" => app.set_zoom_percent(200.0),
+                            _ => {}
+                        }
+                    }
+                }
+                "delay-dual" | "delay-single" | "delay-percent" if app.document.is_some() => {
+                    app.goto_page(7);
+                    app.debug_relayout = Some(match mode.as_str() {
+                        "delay-dual" => DebugRelayout::Dual,
+                        "delay-single" => DebugRelayout::Single,
+                        _ => DebugRelayout::Percent,
+                    });
+                }
                 _ => {}
             }
         }
@@ -287,6 +328,8 @@ impl ReaderApp {
                 self.layout_key = None;
                 self.page_sizes.clear();
                 self.pending_scroll = None;
+                self.scroll_anchor = None;
+                self.canvas_center_y = 0.0;
                 self.primed = false;
                 self.sidebar_open = true;
                 self.fit_page = false;
@@ -356,26 +399,49 @@ impl ReaderApp {
         }
         let page = page.min(count - 1);
         self.session.page = page;
+        // An explicit jump is more specific than any pending relayout anchor.
+        self.scroll_anchor = None;
         if let Some(rect) = self.layout.rects.get(page) {
             self.pending_scroll = Some((rect.y - GAP).max(0.0));
         }
     }
 
-    fn zoom_step(&mut self, delta_percent: i16) {
+    /// Pin the viewport-center content point so the pending relayout keeps
+    /// the page under the center in place instead of sliding away.
+    fn record_center_anchor(&mut self) {
+        if let Some(anchor) = center_anchor(&self.layout, self.canvas_center_y) {
+            self.scroll_anchor = Some(anchor);
+        }
+    }
+
+    /// Switch to percent zoom at `percent`, keeping the viewport-center
+    /// content pinned across the relayout.
+    fn set_zoom_percent(&mut self, percent: f32) {
         self.fit_page = false;
-        let pct = i32::from(self.zoom_pct) + i32::from(delta_percent);
-        self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(pct as f32));
+        self.record_center_anchor();
+        self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(percent));
+    }
+
+    fn zoom_step(&mut self, delta_percent: i16) {
+        self.set_zoom_percent(f32::from(self.zoom_pct) + f32::from(delta_percent));
     }
 
     /// Leave any percent zoom and refit the document to the window width.
     fn zoom_fit_width(&mut self) {
         self.fit_page = false;
+        self.record_center_anchor();
         self.session.zoom = ZoomMode::FitWidth;
     }
 
     /// Switch the page flow; each flow refits to its widest row so spreads
-    /// always land fully visible.
+    /// always land fully visible. The anchor page snaps to the destination
+    /// flow's row-first page — spread pages share one row band, so the
+    /// offset is identical while toggling back keeps the same primary page.
     fn set_flow(&mut self, flow: Flow) {
+        self.record_center_anchor();
+        if let Some((page, _)) = self.scroll_anchor.as_mut() {
+            *page -= *page % layout::pages_per_row(flow);
+        }
         self.flow = flow;
         self.fit_page = false;
         self.session.zoom = ZoomMode::FitWidth;
@@ -795,8 +861,19 @@ impl ReaderApp {
     }
 
     fn show_canvas(&mut self, ui: &mut egui::Ui) {
+        // A resize-driven relayout rescales the content (fit flows re-derive
+        // their percent from the new width); remember what the viewport
+        // center is looking at so the rebuild keeps it in place.
+        let resize_anchor = center_anchor(&self.layout, self.canvas_center_y);
+        let old_zoom = self.zoom_pct;
         if !self.ensure_layout(ui.available_width(), ui.available_height()) {
             return;
+        }
+        if self.scroll_anchor.is_none()
+            && self.pending_scroll.is_none()
+            && self.zoom_pct != old_zoom
+        {
+            self.scroll_anchor = resize_anchor;
         }
         // Backdrop over the entire clip rect: at high zoom the content block
         // is narrower than the viewport and unpainted regions showed through.
@@ -827,6 +904,13 @@ impl ReaderApp {
             };
             self.pending_scroll = Some(target);
         }
+        // A zoom or flow change pending its relayout restores the recorded
+        // anchor point (page + depth-fraction) to the viewport center.
+        if let Some(anchor) = self.scroll_anchor.take()
+            && let Some(y) = anchored_offset(&self.layout, anchor, ui.clip_rect().height())
+        {
+            self.pending_scroll = Some(y);
+        }
         let jump = self.pending_scroll.take();
 
         ui.style_mut().spacing.scroll.bar_width = 4.0;
@@ -856,7 +940,12 @@ impl ReaderApp {
                 egui::vec2(content_w, self.layout.total_height),
                 egui::Sense::hover(),
             );
-            let painter = ui.painter_at(content_rect);
+            // Pages wider than the viewport (percent zoom) bleed past the
+            // content block's edges symmetrically instead of hard-clipping
+            // at the block boundary, so both edges crop like SumatraPDF.
+            let paint_rect =
+                egui::Rect::from_x_y_ranges(ui.clip_rect().x_range(), content_rect.y_range());
+            let painter = ui.painter_at(paint_rect);
             let clip = ui.clip_rect();
             let top = clip.top() - content_rect.top();
             view.visible = self.layout.visible_range(top, clip.height());
@@ -933,11 +1022,18 @@ impl ReaderApp {
             if let Some(page) = self.layout.page_at(view.center_y) {
                 self.session.page = page;
             }
+            self.canvas_center_y = view.center_y;
             self.request_pages(&ctx, view.visible);
             self.prune_textures();
             let span = (self.layout.total_height - view.clip_h).max(1.0);
             self.session.scroll_frac =
                 (f64::from(output.state.offset.y) / f64::from(span)).clamp(0.0, 1.0);
+            match self.debug_relayout.take() {
+                Some(DebugRelayout::Dual) => self.set_flow(Flow::Dual),
+                Some(DebugRelayout::Single) => self.set_flow(Flow::Single),
+                Some(DebugRelayout::Percent) => self.set_zoom_percent(200.0),
+                None => {}
+            }
         }
     }
 
@@ -1714,8 +1810,7 @@ impl ReaderApp {
             )
         });
         if slider.inner.changed() {
-            self.fit_page = false;
-            self.session.zoom = ZoomMode::Percent(layout::quantize_nearest(pct as f32));
+            self.set_zoom_percent(pct as f32);
         }
     }
 
@@ -1967,6 +2062,13 @@ impl ReaderApp {
             }
             if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
                 self.zoom_fit_width();
+            }
+            // Pinch-zoom gesture (trackpad / touchscreen) and ctrl+scroll
+            // report a multiplicative delta anchored at the viewport center,
+            // mirroring the keyboard steps' percent-switch semantics.
+            let pinch = input.zoom_delta();
+            if plain && pinch != 1.0 && self.page_count() > 0 {
+                self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
             }
             if plain && input.key_pressed(Key::T) {
                 self.cycle_theme();
@@ -2260,6 +2362,25 @@ fn click_row(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
 
 fn uv_unit_rect() -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+}
+
+/// The page and depth-fraction under content-y `center_y` — what a relayout
+/// (zoom step, flow switch) must keep under the viewport center so the
+/// content does not slide away. Between-page positions resolve to the
+/// earlier row via [`Layout::page_at`].
+fn center_anchor(layout: &Layout, center_y: f32) -> Option<(usize, f32)> {
+    let page = layout.page_at(center_y)?;
+    let rect = layout.rects.get(page)?;
+    let frac = ((center_y - rect.y) / rect.h).clamp(0.0, 1.0);
+    Some((page, frac))
+}
+
+/// Absolute scroll offset putting `anchor`'s content point at the viewport
+/// center of height `viewport_h`, clamped to the scrollable span.
+fn anchored_offset(layout: &Layout, anchor: (usize, f32), viewport_h: f32) -> Option<f32> {
+    let rect = layout.rects.get(anchor.0)?;
+    let y = rect.y + anchor.1 * rect.h - viewport_h * 0.5;
+    Some(y.clamp(0.0, (layout.total_height - viewport_h).max(0.0)))
 }
 
 fn filename_of(path: &Path) -> String {
@@ -2557,5 +2678,90 @@ mod tests {
             4,
             "single-page lists step in place"
         );
+    }
+
+    fn letters(count: usize) -> Vec<(f32, f32)> {
+        vec![(612.0, 792.0); count]
+    }
+
+    #[test]
+    fn center_anchor_resolves_to_the_row_first_page_and_depth_fraction() {
+        let layout = Layout::build(&letters(5), ZoomMode::Percent(100), 800.0, Flow::Continuous);
+        let mid = |page: usize, frac: f32| {
+            let r = layout.rects[page];
+            r.y + frac * r.h
+        };
+        // Halfway down page 3.
+        assert_eq!(center_anchor(&layout, mid(3, 0.5)), Some((3, 0.5)));
+        // A between-row gap resolves to the earlier row's bottom edge.
+        let gap_y = layout.rects[1].y + 792.0 + GAP / 2.0;
+        assert_eq!(center_anchor(&layout, gap_y), Some((1, 1.0)));
+        // Positions outside the content clamp into the nearest row.
+        assert_eq!(center_anchor(&layout, -50.0), Some((0, 0.0)));
+        assert_eq!(center_anchor(&Layout::default(), 10.0), None);
+    }
+
+    #[test]
+    fn anchored_offset_keeps_the_anchor_point_centered_across_zooms() {
+        let vh = 600.0;
+        let before = Layout::build(
+            &letters(12),
+            ZoomMode::Percent(100),
+            800.0,
+            Flow::Continuous,
+        );
+        let after = Layout::build(
+            &letters(12),
+            ZoomMode::Percent(150),
+            800.0,
+            Flow::Continuous,
+        );
+
+        let anchor =
+            center_anchor(&before, before.rects[5].y + 0.25 * before.rects[5].h).expect("resolves");
+        let restored =
+            anchored_offset(&after, anchor, vh).expect("offset resolves for a non-empty layout");
+        let new_center = restored + vh * 0.5;
+        // The anchored fraction of the same page sits under the viewport
+        // center again, so zooming does not move the reading position.
+        assert_eq!(after.page_at(new_center), Some(5));
+        let target = after.rects[5].y + anchor.1 * after.rects[5].h;
+        assert!((new_center - target).abs() < 1e-3);
+    }
+
+    #[test]
+    fn flow_relayout_keeps_the_anchored_row_under_the_viewport_center() {
+        let before = Layout::build(&letters(9), ZoomMode::Percent(100), 800.0, Flow::Continuous);
+        let anchor =
+            center_anchor(&before, before.rects[4].y + 0.7 * before.rects[4].h).expect("resolves");
+        let after = Layout::build(&letters(9), ZoomMode::Percent(100), 1300.0, Flow::Dual);
+        let vh = 500.0;
+        let restored = anchored_offset(&after, anchor, vh).expect("resolves");
+        // Page 4 pairs into spread (4, 5) after switching to dual flow; its
+        // depth point stays centered, so the same spread remains on screen.
+        assert_eq!(after.page_at(restored + vh * 0.5), Some(4));
+    }
+
+    #[test]
+    fn anchored_offset_clamps_to_the_scrollable_span() {
+        let tiny = Layout::build(&letters(2), ZoomMode::Percent(100), 800.0, Flow::Continuous);
+        // A viewport taller than the document cannot scroll at all.
+        assert_eq!(
+            anchored_offset(&tiny, (1, 1.0), tiny.total_height * 2.0),
+            Some(0.0)
+        );
+        let last = Layout::build(
+            &letters(12),
+            ZoomMode::Percent(150),
+            800.0,
+            Flow::Continuous,
+        );
+        let vh = 600.0;
+        assert_eq!(
+            anchored_offset(&last, (11, 1.0), vh),
+            Some(last.total_height - vh)
+        );
+        assert_eq!(anchored_offset(&last, (0, 0.0), vh), Some(0.0));
+        assert_eq!(anchored_offset(&Layout::default(), (0, 0.0), vh), None);
     }
 }
