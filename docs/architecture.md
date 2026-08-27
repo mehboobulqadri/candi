@@ -219,9 +219,9 @@ v0.1 ships five built-in themes (`Light`, `Sepia`, `Warm Dark`, `Dark`, `True Da
 embedded as YAML and selected by name. Users add their own as
 `~/.config/candi/themes/<name>.yaml` (file stem must match the embedded `name`), or craft
 one in the GUI's theme editor and save it there. Two rendering passes make a theme carry
-over pixels: [`recolor`](crates/candi-theme/src/recolor.rs) maps rendered page bitmaps
+over pixels: [`recolor`](../crates/candi-theme/src/recolor.rs) maps rendered page bitmaps
 onto the theme's page colors while protecting saturated figure pixels, and
-[`retint`](crates/candi-theme/src/retint.rs) blends a small, luma-gated fraction of the
+[`retint`](../crates/candi-theme/src/retint.rs) blends a small, luma-gated fraction of the
 accent into the chrome backgrounds.
 
 Validation: the schema is strict — unknown fields are a fatal `Schema` error
