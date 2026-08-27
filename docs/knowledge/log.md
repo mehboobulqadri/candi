@@ -266,3 +266,62 @@ Format per entry:
   experiment (2231aa8) — keep SidePanels; patch scripts must be authored
   against post-fmt state; capture evidence must be PID-matched and
   actually READ before concluding.
+
+## 2026-08-27 (v0.1.0 candidate close-out)
+
+- **Decision/Issue:** v0.1.0 candidate assembled on `slice/02-01-gui-reader`
+  — 8 commits `a213302..b06ff39` atop origin `3866fa6`, all local/unpushed.
+  Search crash fix, chrome/sidebar polish (15 items), anchor-preserving
+  zoom/flow/resize/pinch, YAML theme editor + Dark default + prefs/recents/
+  accent retint, keybinds.json + custom themes, docs/architecture correction
+  + new `docs/roadmap.md`, AUR packaging, review round-2 doc fixes.
+  Independent review round-2 verdict FIX-FIRST on 5 docs/regression items →
+  all fixed in `b06ff39`; targeted re-review verdict pending at close-out.
+- **Why:** finish the GUI reader slice to shippable quality; every fix below
+  came from dogfood rounds or review, not speculation.
+- **Changed (root causes worth keeping):**
+  - *Char-boundary panic:* scan_one_page byte scan sliced mid-codepoint on
+    accented page text → UI thread panic. Fix = `as_bytes()` compare +
+    `is_char_boundary` guard + café/résumé regression test. ASCII-only
+    fixtures structurally hide byte-index bugs.
+  - *egui 0.30 batch:* `Layout::main_align` aligns inside a rect, not widget
+    streams (center the pill via screen-anchored `Area`);
+    `allocate_ui_with_layout` returns child min_rect (right edges need exact
+    rects + `ui.put`); Inter lacks ←→ glyphs (use words); slider rail+handle
+    both paint `widgets.inactive.bg_fill` → detached-dot illusion, fixed by
+    `trailing_fill(true)`; `Modifiers` not Hash (decompose to bools);
+    `widgets.open.weak_bg_fill` must be themed (dark-on-dark headers in Light).
+  - *Keybind shift parity:* OS-level combos typed with shift produce different
+    chars (Shift+= → '+'). Kept exact-modifier matching strict; enumerated
+    spelling variants (`"+","=","Shift+=","Ctrl+=","Ctrl++","Ctrl+Shift+="`)
+    in DEFAULTS instead.
+  - *Docs-from-memory fabrication:* the sidecar TOML example had invented
+    fields until checked against `serialize_session` — always quote
+    serializers, never reconstruct examples from recall.
+  - *Packaging:* makepkg injects `-flto` → lld cannot resolve bundled-C
+    bitcode at rustc link; `options=('!lto')` mandatory; pin RUSTFLAGS
+    (spurious `-C target-cpu=native` observed once — portability hazard);
+    check() needs backend exclusions when a dlopen-ed lib isn't packaged.
+  - *Shell hygiene:* backgrounded GUI launch inheriting stdout FD hangs the
+    driving tool — `nohup … < /dev/null & disown`.
+  - Minor: `warn()` helpers taking String force `.to_owned()` call-site
+    warts — future helpers take `impl Display` (2-line cleanup candidate).
+- **Benchmarks recorded** (7 unique real books `/mnt/personal/Books`,
+  0.8–50 MB, 148–1556 pp): core `reader_peak` avg mupdf 17.6 MB / pdfium
+  18.4 MB, worst 58 MB (silberschatz pdfium) → 200 MB gate passes ~3.4×
+  headroom; full_pass hazards NOT gated (sdi2 pdfium 1996 MB image sweep;
+  silberschatz mupdf 295 MB TLS store); GUI process RSS ~190 MB mupdf /
+  ~213 MB pdfium vs egui floor ~170 MB; open+first render avg 61 ms mupdf /
+  23 ms pdfium.
+- **User decisions captured:** versioning — majors are `v0.x` tags landing
+  on main; post-release fixes `v0.x.y`; features → dev; new feature branches
+  only AFTER each version cut. Roadmap v0.1 (base+polish, HERE) → v0.2
+  epub/password PDFs/optimizations → v0.3 Windows/other Linux/deployments →
+  v0.4 GitHub docs/cleaning → v0.5 AUR/Debian+CI (AUR pulled EARLY per user;
+  package ready in `packaging/`) → v0.6 Android beta. Infra flags: dev/main
+  UNPROTECTED (decision pending); `origin/slice/docs-catchup` prune candidate
+  (needs user); tag MUST literally be `v0.1.0` (PKGBUILD URL); Cargo.lock
+  conflicts expected with any revived cargo dependabot PR (none open;
+  dependabot PR #1 closed w/ comment, manual consolidated checkout bump
+  planned post-merge); `/tmp` tmpfs 7.7G overflows Rust target dirs → use
+  `/mnt/personal/tmp` (SIGBUS ×2 sessions).
