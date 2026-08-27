@@ -1,139 +1,122 @@
 # Handoff — next agent starts here
 
-## State (2026-08-27)
+## State (2026-08-28)
 
-Branch `slice/02-01-gui-reader`, tip `b06ff39`, **8 commits ahead of
-origin/slice/02-01-gui-reader (`3866fa6`) — all local, unpushed** (push is
-pending the user's dogfood/verify outcome per flow). Gates green: fmt,
-clippy `-D warnings`, workspace tests with
-`PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` (= DIRECTORY).
+**v0.1.0 SHIPPED.** Annotated tag `v0.1.0` → `8995b64` on `main`; `dev` at
+`f864a15` (PR #21 merge from `slice/02-01-gui-reader`). Gates green
+throughout: fmt, clippy `-D warnings`, workspace tests with
+`PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` (= DIRECTORY);
+`CARGO_TARGET_DIR` under `/mnt/personal/tmp`.
 
-The v0.1.0 candidate is complete: feature-complete GUI reader + polish +
-editable config (keybinds, themes, prefs) + corrected docs + roadmap +
-AUR packaging + real-book benchmarks. Independent review round-2 verdict
-FIX-FIRST on 5 docs/regression items → **all fixed in `b06ff39`**;
-targeted re-review was running at close-out — **verdict PENDING** (gates
-green regardless; check the final reviewer message before acting on it).
+Release tail on the slice (top → base):
 
-### Commit map (tip → base)
+- `ce4486b` icon branding — rounded 21%-radius multi-res hicolor set
+  (16–512) + embedded 256px window icon (`image 0.25`, png-only).
+- `8960d1a` pre-tag hardening (review battery) — outline depth cap 64
+  parity, corrupt-sidecar save-guard + banner, failed-open-over preserves
+  sidebar, search `catch_unwind`, theme-delete keeps entry on failure,
+  PDFium missing-render-symbol → error, `dest_top` is_finite guards, FIFO
+  preflight `is_file`, PoisonError recovery, theme YAML 256 KiB cap.
+- `754d73d` GUI-only public story — README/roadmap/PKGBUILD/.SRCINFO/AUR.md
+  de-advertise `candi-tui`.
+- `c507c15` dogfood behavioral batch (19 issues) — TextEdit FocusGuard;
+  keybinds `DEFAULTS_SCHEMA_VERSION` 2 migration healing stale v1 seeds;
+  render FailState ledger w/ 250ms→1s→4s backoff + click-to-retry +
+  stale-scale pruning; TOC `dest_top` end-to-end (MuPDF XYZ top / PDFium
+  `FPDFDest_GetLocationInPage` + y-flip) + accent same-page semantics +
+  `toc_follow` clicked-row preference; bottom-center page toast 700ms/200ms;
+  async search worker (`SearchSession::step` + mpsc + AtomicBool);
+  non-blocking rfd dialog single-flight; startup goes straight to welcome
+  (`pick_pdf` removed).
+- Earlier candidate commits (reader, polish, config, docs, packaging):
+  full commit map in `log.md` 2026-08-27 entry.
 
-- `b06ff39` fix(gui,docs): review round-2 — truthful theme-validation
-  paragraph; README deps rust+clang (no mupdf); zoom_in physical combo
-  parity (Shift+=/Ctrl+= variants enumerated); keybinds `schema_version`
-  added+tolerated; empty-binding-list warn+defaults; prefs
-  malformed-recents warn.
-- `04ca989` chore(packaging): AUR PKGBUILD (candi 0.1.0-1,
-  AGPL-3.0-only, clang makedepends, NO system-mupdf dep — mupdf-sys
-  bundles static MuPDF), `.SRCINFO` skip-sums template, `AUR.md` guide,
-  desktop file + icon vendored. Local `makepkg -f` validated end-to-end.
-  `options=('!lto')` REQUIRED else makepkg's injected `-flto` breaks the
-  bundled-C link.
-- `b9dabf6` docs: architecture.md six stale sections corrected against
-  code (trait block, sidecar dual v1-TUI/v3-GUI documented FROM
-  `serialize_session`, themes section real, Spike 2/3 resolved); README
-  rebuilt; `docs/roadmap.md` created (versioning rules + v0.1–v0.6);
-  mockups moved UNRENAMED to `docs/design/mockups/`; dependabot PR #1
-  CLOSED w/ comment (manual consolidated checkout bump planned
-  post-merge).
-- `a7eae11` feat(gui): `keybinds.json` (`$XDG_CONFIG_HOME/candi/
-  keybinds.json`, seeded defaults, 17 actions, exact-modifier matching,
-  tolerant per-entry fallback, conflict last-wins) + custom themes
-  (`<config>/themes/*.yaml`, name==stem, Save-as in editor, picker
-  customs w/ delete + Dark fallback; `themes_dir()` single source).
-- `254c5b2` feat(gui,theme): nested YAML theme editor schema (parse
-  accepts flat+nested; unknown groups preserved); ctrl±/zoom_delta
-  editor font zoom 8..40; DEFAULT_THEME=Dark; prefs.toml
-  (`config.toml` schema v1, `[appearance]` + `[[recents]]`,
-  atomic+tolerant); recents via `record_open` choke point, cap10
-  dedupe; accent seepage retint luma-gated (≥24 gap).
-- `8944eea` fix(gui): anchor-preserving zoom/flow/resize/pinch
-  (`center_anchor(page,frac)` machinery); slider+keys+pinch+fit flows
-  anchored; flow switch snaps anchor to dest row-first page; resize
-  keeps primary page.
-- `0af4e49` feat(gui): chrome/sidebar polish (15 items) — distinct
-  lucide icons for the duplicate fullscreen buttons; slider
-  `trailing_fill` global fix (detached-handle illusion); page pill
-  centered via screen-anchored `Area`; TOC rows via exact-rect
-  `ui.put`; separators off; PgUp/PgDn labeled with WORDS (Inter lacks
-  ←→ glyphs); TOC accent deepest-active-only w/ end-range computation +
-  tests; min/max/close buttons removed (drag + dbl-click maximize kept);
-  search field moved into sidebar; panel resizable 230–400 w/ collapse
-  toggle + Ctrl+B; Ctrl+K opens keybinds; centered popups;
-  `CANDI_UI_DEBUG=1` capture hook; `widgets.open.weak_bg_fill` themed.
-- `a213302` fix(core): search char-boundary panic — scan_one_page byte
-  index sliced mid-codepoint on accented text (é etc.), panicked the UI
-  thread; fixed with `as_bytes()` compare + `is_char_boundary` guard;
-  regression test café/résumé with FakeDoc.
+Review battery all PASS (fixes gate-verified): independent round-2 worktree
+review PASS; security FIX-THEN-PASS (1 MED crash-DoS outline recursion →
+depth cap; LOWs fixed or deferred); silent-failure-hunter PASS (H1
+data-loss + 4 MEDs → fixed).
 
-## What awaits the user (stop-gates — explicit authorization required)
+## What awaits the user
 
-1. **Dogfood the build** — launch `candi book.pdf`, exercise reading,
-   search, TOC, bookmarks, themes/keybinds/prefs edits across restarts.
-   Specifically test **pinch-zoom on real hardware** (touchpad pinch
-   gesture driving zoom_delta anchoring).
-2. **Known deferred item**: highlighting the CURRENT match differently
-   from other matches is NOT done (all matches same style).
-3. **Tag MUST be literally `v0.1.0`** — the PKGBUILD URL/pkgver depends
-   on the literal string. Then push, PR `slice/02-01-gui-reader` →
-   `dev`, and `dev` → `main`.
-4. **PR sequencing + versioning rules** live in `docs/roadmap.md`:
-   majors are `v0.x` tags landing on main; post-release fixes are
-   `v0.x.y`; features go to `dev`; new feature branches start AFTER each
-   version cut. Timeline: v0.1 base+polish (HERE) → v0.2 epub+password
-   PDFs+optimizations → v0.3 Windows+other Linux+deployments → v0.4
-   GitHub docs/cleaning → v0.5 AUR/Debian+CI (AUR pulled EARLY — package
-   ready in `packaging/`) → v0.6 Android beta.
-5. **AUR submission steps** when authorized: `packaging/AUR.md`
-   (account, dedicated ssh key `aur@`, clone
-   `ssh://aur@aur.archlinux.org/candi.git`, master-only, updpkgsums +
-   printsrcinfo each release).
+1. **BLOCKER — repo visibility.** Repo is PRIVATE → the AUR PKGBUILD
+   source URL (tag tarball) 404s anonymously. Flip visibility to public
+   BEFORE the AUR push.
+2. **AUR push.** One-time prep already given: account, ssh pubkey upload,
+   `~/.ssh/config` `Host aur.archlinux.org` (`User aur`, `IdentityFile
+   ~/.ssh/aur`, `IdentitiesOnly`), `ssh-keyscan` → known_hosts, ssh test.
+   Day-of: clone `ssh://aur@aur.archlinux.org/candi.git`, cp
+   `packaging/{PKGBUILD,.SRCINFO}`, `updpkgsums`,
+   `makepkg --printsrcinfo > .SRCINFO`, commit `candi 0.1.0`, push
+   `master` ONLY. Full guide: `packaging/AUR.md`.
+3. **Pending decisions:** branch protection on `dev`+`main` (both
+   UNPROTECTED); prune `origin/slice/docs-catchup` (merged); stale
+   `origin/master` ref (trivia, resurfaced from an old handoff).
+4. **Versioning:** post-release fixes = `v0.1.1` on `dev`; features start
+   only AFTER the v0.1.1 cut, per `docs/roadmap.md` (v0.2 epub+password
+   PDFs+optimizations → v0.3 Windows/other Linux → v0.4 GitHub docs →
+   v0.5 AUR/Debian+CI → v0.6 Android beta).
+
+## v0.1.1 backlog (verbatim — commit trailers + reviews)
+
+- rotated-page dest_top parity + fixture (PDFium /Rotate vs MuPDF
+  post-rotation space)
+- welcome_block_height measured-layout refactor (magic-number twin)
+- tinted-chrome per-frame caching
+- per-bookmark page-load caching at outline build
+- search hit cap (10k + truncated note)
+- search snippet double-extract
+- Ctrl+Q save-failure visibility
+- dialog-panic feedback line
+- highlight unwrap_or_default caching
+- cache.insert oversized-bool
+- canvas_bg custom-theme degeneration doc note
+- Wayland pinch support (zwp_pointer_gestures side-channel — winit has no
+  Linux pointer-gesture support; Ctrl+scroll works, shortcuts window
+  notes this)
+- RSS profiling pass (idle ~190MB = egui floor ~170MB + app;
+  heaptrack/massif, v0.2 roadmap slot)
+- parity test OPEN_TIMEOUT 5s cold-start flake
+- progress.md merge-history rows 01/06–01/08 gap (pre-existing)
 
 ## Flags / infra state
 
-- **`dev` and `main` are UNPROTECTED** — user protection decision pending.
-- `origin/slice/docs-catchup` is contained in `dev` — prune candidate,
-  needs user sign-off.
-- Branch is 8 commits unpushed (awaiting user-verify outcome).
+- `PDFIUM_LIB=~/.cache/candi-pdfium/chromium-7543` (= DIRECTORY) required
+  for workspace tests/benches.
+- Big debug/test target dirs on `/mnt/personal/tmp`, never `/tmp` tmpfs
+  (7.7G overflow, SIGBUS hit two sessions).
+- **`creds.yml` is NEVER read** — gitignored personal secrets file; no
+  cat/grep/recursive scan touches it (use `git grep` / explicit excludes).
+- `dev`/`main` UNPROTECTED; `origin/slice/docs-catchup` prune candidate;
+  stale `origin/master` ref — user decisions pending.
 - Cargo.lock conflicts expected if a stale cargo dependabot PR revives
-  (none open now; dependabot PR #1 closed).
-- **`/tmp` tmpfs (7.7G) overflows on Rust debug/test target dirs → use
-  `/mnt/personal/tmp`** for large builds/tests (SIGBUS incident hit two
-  sessions running). opencode disk cleanup still deferred
-  (`~/.local/share/opencode/opencode.db` ≈ 26G).
+  (none open; dependabot PR #1 closed).
 
-## Benchmarks (real books, `/mnt/personal/Books` — 7 unique, 0.8–50 MB, 148–1556 pp)
+## Install (carried forward — unchanged)
 
-- Core `reader_peak` avg: mupdf 17.6 MB / pdfium 18.4 MB; worst case
-  58 MB (silberschatz, pdfium) → 200 MB gate passes with ~3.4× headroom.
-- `full_pass` hazards (RECORDED, NOT GATED): sdi2 pdfium 1996 MB
-  (image-heavy full sweep), silberschatz mupdf 295 MB (MuPDF TLS store,
-  known). Gate only `reader_peak`.
-- GUI process RSS: ~190 MB avg mupdf / ~213 MB pdfium; egui floor
-  ~170 MB — so GUI floor dominates the core budget.
-- Open + first render avg: 61 ms mupdf / 23 ms pdfium.
-
-## Install (still valid)
-
-- `~/.local/bin/candi` → symlink to `target/release/candi` (stale
-  `~/.cargo/bin/candi` removed — it shadowed the symlink once).
+- `~/.local/bin/candi` → symlink to `target/release/candi` (a stale
+  `~/.cargo/bin/candi` once shadowed it). The symlink points into
+  `target/release` — a `cargo clean` invalidates it until the next build.
 - Desktop entry `~/.local/share/applications/candi.desktop`
   (Icon=candi, MimeType=application/pdf, StartupWMClass=candi).
-- NOTE: the symlink points into `target/release` — a `cargo clean`
-  invalidates it until the next build.
 
 ## Capture discipline (do not regress)
 
-`scripts/shot.sh` matches the spawned window BY PID; it internally
-pkills by path regex — confirm no foreign `candi` instance first
-(never `pkill -f`, it self-matches). Backgrounded GUI launches must
-detach stdio: `nohup … < /dev/null & disown` — an inherited stdout FD
-hangs the driving tool. Verify WHAT you captured; the user works on
-this machine simultaneously — ask for quiet moments for final evidence.
-Display scale factor makes logical ≠ physical sizes in captures.
+`scripts/shot.sh` matches the spawned window BY PID; it pkills by path
+regex — confirm no foreign `candi` instance first, and **`pkill -x candi`,
+never `pkill -f`** (self-matches). Backgrounded GUI launches must detach
+stdio: `nohup … < /dev/null & disown` — an inherited stdout FD hangs the
+driving tool. Verify WHAT you captured; the user works on this machine
+simultaneously — ask for quiet moments for final evidence. Display scale
+factor makes logical ≠ physical sizes in captures.
 
 ## Pointers
 
-- egui 0.30 gotchas and process lessons: `.agents/meta/memory.md`
-  (entries 2026-08-25 onward — most recent includes the polish-batch
-  layout lessons).
-- Session-by-session decisions/issues: `docs/knowledge/log.md`.
+- egui 0.30 gotchas + process lessons: `.agents/meta/memory.md`
+  (2026-08-25 → 2026-08-28 entries).
+- Session decisions/issues: `docs/knowledge/log.md` (2026-08-28 entries
+  cover the release: GUI-only pivot + SRCINFO incident, icon branding,
+  dogfood batch, review battery, main/dev divergence reconciliation,
+  v0.1.0 cut + private-repo blocker).
+- Benchmarks (real books: `reader_peak` gate vs `full_pass` recorded-not-
+  gated, egui floor ~170 MB): recorded in `log.md` 2026-08-27.
+- Versioning rules + roadmap: `docs/roadmap.md`.
