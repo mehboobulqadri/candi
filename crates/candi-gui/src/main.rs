@@ -3,6 +3,7 @@
 mod app;
 mod highlight;
 mod icons;
+mod keybinds;
 mod render;
 mod sidebar;
 

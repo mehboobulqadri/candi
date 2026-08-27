@@ -5,6 +5,7 @@
 //! bottom bar), built-in theming, and session persistence via `candi-cli`.
 
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::ops::{Range, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,8 +13,8 @@ use std::time::Duration;
 
 use candi_cli::{open_session, save_session};
 use candi_core::{
-    DEFAULT_THEME, Prefs, SearchSession, SessionState, ZoomMode, config_path, load_prefs,
-    normalize_reader_text, store_prefs,
+    DEFAULT_THEME, Prefs, SearchSession, SessionState, ZoomMode, config_dir, config_path,
+    load_prefs, normalize_reader_text, store_prefs, write_file_atomically,
 };
 use candi_pdf::{BackendKind, Document, Error as PdfError, PageImage};
 use candi_theme::{BUILTIN_NAMES, Color, Theme, builtin, parse, recolor, retint, to_yaml};
@@ -22,6 +23,7 @@ use egui::Key;
 
 use crate::highlight::yaml_job;
 use crate::icons::{Icon, IconRender};
+use crate::keybinds::{Action, Keybinds};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, Flow, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
@@ -72,6 +74,10 @@ struct PageTexture {
 struct ThemeEditor {
     buffer: String,
     error: Option<String>,
+    /// "Save as…" input; reused across attempts.
+    saved_name: String,
+    /// Last "Save as…" outcome, inline until the next save attempt.
+    saved: Option<String>,
     font_size: f32,
 }
 
@@ -80,6 +86,8 @@ impl ThemeEditor {
         Self {
             buffer: to_yaml(theme),
             error: None,
+            saved_name: String::new(),
+            saved: None,
             font_size: crate::highlight::FONT_SIZE,
         }
     }
@@ -158,6 +166,11 @@ pub struct ReaderApp {
     /// injection (`CANDI_UI_DEBUG=delay-dual|delay-single|delay-percent`).
     debug_relayout: Option<DebugRelayout>,
 
+    /// Capture scaffolding: the theme picker popup is forced open on the
+    /// next frame (`CANDI_UI_DEBUG=theme-picker`), since egui popups cannot
+    /// be driven without input injection.
+    debug_picker: bool,
+
     sidebar_open: bool,
     section: SidebarSection,
     /// Slider-driven UI text scale on top of [`Self::base_ppp`].
@@ -189,6 +202,12 @@ pub struct ReaderApp {
     shortcuts_open: bool,
     /// Case-insensitive filter applied to the shortcuts window's rows.
     shortcut_filter: String,
+    /// User-editable key → action map, loaded (and seeded on first run)
+    /// from `keybinds.json` next to the app config.
+    keybinds: Keybinds,
+    /// Custom themes loaded from `<config>/themes/*.yaml`, sorted by name;
+    /// each entry keeps its backing file for deletion.
+    custom_themes: Vec<(Theme, PathBuf)>,
     /// Live theme editor; `Some` while the center pane shows it.
     editor: Option<ThemeEditor>,
 
@@ -233,13 +252,16 @@ impl ReaderApp {
                 prefs
             })
             .unwrap_or_default();
+        // Custom themes load before the persisted name resolves, so a
+        // config pointing at a custom theme picks it up directly.
+        let custom_themes = Self::load_custom_themes(themes_dir().as_deref());
         let mut app = Self {
             backend,
             path: None,
             filename: String::new(),
             document: None,
             session: SessionState::new(1),
-            theme: Self::startup_theme(&config),
+            theme: Self::startup_theme(&config, &custom_themes),
             applied_theme: String::new(),
             config,
             config_path,
@@ -259,6 +281,7 @@ impl ReaderApp {
             canvas_center_y: 0.0,
             scroll_anchor: None,
             debug_relayout: None,
+            debug_picker: false,
             sidebar_open: false,
             section: SidebarSection::Contents,
             ui_scale: 1.0,
@@ -279,6 +302,8 @@ impl ReaderApp {
             info_open: false,
             shortcuts_open: false,
             shortcut_filter: String::new(),
+            keybinds: Keybinds::load_or_init(config_dir().as_deref()),
+            custom_themes,
             editor: None,
             restore_frac: None,
             pending_scroll: None,
@@ -300,6 +325,22 @@ impl ReaderApp {
                 }
                 "search-empty" => app.section = SidebarSection::Search,
                 "appearance" => app.section = SidebarSection::Appearance,
+                "theme-picker" => {
+                    app.section = SidebarSection::Appearance;
+                    app.debug_picker = true;
+                }
+                "delete-active-theme" => {
+                    // Capture scaffolding: deletes the first custom theme
+                    // through the real delete path. If it is also the
+                    // persisted theme, the safe Dark fallback is visible
+                    // without input injection.
+                    if let Some((theme, _)) = app.custom_themes.first() {
+                        let name = theme.name.clone();
+                        app.delete_custom_theme(&name);
+                    }
+                    app.section = SidebarSection::Appearance;
+                    app.debug_picker = true;
+                }
                 "accent-purple" => {
                     app.section = SidebarSection::Appearance;
                     app.set_accent(&cc.egui_ctx, ACCENT_SWATCHES[0]);
@@ -314,6 +355,20 @@ impl ReaderApp {
                     if let Some(editor) = app.editor.as_mut() {
                         editor.font_size = 20.0;
                     }
+                }
+                "editor-save" => {
+                    // Capture scaffolding: seeds the editor buffer with a
+                    // tweaked Sepia and runs the Save-as path, so captures
+                    // show the real post-save state without input injection.
+                    app.sidebar_open = false;
+                    app.open_theme_editor();
+                    let seeded = to_yaml(&builtin("Sepia").expect("built-in theme parses"))
+                        .replace("#C89B3C", "#D2691E");
+                    if let Some(editor) = app.editor.as_mut() {
+                        editor.buffer = seeded;
+                        editor.saved_name = "Sepia Plus".into();
+                    }
+                    app.save_editor_theme_as("Sepia Plus");
                 }
                 "shortcuts" => {
                     app.shortcuts_open = true;
@@ -399,12 +454,69 @@ impl ReaderApp {
         }
     }
 
-    /// Theme the app starts with: the persisted config choice, falling back
-    /// to the built-in default when the name is unknown.
-    fn startup_theme(config: &Prefs) -> Theme {
-        builtin(&config.theme)
-            .or_else(|| builtin(DEFAULT_THEME))
-            .expect("built-in default theme parses")
+    /// Theme the app starts with: the persisted config choice (built-in or
+    /// custom), falling back to the built-in default when the name is unknown.
+    fn startup_theme(config: &Prefs, customs: &[(Theme, PathBuf)]) -> Theme {
+        Self::resolve_theme(&config.theme, customs)
+            .unwrap_or_else(|| builtin(DEFAULT_THEME).expect("built-in default theme parses"))
+    }
+
+    /// Look up a theme by name among built-ins and custom files; built-ins
+    /// win over same-named customs.
+    fn resolve_theme(name: &str, customs: &[(Theme, PathBuf)]) -> Option<Theme> {
+        builtin(name).or_else(|| {
+            customs
+                .iter()
+                .find(|(theme, _)| theme.name == name)
+                .map(|(theme, _)| theme.clone())
+        })
+    }
+
+    /// Load every `themes/*.yaml` whose embedded name matches its file stem,
+    /// sorted by name; unreadable, unparsable, or misnamed files warn and
+    /// are skipped.
+    fn load_custom_themes(dir: Option<&Path>) -> Vec<(Theme, PathBuf)> {
+        let Some(dir) = dir else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        paths.sort_unstable();
+        paths
+            .into_iter()
+            .filter(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("yaml")))
+            .filter_map(|path| {
+                let stem = path.file_stem()?.to_str()?.to_owned();
+                let source = match fs::read_to_string(&path) {
+                    Ok(source) => source,
+                    Err(err) => {
+                        eprintln!("candi: reading custom theme {}: {err}", path.display());
+                        return None;
+                    }
+                };
+                match parse(&source) {
+                    Ok(theme) if theme.name == stem => Some((theme, path)),
+                    Ok(theme) => {
+                        eprintln!(
+                            "candi: skipping custom theme {}: embedded name {:?} does not match file stem {:?}",
+                            path.display(),
+                            theme.name,
+                            stem
+                        );
+                        None
+                    }
+                    Err(err) => {
+                        eprintln!("candi: skipping custom theme {}: {err}", path.display());
+                        None
+                    }
+                }
+            })
+            .collect()
     }
 
     /// Persist the app config (theme choice, recents); a failed write warns
@@ -418,19 +530,37 @@ impl ReaderApp {
         }
     }
 
-    /// Switch the active built-in theme. Visuals are re-applied at the top of
-    /// the next [`ReaderApp::update`]; texture slots are dropped so pages
-    /// re-promote from their cached originals in the new colors. Closes the
-    /// theme editor: a dropdown/menu switch means the buffer is no longer
+    /// Switch the active theme — built-in or custom; unknown names fall
+    /// back to Dark. Visuals are re-applied at the top of the next
+    /// [`ReaderApp::update`]; texture slots are dropped so pages re-promote
+    /// from their cached originals in the new colors. Closes the theme
+    /// editor: a dropdown/menu switch means the buffer is no longer
     /// authoritative. The choice persists to the app config immediately.
     fn set_theme(&mut self, name: &str) {
-        self.theme =
-            builtin(name).unwrap_or_else(|| builtin(DEFAULT_THEME).expect("default theme parses"));
+        self.theme = Self::resolve_theme(name, &self.custom_themes)
+            .unwrap_or_else(|| builtin(DEFAULT_THEME).expect("default theme parses"));
         self.session.theme = self.theme.name.clone();
         self.config.theme = self.theme.name.clone();
         self.save_config();
         self.textures.clear();
         self.editor = None;
+    }
+
+    /// Delete a custom theme's file and registry entry; deleting the active
+    /// theme falls back to Dark safely via [`Self::set_theme`].
+    fn delete_custom_theme(&mut self, name: &str) {
+        if let Some((_, path)) = self
+            .custom_themes
+            .iter()
+            .find(|(theme, _)| theme.name == name)
+            && let Err(err) = fs::remove_file(path)
+        {
+            eprintln!("candi: deleting custom theme {name:?}: {err}");
+        }
+        self.custom_themes.retain(|(theme, _)| theme.name != name);
+        if self.theme.name == name {
+            self.set_theme(DEFAULT_THEME);
+        }
     }
 
     /// Open the center-pane theme editor seeded with the active theme;
@@ -451,6 +581,66 @@ impl ReaderApp {
         self.save_config();
         self.textures.clear();
         self.applied_theme.clear();
+    }
+
+    /// Save the editor buffer as `themes/<name>.yaml`; the saved theme
+    /// becomes active and its canonical YAML re-seeds the buffer so the
+    /// embedded `name:` matches. The inline status reports each outcome.
+    fn save_editor_theme_as(&mut self, raw_name: &str) {
+        let Some(name) = sanitize_theme_name(raw_name.trim()) else {
+            if let Some(editor) = self.editor.as_mut() {
+                editor.saved = Some(format!(
+                    "{raw_name:?}: use letters, digits, '-', '_' or spaces."
+                ));
+            }
+            return;
+        };
+        let outcome = match self.editor.as_mut() {
+            None => None,
+            Some(editor) => match parse(&editor.buffer) {
+                Err(_) => {
+                    editor.saved = Some("Fix the YAML errors above before saving.".to_owned());
+                    None
+                }
+                Ok(mut theme) => {
+                    theme.name = name.clone();
+                    Some((to_yaml(&theme), theme))
+                }
+            },
+        };
+        let Some((body, theme)) = outcome else {
+            return;
+        };
+        let Some(dir) = themes_dir() else {
+            if let Some(editor) = self.editor.as_mut() {
+                editor.saved =
+                    Some("No XDG_CONFIG_HOME/HOME — nowhere to save a custom theme.".to_owned());
+            }
+            return;
+        };
+        let path = dir.join(format!("{name}.yaml"));
+        let write = fs::create_dir_all(&dir).and_then(|()| write_file_atomically(&path, &body));
+        if let Err(err) = write {
+            if let Some(editor) = self.editor.as_mut() {
+                editor.saved = Some(format!("Saving failed: {err}"));
+            }
+            return;
+        }
+        if let Some(editor) = self.editor.as_mut() {
+            editor.buffer.clone_from(&body);
+            editor.saved = Some(format!("Saved {}", path.display()));
+        }
+        match self
+            .custom_themes
+            .iter_mut()
+            .find(|(existing, _)| existing.name == name)
+        {
+            Some(slot) => slot.0 = theme.clone(),
+            None => self.custom_themes.push((theme.clone(), path)),
+        }
+        self.custom_themes
+            .sort_unstable_by_key(|(theme, _)| theme.name.to_lowercase());
+        self.apply_edited_theme(theme);
     }
 
     /// Session-local accent override (appearance swatches): re-applies the
@@ -909,6 +1099,30 @@ impl ReaderApp {
             .weak()
             .small(),
         );
+
+        let mut pending_save = None;
+        {
+            let Some(editor) = self.editor.as_mut() else {
+                return;
+            };
+            ui.horizontal(|ui| {
+                ui.label("Save as");
+                ui.add(
+                    egui::TextEdit::singleline(&mut editor.saved_name)
+                        .hint_text("My Theme")
+                        .desired_width(140.0),
+                );
+                if ui.button("Save").clicked() && !editor.saved_name.trim().is_empty() {
+                    pending_save = Some(editor.saved_name.clone());
+                }
+            });
+            if let Some(status) = &editor.saved {
+                ui.label(egui::RichText::new(status).weak().small());
+            }
+        }
+        if let Some(name) = pending_save {
+            self.save_editor_theme_as(&name);
+        }
 
         let edited = {
             let Some(editor) = self.editor.as_mut() else {
@@ -1811,8 +2025,9 @@ impl ReaderApp {
         });
     }
 
-    /// Bordered theme picker: current name + chevron; popup lists the five
-    /// built-ins and the YAML editor. No font glyphs anywhere.
+    /// Bordered theme picker: current name + chevron; popup lists the
+    /// built-ins, custom themes (with delete affordance), and the YAML
+    /// editor. No font glyphs anywhere.
     fn theme_picker(&mut self, ui: &mut egui::Ui, fg: egui::Color32) {
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::click());
         let fill = if resp.hovered() {
@@ -1841,6 +2056,10 @@ impl ReaderApp {
         if resp.clicked() {
             ui.memory_mut(|mem| mem.toggle_popup(id));
         }
+        if self.debug_picker {
+            self.debug_picker = false;
+            ui.memory_mut(|mem| mem.open_popup(id));
+        }
         if ui.memory(|mem| mem.is_popup_open(id)) {
             egui::popup_below_widget(
                 ui,
@@ -1856,6 +2075,40 @@ impl ReaderApp {
                         {
                             self.set_theme(name);
                             ui.memory_mut(|mem| mem.close_popup());
+                        }
+                    }
+                    // Names cloned out so deleting a row can mutate the
+                    // registry mid-popup.
+                    let custom_names: Vec<String> = self
+                        .custom_themes
+                        .iter()
+                        .map(|(theme, _)| theme.name.clone())
+                        .collect();
+                    if !custom_names.is_empty() {
+                        ui.separator();
+                        for name in &custom_names {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(self.theme.name == *name, name)
+                                    .clicked()
+                                {
+                                    self.set_theme(name);
+                                    ui.memory_mut(|mem| mem.close_popup());
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if self
+                                            .icons
+                                            .button(ui, Icon::X, 14.0, fg)
+                                            .on_hover_text("Delete this custom theme")
+                                            .clicked()
+                                        {
+                                            self.delete_custom_theme(name);
+                                        }
+                                    },
+                                );
+                            });
                         }
                     }
                     ui.separator();
@@ -2079,24 +2332,11 @@ impl ReaderApp {
     }
 
     fn shortcuts_window(&mut self, ctx: &egui::Context) {
-        const SHORTCUTS: [(&str, &str); 16] = [
-            ("Ctrl+O", "Open file"),
-            ("Ctrl+S", "Save state"),
-            ("Ctrl+F", "Search"),
-            ("Ctrl+B", "Toggle sidebar"),
-            ("Ctrl+E", "Edit theme YAML"),
-            ("Ctrl+G", "Go to page"),
-            ("Ctrl+K", "Keybinds"),
-            ("F11", "Focus mode"),
-            ("+ / −", "Zoom in / out"),
-            ("0", "Fit-width zoom"),
-            ("Left / PgUp", "Previous page"),
-            ("Right / PgDn", "Next page"),
-            ("T", "Cycle themes"),
-            ("B", "Bookmark page"),
-            ("Esc", "Close overlay"),
-            ("Q", "Quit"),
-        ];
+        let rows = self.keybinds.rows();
+        let hint = match &self.keybinds.path {
+            Some(path) => format!("Edit {} to change these.", path.display()),
+            None => "Set XDG_CONFIG_HOME or HOME to enable keybinds editing.".to_owned(),
+        };
         egui::Window::new("Keyboard Shortcuts")
             .open(&mut self.shortcuts_open)
             .collapsible(false)
@@ -2118,7 +2358,7 @@ impl ReaderApp {
                             .num_columns(2)
                             .spacing([16.0, 6.0])
                             .show(ui, |ui| {
-                                for (keys, action) in SHORTCUTS {
+                                for (action, keys) in rows {
                                     if !needle.is_empty()
                                         && !format!("{keys} {action}")
                                             .to_lowercase()
@@ -2132,107 +2372,107 @@ impl ReaderApp {
                                 }
                             });
                     });
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(hint).weak().small());
             });
     }
 }
 
 impl ReaderApp {
-    /// Handle the frame's keyboard input. Plain keys are ignored while any
-    /// widget wants keyboard input (text fields, menus).
+    /// Handle the frame's keyboard input, dispatching through the loaded
+    /// keybind map (`keybinds.json`). Plain-key actions stay gated on no
+    /// text widget holding focus; the ctrl-style ones match everywhere,
+    /// exactly like their pre-keybind hardcoded arms.
     fn handle_input(&mut self, ctx: &egui::Context) {
         let plain = !ctx.wants_keyboard_input();
         ctx.input(|input| {
-            let ctrl = input.modifiers.ctrl;
-            if ctrl && input.key_pressed(Key::O) {
-                self.open_dialog();
-            }
-            if ctrl && input.key_pressed(Key::S) {
-                self.save_state();
-            }
-            if ctrl && input.key_pressed(Key::B) {
-                self.sidebar_open = !self.sidebar_open;
-            }
-            if ctrl && input.key_pressed(Key::F) {
-                self.sidebar_open = true;
-                self.section = SidebarSection::Search;
-                self.focus_search = true;
-            }
-            if ctrl && input.key_pressed(Key::G) && self.page_count() > 0 {
-                self.page_jump = Some((self.session.page + 1).to_string());
-                self.page_jump_focus = true;
-                self.jump_invalid = false;
-            }
-            if ctrl && input.key_pressed(Key::E) {
-                if self.editor.is_some() {
-                    self.editor = None;
-                } else {
-                    self.open_theme_editor();
+            for event in &input.events {
+                let egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } = *event
+                else {
+                    continue;
+                };
+                let Some(action) = self.keybinds.action_for(key, modifiers) else {
+                    continue;
+                };
+                match action {
+                    Action::OpenFile => self.open_dialog(),
+                    Action::SaveState => self.save_state(),
+                    Action::ToggleSidebar => self.sidebar_open = !self.sidebar_open,
+                    Action::Search => {
+                        self.sidebar_open = true;
+                        self.section = SidebarSection::Search;
+                        self.focus_search = true;
+                    }
+                    Action::GoToPage if self.page_count() > 0 => {
+                        self.page_jump = Some((self.session.page + 1).to_string());
+                        self.page_jump_focus = true;
+                        self.jump_invalid = false;
+                    }
+                    Action::EditTheme => {
+                        if self.editor.is_some() {
+                            self.editor = None;
+                        } else {
+                            self.open_theme_editor();
+                        }
+                    }
+                    Action::KeybindsWindow => self.shortcuts_open = true,
+                    // Document zoom keys are scoped to the canvas: the theme
+                    // editor owns its own font-zoom keys.
+                    Action::ZoomIn if plain && self.editor.is_none() && self.page_count() > 0 => {
+                        self.zoom_step(5);
+                    }
+                    Action::ZoomOut if plain && self.editor.is_none() && self.page_count() > 0 => {
+                        self.zoom_step(-5);
+                    }
+                    Action::FitWidth if plain && self.editor.is_none() && self.page_count() > 0 => {
+                        self.zoom_fit_width();
+                    }
+                    Action::CycleTheme if plain => self.cycle_theme(),
+                    Action::Bookmark if plain && self.page_count() > 0 => {
+                        self.session.toggle_bookmark(self.session.page);
+                    }
+                    Action::Quit if plain => {
+                        self.save_state();
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    Action::FocusMode => self.focus_mode = !self.focus_mode,
+                    Action::CloseOverlay => {
+                        if self.about_open {
+                            self.about_open = false;
+                        } else if self.editor.is_some() {
+                            self.editor = None;
+                        } else if self.info_open {
+                            self.info_open = false;
+                        } else if self.shortcuts_open {
+                            self.shortcuts_open = false;
+                        } else if self.focus_mode {
+                            self.focus_mode = false;
+                        } else if self.sidebar_open
+                            && self.section == SidebarSection::Search
+                            && !self.search_query.is_empty()
+                        {
+                            self.search_hits = None;
+                            self.search_query.clear();
+                        }
+                    }
+                    Action::PrevPage if plain => {
+                        self.goto_page(self.session.page.saturating_sub(1));
+                    }
+                    Action::NextPage if plain => self.goto_page(self.session.page + 1),
+                    _ => {}
                 }
             }
-            if ctrl && input.key_pressed(Key::K) {
-                self.shortcuts_open = true;
-            }
-            // Document zoom keys and gestures are scoped to the canvas: the
-            // theme editor owns Ctrl+= / Ctrl+- / Ctrl+scroll for its font.
-            if self.editor.is_none() {
-                if plain
-                    && (input.key_pressed(Key::Plus) || input.key_pressed(Key::Equals))
-                    && self.page_count() > 0
-                {
-                    self.zoom_step(5);
-                }
-                if plain && input.key_pressed(Key::Minus) && self.page_count() > 0 {
-                    self.zoom_step(-5);
-                }
-                if plain && input.key_pressed(Key::Num0) && self.page_count() > 0 {
-                    self.zoom_fit_width();
-                }
-                // Pinch-zoom gesture (trackpad / touchscreen) and ctrl+scroll
-                // report a multiplicative delta anchored at the viewport
-                // center, mirroring the keyboard steps' percent-switch
-                // semantics.
-                let pinch = input.zoom_delta();
-                if plain && pinch != 1.0 && self.page_count() > 0 {
-                    self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
-                }
-            }
-            if plain && input.key_pressed(Key::T) {
-                self.cycle_theme();
-            }
-            if plain && input.key_pressed(Key::B) && self.page_count() > 0 {
-                self.session.toggle_bookmark(self.session.page);
-            }
-            if plain && input.key_pressed(Key::Q) {
-                self.save_state();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            if input.key_pressed(Key::F11) {
-                self.focus_mode = !self.focus_mode;
-            }
-            if input.key_pressed(Key::Escape) {
-                if self.about_open {
-                    self.about_open = false;
-                } else if self.editor.is_some() {
-                    self.editor = None;
-                } else if self.info_open {
-                    self.info_open = false;
-                } else if self.shortcuts_open {
-                    self.shortcuts_open = false;
-                } else if self.focus_mode {
-                    self.focus_mode = false;
-                } else if self.sidebar_open
-                    && self.section == SidebarSection::Search
-                    && !self.search_query.is_empty()
-                {
-                    self.search_hits = None;
-                    self.search_query.clear();
-                }
-            }
-            if plain && (input.key_pressed(Key::ArrowLeft) || input.key_pressed(Key::PageUp)) {
-                self.goto_page(self.session.page.saturating_sub(1));
-            }
-            if plain && (input.key_pressed(Key::ArrowRight) || input.key_pressed(Key::PageDown)) {
-                self.goto_page(self.session.page + 1);
+            // Pinch-zoom gesture (trackpad / touchscreen) and ctrl+scroll
+            // report a multiplicative delta anchored at the viewport center,
+            // mirroring the keyboard steps' percent-switch semantics.
+            let pinch = input.zoom_delta();
+            if plain && pinch != 1.0 && self.editor.is_none() && self.page_count() > 0 {
+                self.set_zoom_percent(f32::from(self.zoom_pct) * pinch);
             }
         });
     }
@@ -2299,6 +2539,21 @@ fn menu_item(
 
 fn color_of(color: Color) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), color.a())
+}
+
+/// Restrict a saved-theme name to the filename charset; `None` when nothing
+/// survives (the caller reports an inline error).
+fn sanitize_theme_name(raw: &str) -> Option<String> {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ' '))
+        .collect();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+/// The custom-themes directory: `<config_dir>/themes`.
+fn themes_dir() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("themes"))
 }
 
 /// What became of one frame's page-jump input field.
@@ -2659,6 +2914,62 @@ mod tests {
 
     fn builtin_theme(name: &str) -> Theme {
         builtin(name).unwrap_or_else(|| panic!("{name} must exist"))
+    }
+
+    fn theme_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "candi-themes-test-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn sanitize_keeps_only_the_filename_charset() {
+        assert_eq!(
+            sanitize_theme_name("My Cool Theme!"),
+            Some("My Cool Theme".to_owned())
+        );
+        assert_eq!(sanitize_theme_name("a/b\\c"), Some("abc".to_owned()));
+        assert_eq!(sanitize_theme_name("!!!"), None);
+        assert_eq!(sanitize_theme_name(""), None);
+    }
+
+    #[test]
+    fn custom_theme_roundtrip_through_a_temp_dir() {
+        let dir = theme_dir("roundtrip");
+        let mut mint = builtin_theme("Dark");
+        mint.name = "Mint".into();
+        write_file_atomically(&dir.join("Mint.yaml"), &to_yaml(&mint)).unwrap();
+        // Embedded name must match the stem to load.
+        let mismatched = builtin_theme("Light");
+        write_file_atomically(&dir.join("Mismatch.yaml"), &to_yaml(&mismatched)).unwrap();
+        // Unparsable files are skipped with a warning.
+        write_file_atomically(&dir.join("Broken.yaml"), "name: [").unwrap();
+
+        let loaded = ReaderApp::load_custom_themes(Some(&dir));
+        assert_eq!(loaded.len(), 1, "{loaded:?}");
+        assert_eq!(loaded[0].0.name, "Mint");
+
+        // Custom names resolve; unknown ones do not.
+        assert_eq!(
+            ReaderApp::resolve_theme("Mint", &loaded).map(|t| t.name),
+            Some("Mint".into())
+        );
+        assert_eq!(ReaderApp::resolve_theme("Nope", &loaded), None);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_themes_dir_loads_nothing() {
+        assert!(ReaderApp::load_custom_themes(None).is_empty());
+        assert!(ReaderApp::load_custom_themes(Some(&theme_dir("absent").join("ghost"))).is_empty());
     }
 
     #[test]

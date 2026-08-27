@@ -68,11 +68,16 @@ impl Prefs {
 /// `$XDG_CONFIG_HOME/candi/config.toml`, else `$HOME/.config/candi/config.toml`.
 /// `None` when neither variable is set (Linux-only per project constraints).
 pub fn config_path() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("config.toml"))
+}
+
+/// The Candi configuration directory: `$XDG_CONFIG_HOME/candi`, else
+/// `$HOME/.config/candi`; `None` when neither variable is set.
+pub fn config_dir() -> Option<PathBuf> {
     resolve_config_dir(
         std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
         std::env::var("HOME").ok().as_deref(),
     )
-    .map(|dir| dir.join("config.toml"))
 }
 
 /// Config directory from the XDG/Home environment; empty values count as

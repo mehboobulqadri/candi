@@ -277,8 +277,8 @@ pub fn save_session(pdf: &Path, session: &SessionState) -> Result<(), Error> {
 }
 
 /// Atomically replace `target` with `body` (tmp file + rename + dir sync),
-/// shared by the sidecar and app-config writers.
-pub(crate) fn write_file_atomically(target: &Path, body: &str) -> io::Result<()> {
+/// shared by the sidecar, app-config, keybind, and theme writers.
+pub fn write_file_atomically(target: &Path, body: &str) -> io::Result<()> {
     let mut temp = target.as_os_str().to_os_string();
     temp.push(".tmp");
     let temp_path = PathBuf::from(temp);

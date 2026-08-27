@@ -62,7 +62,13 @@ launch_and_capture() {
         cp "$sidecar" "$pdf.candi.toml"
     fi
 
-    "$bin" "$pdf" > "$work/app.log" 2>&1 &
+    # Optional config isolation: point XDG_CONFIG_HOME at a scratch dir so
+    # keybinds/theme-file features are captured against a controlled state.
+    if [[ -n ${CANDI_SHOT_XDG:-} ]]; then
+        env XDG_CONFIG_HOME="$CANDI_SHOT_XDG" "$bin" "$pdf" > "$work/app.log" 2>&1 &
+    else
+        "$bin" "$pdf" > "$work/app.log" 2>&1 &
+    fi
     pid=$!
     sleep 3
 
