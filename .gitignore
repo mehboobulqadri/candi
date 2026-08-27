@@ -16,6 +16,7 @@ opencode.json
 # ... except the one committed bench fixture (the negation must be more
 # specific than *.pdf; the dir itself is not excluded)
 !/bench/fixtures/*.pdf
+!/crates/candi-pdf/tests/fixtures/*.pdf
 
 # Bench: generated fixtures and the local machine's corpus manifest
 /bench/fixtures/generated/

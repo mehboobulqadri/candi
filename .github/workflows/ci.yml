@@ -25,13 +25,22 @@ jobs:
 
   rust-checks:
     strategy:
+      # One entry per feature mode: default (both backends) and the
+      # permissive pdfium-only build (zero AGPL third-party code). The empty
+      # string keeps default features; the second entry drops them.
       matrix:
-        os: [ubuntu-latest]
-        # --no-default-features --features pdfium-backend joins when features land in slice 01/01.
-        features: [""]
-    runs-on: ${{ matrix.os }}
+        features: ["", "--no-default-features --features pdfium-backend"]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
+      # The pdfium-only matrix entry still unifies mupdf-backend through workspace
+      # path dependencies that keep default features enabled.
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
       # Cache the cargo registry/git caches and the workspace target dir; keyed on
       # Cargo.lock so any dependency change invalidates the cache.
       - uses: actions/cache@v4
@@ -43,6 +52,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - uses: ./.github/actions/setup-pdfium
       - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
       - run: cargo build --release ${{ matrix.features }}
       - run: cargo test --all-targets ${{ matrix.features }}
@@ -57,6 +67,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
       - uses: actions/cache@v4
         with:
           path: |
@@ -66,6 +80,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - uses: ./.github/actions/setup-pdfium
       # Fixtures-only: CI has no corpus-local.toml, so real books and fixture
       # generation are skipped loudly; the committed fixture must still run.
       - run: cargo build --release --benches
@@ -75,6 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject doc identity placeholders
+        run: |
+          if git grep -qE '\{\{(name|email|github|project|license)\}\}' -- README.md SECURITY.md LICENSE.md docs/; then
+            echo "Tracked docs contain unfilled creds placeholders (run scripts/sync-creds.sh)"
+            exit 1
+          fi
       - name: Check relative markdown links
         run: |
           for f in README.md $(find docs -name '*.md'); do

@@ -1,0 +1,8 @@
+name: True Dark
+page_bg: "#000000"
+page_fg: "#EDEDED"
+ui_bg: "#000000"
+panel_bg: "#111111"
+ui_fg: "#EDEDED"
+accent: "#4C8DF6"
+selection: "#4C8DF680"

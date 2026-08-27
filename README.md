@@ -1,25 +1,80 @@
 # Candi — a minimal, fast, cross-platform document reader
 
-A document reader with a TUI and a GUI.
+A clean, minimal, distraction-free PDF reader.
 
-> One reader. One core. Two interfaces.
+> One reader. One core. One interface.
 
 ## Status
 
-Feasibility complete; all decisions made; planning done; repo at base (docs + spike
-results, no code yet).
+v0.1 is feature-complete on `slice/02-01-gui-reader` pending tag: the graphical
+reader (`candi`) with real rendered PDF pages. Dual PDF backends
+(MuPDF default, PDFium permissive build). Linux dogfooding; not yet tagged or on `main`.
 
-- Spike 1 (PDF backend) resolved: MuPDF + PDFium ship in v1 as a dual, runtime-switchable
-  backend behind one trait; Poppler rejected. License: AGPL-3.0, with a permissive-build
-  escape hatch (pdfium-only feature build).
-- [Architecture](docs/architecture.md) is written and guides all further work.
-- [Implementation](docs/implementation/README.md) is complete as a phase/slice plan —
-  one phase per version, each phase delivered as reviewable slice commits; see
-  [progress](docs/implementation/progress.md) for where we are.
-- Next: implementation phase 00 — workspace bootstrap (see [workflow](docs/workflow.md)).
+License: AGPL-3.0, with a permissive-build escape hatch (pdfium-only feature build).
+[Architecture](docs/architecture.md) covers design decisions;
+[progress](docs/implementation/progress.md) tracks where we are (release gates —
+dogfood, tag, `main` — need explicit user authorization).
+
+## What you get
+
+- **`candi`** — GUI (egui). No args opens a file dialog; `candi book.pdf` opens that file:
+  - Rendered PDF pages with continuous scroll, single-page, dual-page spreads, fit-page /
+    fit-width flows, anchor-preserving zoom and pinch.
+  - Search across the document with in-page highlights; table-of-contents sidebar;
+    bookmarks with rename.
+  - Appearance panel: 5 built-in YAML themes, an in-app theme editor, accent retint, and
+    custom themes from `~/.config/candi/themes/*.yaml`.
+  - Editable keybindings (`~/.config/candi/keybinds.json`, seeded with the defaults),
+    recent-files list, per-PDF resume via a sidecar next to each book, drag-and-drop open.
+  - Optional `--backend mupdf|pdfium` (default `mupdf`).
+
+Shared open/resume/sidecar logic lives in the `candi-cli` library crate, wired by the GUI
+frontend.
+
+## Building from source (Arch-based)
+
+```bash
+sudo pacman -S --needed rust clang fontconfig pkg-config
+cargo build --release
+```
+
+`clang` is needed at build time only, to compile `mupdf-sys`'s bundled copy of MuPDF's C
+sources (statically linked — no system `mupdf` package is used); it is not a runtime
+dependency. `fontconfig` and `pkg-config` satisfy its Linux link requirements.
+
+This produces:
+
+| Binary | Run |
+|---|---|
+| `target/release/candi` | the GUI |
+
+No prebuilt PDFium download is needed for a source build (MuPDF is the default backend);
+the optional permissive PDFium build is described in
+[docs/architecture.md](docs/architecture.md). Desktop entries can point at `candi` —
+set `StartupWMClass=candi` so the window groups correctly.
+
+Or install straight from a clone:
+
+```bash
+cargo install --path crates/candi-gui   # binary: candi
+```
+
+## Roadmap
+
+Versioned releases; feature work merges to `dev`, `dev` merges to `main` for major
+releases. Full rules and details: [docs/roadmap.md](docs/roadmap.md).
+
+- **v0.1** — shipped base + UI fixes: GUI reader, dual backends, themes,
+  bookmarks, custom themes & keybinds.
+- **v0.2** — EPUB & other formats, password-locked PDFs, optimizations/cleanup.
+- **v0.3** — multi-OS (Windows, other Linux distros), deployments.
+- **v0.4** — GitHub documentation site + cleaning.
+- **v0.5** — AUR/Debian packaging + CI.
+- **v0.6** — Android (beta), Android UI optimization, CI.
 
 ## Project documents
 
+- [Roadmap & versioning rules](docs/roadmap.md)
 - [Project](docs/project.md)
 - [Requirements](docs/REQUIREMENTS.md)
 - [Spikes and options](docs/spikes.md)
@@ -32,6 +87,4 @@ GitHub Pages — see [docs/publishing.md](docs/publishing.md) for how.
 
 ## Maintainer
 
-{{name}} — [{{email}}](mailto:{{email}})
-
-*Identity is templated from the gitignored `creds.yml` — run `scripts/sync-creds.sh` to fill values.*
+Mehboob ul Qadri — [mehboobulqadri@gmail.com](mailto:mehboobulqadri@gmail.com)

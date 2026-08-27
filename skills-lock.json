@@ -210,6 +210,12 @@
       "sourceType": "github",
       "skillPath": "skills/verification-loop/SKILL.md",
       "computedHash": "abe40a95fc1fe7d5ff47ed2bab27600f160871e487fb1698546b0c80e45b1fbb"
+    },
+    "ci-reliability": {
+      "source": "local",
+      "sourceType": "local",
+      "skillPath": "skills/ci-reliability/SKILL.md",
+      "computedHash": "9b1df93c929997e40d6b27026f4c9e0fc2152c6cc712b6fd4aa987d1ee0c0b51"
     }
   }
 }

@@ -1,7 +1,9 @@
 # Candi — Implementation Progress
 
-Current position: phase 00 (foundations) complete — slices 00/01, 00/02, 00/03
-merged; next: `01-v0.1/01-candi-pdf-trait`.
+Current position: Phase 01 reader on `dev` — TUI (`candi-tui`) and GUI (`candi`) with
+text display, search, and sidecar persistence. Post-01/11 slices merged (TUI
+readability, Linux GUI). Tag, dogfood evidence, and `dev`→`main` blocked on user;
+Windows CI deferred (Linux-only matrix).
 
 ## Status
 
@@ -11,17 +13,24 @@ merged; next: `01-v0.1/01-candi-pdf-trait`.
 | 00-foundations | 01-workspace-bootstrap | merged | workspace skeleton + CI workflow fix (hashFiles job-level guard bug) |
 | 00-foundations | 02-ci-drill-gates | merged | feature-mode matrix (grow-ready, single mode until features land), cargo-deny + deny.toml, target cache keyed on Cargo.lock |
 | 00-foundations | 03-benchmark-harness | merged | bench harness (std-only bench binary + run.sh); committed fixture is dummy-encrypted only (real books local-only per repo policy); runtime-generated fixtures, corpus manifest, bench CI job |
-| 01-v0.1 | 01-candi-pdf-trait | planned | |
-| 01-v0.1 | 02-mupdf-backend | planned | |
-| 01-v0.1 | 03-pdfium-backend | planned | |
-| 01-v0.1 | 04-backend-parity-hardening | planned | |
-| 01-v0.1 | 05-benchmarks-both-backends | planned | |
-| 01-v0.1 | 06-candi-core-navigation | planned | |
-| 01-v0.1 | 07-reading-position-sidecar | planned | |
-| 01-v0.1 | 08-search-abstraction | planned | |
-| 01-v0.1 | 09-candi-tui | planned | |
-| 01-v0.1 | 10-candi-cli | planned | |
-| 01-v0.1 | 11-v01-release | planned | |
+| 01-v0.1 | 01-candi-pdf-trait | merged | pinned trait block verbatim (8-kind Error, Document/Backend, PagePositions); factory + features declared (empty deps); StubBackend + 23 tests; both feature modes green; permissive matrix entry activated |
+| 01-v0.1 | 02-mupdf-backend | merged | `mupdf-backend` feature (mupdf 0.8.0 base14-fonts); MupdfBackend + fz_context ownership; error mapping by `fz_error_code`; zero-page open → `Malformed`; fixture tests (attention paper, truncated, encrypted); fix commit proves blank-first-page vs zero-pages |
+| 01-v0.1 | 03-pdfium-backend | merged | b3d1326 — pdfium-render 0.8.37 (pdfium_7543 / chromium/7543); Arc engine + FPDF_DOCUMENT drop; permissive build; CI libpdfium pin + PDFIUM_LIB; merge b9902d0; independent reviewer APPROVE |
+| 01-v0.1 | 04-backend-parity-hardening | merged | 153cafc — shared parity suite + hardening matrix; open-time text-layer sampling (first 3 pages); merge 3d519af; independent reviewer APPROVE (round 2b after REQUEST CHANGES) |
+| 01-v0.1 | 05-benchmarks-both-backends | merged | fc5a2af — budget gate uses reader_peak (<200 MB); full_pass_peak ~295 MB documented FAIL vs MuPDF store ceiling, not gated; merge c3634e0; PR #10 |
+| 01-v0.1 | 06-candi-core-navigation | merged | merge 994a154 (PR #11); feat 8b955fa — ViewState page+scroll, clamping nav, caller max_scroll; 15 tests |
+| 01-v0.1 | 07-reading-position-sidecar | merged | merge decce47 (PR #12); feat bd440c3 — schema v1 sidecar `{pdf}.candi.toml`, Load enum (missing/corrupt/loaded), atomic temp+rename save, 11 tests |
+| 01-v0.1 | 08-search-abstraction | merged | a77a874 — lazy SearchSession over Document, case-insensitive per-page scan, cursor wrap, 16 tests |
+| 01-v0.1 | 09-candi-tui | merged | 8ae4cc4 — ratatui 0.30.2 + crossterm 0.29.0 TUI reader, TestBackend 16 tests, terminal RAII guard, Spike 2 closure doc; merge 62739c9 (PR #14) |
+| 01-v0.1 | 10-candi-cli | merged | de1ecce — `candi-cli` shared lib (open, sidecar resume/save, backend parse); original CLI binary superseded by GUI; 10 integration tests now in `crates/candi-gui/tests/cli.rs` via `CANDI_NO_GUI=1`; merge 9b86661 (PR #15) |
+| 01-v0.1 | 11-v01-release | merged | d7ce832 — release checklist + acceptance evidence; merge 638f8bc (PR #16); tag/dogfood/`dev`→`main` still blocked on user |
+| 01-v0.1 | tui-readability | merged | 4db1529 — ligature normalize, centered column, opaque dark bg, mouse/j/k scroll, skip blank cover pages; merge 24dff95 (PR #17) |
+| 01-v0.1 | gui-text-linux | merged | egui/eframe GUI (`candi` bin in candi-gui), file dialog, text view + search + sidecar; candi-cli → lib; Windows matrix removed from CI; merge 54d9f26 (PR #18) |
+| 01-v0.1 | gui-reader polish | in-progress | slice/02-01-gui-reader — search crash fix, chrome/sidebar polish, anchor-preserving zoom, continuous/single/dual flow switch |
+| 01-v0.1 | gui-reader themes & persistence | in-progress | slice/02-01-gui-reader — YAML theme crate (5 built-ins), accent retint, page recolor, session persistence via schema-v3 sidecar, recents |
+| 01-v0.1 | gui-reader keybinds & authoring | in-progress | slice/02-01-gui-reader — editable keybinds file (~/.config/candi/keybinds.json), in-app theme editor + custom YAML themes |
+| 01-v0.1 | docs-v01-refresh | in-progress | docs/roadmap.md added (versioning rules + v0.1–v0.6 timeline); README/architecture refresh; root design mockups moved to docs/design/mockups/; Dependabot PR #1 closed (consolidated CI bump post-merge) |
+| 01-v0.1 | v0.1.0-RC hardening | in-progress | fix(gui,pdf) pre-tag hardening on tip 676e307: review battery F1–F12 (mupdf outline depth cap, corrupt-sidecar save guard + banner, failed-open state preservation, search-panic isolation, theme-delete inline failure, render-entrypoint loud error, dest_top finiteness, FIFO preflight, mutex-poison recovery, theme size cap, keybind cleanup) + gates green; verdicts: round-2 PASS, security FIX-THEN-PASS (addressed here), silent-failure PASS (addressed here); next: merge flow (tag v0.1.0 → PR → dev) |
 | 02-v0.2 | — | planned | phase README only |
 | 03-v0.3 | — | planned | phase README only |
 | 04-v0.4 | — | planned | phase README only |
@@ -37,8 +46,20 @@ merged; next: `01-v0.1/01-candi-pdf-trait`.
 | 2026-08-20 | slice/00-02-ci-drill-gates → dev | 78ae626 | APPROVE — CI green twice, cache hit proven; 2 nits non-blocking (deny.toml trailing newline; AGPL-3.0 SPDX deprecation tracked for later normalization) |
 | 2026-08-20 | slice/00-03-benchmark-harness → dev | e7c5461 | APPROVE — methodology verified vs spike probe, error paths live-tested; 2 nits non-blocking (run.sh:26 message cosmetics; bench glob noted for 01/05) |
 | 2026-08-20 | dev → main (phase 00 foundations) | 05e112c | APPROVE — cumulative review passed; un-breaks main CI (workflow fix, workspace, gates, bench) |
+| 2026-08-20 | slice/01-01-candi-pdf-trait → dev | 5b0d1c1 | APPROVE — verbatim conformance exact, 2 feature modes 23/23 tests; nit: trailing-newline pattern (3rd) tracked for prevention |
+| 2026-08-20 | slice/01-02-mupdf-backend → dev | ad83c7b | APPROVE — mupdf-backend feature (mupdf 0.8.0); fz_error_code mapping; zero-page → Malformed guard with fixtures; independent reviewer sign-off |
+| 2026-08-20 | slice/01-03-pdfium-backend → dev | b9902d0 | APPROVE — pdfium-render 0.8.37 (chromium/7543); FPDF error mapping + zero-page catalog sniff; CI libpdfium pin + PDFIUM_LIB; permissive matrix green |
+| 2026-08-20 | slice/01-04-backend-parity-hardening → dev | 3d519af | APPROVE (round 2b after REQUEST CHANGES) — shared parity suite + text-layer sampling; feat 153cafc |
+| 2026-08-20 | slice/01-05-benchmarks-both-backends → dev | c3634e0 | APPROVE — reader_peak budget gate; PR #10; feat fc5a2af |
+| 2026-08-21 | slice/01-09-candi-tui → dev | 62739c9 | APPROVE — TUI reader; PR #14; feat 8ae4cc4 |
+| 2026-08-21 | slice/01-10-candi-cli → dev | 9b86661 | APPROVE — shared lib + original CLI wiring; PR #15; feat de1ecce |
+| 2026-08-21 | slice/01-11-v01-release → dev | 638f8bc | APPROVE — release engineering; PR #16; feat d7ce832 |
+| 2026-08-21 | slice/tui-readability → dev | 24dff95 | APPROVE — TUI readability pass; PR #17 |
+| 2026-08-21 | slice/gui-text-linux → dev | 54d9f26 | APPROVE — Linux GUI text reader; PR #18 |
 
 **Phase 00 (foundations) complete** after the 00/03 merge.
+
+**Phase 01 reader complete on `dev`** after PR #18; release gates (dogfood, tag, `main`) remain user stop-gates.
 
 ## How to update
 

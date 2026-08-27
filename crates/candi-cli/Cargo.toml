@@ -4,7 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "candi_cli"
+path = "src/lib.rs"
+
 [dependencies]
-candi-tui = { path = "../candi-tui" }
 candi-core = { path = "../candi-core" }
+candi-pdf = { path = "../candi-pdf" }
+
+[dev-dependencies]
 candi-pdf = { path = "../candi-pdf" }
