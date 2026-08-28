@@ -16,7 +16,7 @@ jobs:
   workflow-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Validates all workflow files so a syntax error fails loudly with the
       # actual error instead of silently scheduling zero jobs.
       - uses: raven-actions/actionlint@v2
@@ -30,7 +30,7 @@ jobs:
         features: ["", "--no-default-features --features pdfium-backend"]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Cheap fail-fast: fmt needs no sysdeps, cache, or pdfium.
       - run: cargo fmt --check
       # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
@@ -60,7 +60,7 @@ jobs:
   docs-links:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Reject doc identity placeholders
         run: |
           if git grep -qE '\{\{(name|email|github|project|license)\}\}' -- README.md SECURITY.md LICENSE.md docs/; then
