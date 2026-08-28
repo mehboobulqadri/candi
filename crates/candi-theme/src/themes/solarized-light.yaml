@@ -1,0 +1,8 @@
+name: Solarized Light
+page_bg: "#FDF6E3"
+page_fg: "#586E75"
+ui_bg: "#EEE8D5"
+panel_bg: "#E4DCC6"
+ui_fg: "#657B83"
+accent: "#268BD2"
+selection: "#268BD240"

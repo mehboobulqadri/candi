@@ -1,22 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0
 
-//! Byte-budgeted LRU cache of original (unrecolorized) page bitmaps.
+//! Byte-budgeted LRU caches of page bitmaps.
 //!
-//! Keyed by `(page, scale_q)` where `scale_q` is the render scale in hundredths
-//! of a pixel per point; quantized zoom keeps the key space small. The budget
-//! counts RGBA bytes (`width * height * 4`). Textures are rebuilt from the
-//! stored originals on theme switches, so recoloring never re-renders.
+//! `ImageCache<CacheKey>` stores original (unrecolorized) bitmaps keyed by
+//! `(page, scale_q)` where `scale_q` is the render scale in hundredths of a
+//! pixel per point; quantized zoom keeps the key space small.
+//! `ImageCache<RecolorKey>` stores recolorized bitmaps keyed additionally by
+//! the recolor colors, so theme switches reuse them instead of re-mapping
+//! every page. Both budgets count RGBA bytes (`width * height * 4`).
 
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 
 /// Default budget in bytes: 192 MB.
 pub const DEFAULT_BUDGET_BYTES: usize = 192 * 1024 * 1024;
+
+/// Budget of the recolored-bitmap cache: 96 MB, enough for the visible
+/// window and prefetch at typical zooms. Recolored entries are pure
+/// accelerators — a miss just re-maps from the original cache.
+pub const RECOLORED_BUDGET_BYTES: usize = 96 * 1024 * 1024;
 
 /// Bitmap cache key: page index plus quantized render scale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CacheKey {
     pub page: usize,
     pub scale_q: u16,
+}
+
+/// Recolorized-bitmap cache key: [`CacheKey`] plus the page colors the
+/// recolor pass mapped onto, so a theme switch (or theme edit) addresses a
+/// different entry and unrelated page palettes share nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RecolorKey {
+    pub page: usize,
+    pub scale_q: u16,
+    pub colors: u64,
 }
 
 /// Borrowed view of a cached bitmap.
@@ -36,14 +54,14 @@ struct Entry {
 
 /// LRU cache with byte accounting. Recency updates and evictions are O(n) in
 /// entry count (hundreds at most), which beats carrying a linked list.
-pub struct ImageCache {
-    entries: HashMap<CacheKey, Entry>,
-    order: VecDeque<CacheKey>,
+pub struct ImageCache<K = CacheKey> {
+    entries: HashMap<K, Entry>,
+    order: VecDeque<K>,
     bytes: usize,
     budget: usize,
 }
 
-impl ImageCache {
+impl<K: Copy + Eq + Hash> ImageCache<K> {
     pub fn new(budget: usize) -> Self {
         Self {
             entries: HashMap::new(),
@@ -53,12 +71,12 @@ impl ImageCache {
         }
     }
 
-    pub fn contains(&self, key: CacheKey) -> bool {
+    pub fn contains(&self, key: K) -> bool {
         self.entries.contains_key(&key)
     }
 
     /// Look up a bitmap and mark it most-recently-used.
-    pub fn get(&mut self, key: CacheKey) -> Option<CachedImage<'_>> {
+    pub fn get(&mut self, key: K) -> Option<CachedImage<'_>> {
         let entry = self.entries.get(&key)?;
         if self.order.back() != Some(&key)
             && let Some(pos) = self.order.iter().position(|k| *k == key)
@@ -77,7 +95,7 @@ impl ImageCache {
     /// Insert a bitmap, evicting least-recently-used entries until it fits.
     /// Returns `false` when the bitmap alone exceeds the budget; nothing is
     /// stored then. Replacing an existing entry never evicts anything else.
-    pub fn insert(&mut self, key: CacheKey, width: u32, height: u32, rgba: Vec<u8>) -> bool {
+    pub fn insert(&mut self, key: K, width: u32, height: u32, rgba: Vec<u8>) -> bool {
         let bytes = rgba.len();
         if bytes > self.budget {
             return false;
@@ -211,5 +229,30 @@ mod tests {
         let mut cache = ImageCache::new(0);
         assert!(!cache.insert(key(0), 1, 1, bitmap(4)));
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn recolor_keys_stay_distinct_and_evict_by_recency() {
+        let base = RecolorKey {
+            page: 0,
+            scale_q: 100,
+            colors: 1,
+        };
+        let other_theme = RecolorKey { colors: 2, ..base };
+        let mut cache = ImageCache::<RecolorKey>::new(200);
+        assert!(cache.insert(base, 1, 1, bitmap(100)));
+        assert!(cache.insert(other_theme, 1, 1, bitmap(100)));
+        cache.insert(
+            RecolorKey {
+                page: 1,
+                colors: 1,
+                ..base
+            },
+            1,
+            1,
+            bitmap(100),
+        );
+        assert!(!cache.contains(base), "oldest theme entry evicted first");
+        assert!(cache.contains(other_theme));
     }
 }

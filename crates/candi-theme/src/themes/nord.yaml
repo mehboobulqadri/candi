@@ -1,0 +1,8 @@
+name: Nord
+page_bg: "#2E3440"
+page_fg: "#ECEFF4"
+ui_bg: "#3B4252"
+panel_bg: "#434C5E"
+ui_fg: "#D8DEE9"
+accent: "#88C0D0"
+selection: "#88C0D066"

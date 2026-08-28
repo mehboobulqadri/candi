@@ -1,0 +1,8 @@
+name: Gruvbox Dark
+page_bg: "#282828"
+page_fg: "#EBDBB2"
+ui_bg: "#1D2021"
+panel_bg: "#3C3836"
+ui_fg: "#EBDBB2"
+accent: "#D79921"
+selection: "#83A59866"

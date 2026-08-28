@@ -29,7 +29,9 @@ use egui::Key;
 use crate::highlight::yaml_job;
 use crate::icons::{Icon, IconRender};
 use crate::keybinds::{Action, Keybinds};
-use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
+use crate::render::cache::{
+    CacheKey, DEFAULT_BUDGET_BYTES, ImageCache, RECOLORED_BUDGET_BYTES, RecolorKey,
+};
 use crate::render::layout::{self, Flow, GAP, Layout};
 use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult, panic_message};
 use crate::search::SearchJob;
@@ -313,6 +315,32 @@ fn should_toast(last_toasted: Option<usize>, page: usize) -> bool {
     last_toasted != Some(page)
 }
 
+/// Focus egui's own Tab/arrow navigation parked on a chrome widget, if any:
+/// the keybind dispatcher treats any keyboard focus as typing, so focus on
+/// a button silently disables every plain-key binding. Only the app's
+/// registered text-edit fields may hold focus across frames.
+fn transient_focus(
+    focused: Option<egui::Id>,
+    editables: &[(egui::Id, egui::Rect)],
+) -> Option<egui::Id> {
+    focused.filter(|id| !editables.iter().any(|(editable, _)| editable == id))
+}
+
+/// Horizontal offset of the page toast from screen center: the zoom
+/// slider's center, or 0 before the bottom bar's first frame. The slider
+/// lives in the bar's middle third and the toast is capped at a third of
+/// the screen, so the capped toast never leaves the window.
+fn toast_offset(slider: Option<egui::Rect>, screen_center_x: f32) -> f32 {
+    slider.map_or(0.0, |rect| rect.center().x - screen_center_x)
+}
+
+/// Cache-key mix of the recolor pass's two page colors: themes mapping to
+/// the same page palette share recolorized bitmaps.
+fn recolor_key(page_bg: Color, page_fg: Color) -> u64 {
+    let pack = |c: Color| u32::from_be_bytes([c.r(), c.g(), c.b(), c.a()]);
+    u64::from(pack(page_bg)) << 32 | u64::from(pack(page_fg))
+}
+
 /// The wait until the next timed repaint the schedulers need, `None` when
 /// none does. An unfocused (or occluded) window schedules nothing: eframe
 /// 0.30 never gates buffer swaps, so a background repaint tick keeps the
@@ -417,6 +445,9 @@ pub struct ReaderApp {
     config_path: Option<PathBuf>,
 
     cache: ImageCache,
+    /// Recolorized bitmaps keyed by page, scale, and page colors; survives
+    /// theme switches so toggling back is a texture upload, not a re-map.
+    recolored: ImageCache<RecolorKey>,
     pipeline: Option<Pipeline>,
     /// Render jobs queued on the worker, awaiting their result.
     pending: HashSet<CacheKey>,
@@ -463,6 +494,9 @@ pub struct ReaderApp {
     focus: FocusGuard,
     /// Toast showing the viewport-center page: (page, last change).
     toast: Option<(usize, Instant)>,
+    /// Last painted screen rect of the zoom slider; the page toast anchors
+    /// above it. `None` until the bottom bar's first frame.
+    zoom_slider_rect: Option<egui::Rect>,
     /// Last page a toast fired for, remembered across toast expiry so
     /// hovering the same page never re-toasts it.
     last_toasted_page: Option<usize>,
@@ -578,6 +612,7 @@ impl ReaderApp {
             config,
             config_path,
             cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
+            recolored: ImageCache::new(RECOLORED_BUDGET_BYTES),
             pipeline: None,
             pending: HashSet::new(),
             failed: HashMap::new(),
@@ -598,6 +633,7 @@ impl ReaderApp {
             section: SidebarSection::Contents,
             focus: FocusGuard::default(),
             toast: None,
+            zoom_slider_rect: None,
             last_toasted_page: None,
             toc_follow: None,
             ui_scale: 1.0,
@@ -801,6 +837,7 @@ impl ReaderApp {
         self.rename_focus = false;
         self.toc_rows.clear();
         self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
+        self.recolored = ImageCache::new(RECOLORED_BUDGET_BYTES);
         self.pending.clear();
         self.failed.clear();
         self.failed_scale_q = 0;
@@ -944,9 +981,10 @@ impl ReaderApp {
     /// Switch the active theme — built-in or custom; unknown names fall
     /// back to Dark. Visuals are re-applied at the top of the next
     /// [`ReaderApp::update`]; texture slots are dropped so pages re-promote
-    /// from their cached originals in the new colors. Closes the theme
-    /// editor: a dropdown/menu switch means the buffer is no longer
-    /// authoritative. The choice persists to the app config immediately.
+    /// from the theme cache (or, on first sight, their cached originals).
+    /// Closes the theme editor: a dropdown/menu switch means the buffer is
+    /// no longer authoritative. The choice persists to the app config
+    /// immediately.
     fn set_theme(&mut self, name: &str) {
         self.theme = Self::resolve_theme(name, &self.custom_themes)
             .unwrap_or_else(|| builtin(DEFAULT_THEME).expect("default theme parses"));
@@ -1418,8 +1456,11 @@ impl ReaderApp {
         }
     }
 
-    /// Recolor-at-promotion: clone a cached original, map it onto the theme's
-    /// page colors, then load once per slot or reuse via `TextureHandle::set`.
+    /// Recolor-at-promotion: a recolorized bitmap for `(page, scale, page
+    /// colors)` is uploaded straight from the theme cache when present;
+    /// otherwise a cached original is cloned, mapped once, and stored so
+    /// theme switches only ever pay the first pass. Loads once per slot or
+    /// reuses via `TextureHandle::set`.
     fn promote_texture(
         &mut self,
         ctx: &egui::Context,
@@ -1427,17 +1468,42 @@ impl ReaderApp {
         scale_q: u16,
         fallback: Option<&PageImage>,
     ) {
-        let pixels = match self.cache.get(CacheKey { page, scale_q }) {
+        let key = RecolorKey {
+            page,
+            scale_q,
+            colors: recolor_key(self.theme.page_bg, self.theme.page_fg),
+        };
+        if let Some(img) = self.recolored.get(key) {
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [img.width as usize, img.height as usize],
+                img.rgba,
+            );
+            self.load_texture(ctx, page, scale_q, image);
+            return;
+        }
+        let (width, height, mut rgba) = match self.cache.get(CacheKey { page, scale_q }) {
             Some(img) => (img.width, img.height, img.rgba.to_vec()),
             None => match fallback {
                 Some(image) => (image.width, image.height, image.rgba.clone()),
                 None => return,
             },
         };
-        let (width, height, mut rgba) = pixels;
         recolor(&mut rgba, self.theme.page_bg, self.theme.page_fg);
         let image =
             egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+        self.recolored.insert(key, width, height, rgba);
+        self.load_texture(ctx, page, scale_q, image);
+    }
+
+    /// Push a recolorized image into the page's texture slot, loading the
+    /// handle once or reusing it via `set`.
+    fn load_texture(
+        &mut self,
+        ctx: &egui::Context,
+        page: usize,
+        scale_q: u16,
+        image: egui::ColorImage,
+    ) {
         let options = egui::TextureOptions::LINEAR;
         match self.textures.get_mut(&page) {
             Some(slot) if slot.scale_q == scale_q => slot.handle.set(image, options),
@@ -2074,7 +2140,7 @@ impl ReaderApp {
                                 if self
                                     .icons
                                     .button(ui, Icon::ChevronLeft, 22.0, fg)
-                                    .on_hover_text("Previous page (Left / PgUp)")
+                                    .on_hover_text("Previous page (Left / PgUp / -)")
                                     .clicked()
                                 {
                                     self.goto_page(current - 1, None);
@@ -2125,7 +2191,7 @@ impl ReaderApp {
                                 if self
                                     .icons
                                     .button(ui, Icon::ChevronRight, 22.0, fg)
-                                    .on_hover_text("Next page (Right / PgDn)")
+                                    .on_hover_text("Next page (Right / PgDn / +)")
                                     .clicked()
                                 {
                                     self.goto_page(current + 1, None);
@@ -2758,6 +2824,7 @@ impl ReaderApp {
         if slider.inner.changed() {
             self.set_zoom_percent(pct as f32);
         }
+        self.zoom_slider_rect = Some(slider.inner.rect);
     }
 
     /// View-mode toggles — continuous, single page, dual spreads, fit page
@@ -3015,11 +3082,19 @@ impl ReaderApp {
                     .weak()
                     .small(),
                 );
+                ui.label(
+                    egui::RichText::new(
+                        "Tab and arrow-key widget navigation is intentionally disabled — plain keys drive the reader.",
+                    )
+                    .weak()
+                    .small(),
+                );
             });
     }
-    /// Floating "Page N of M" toast anchored above the bottom bar: it
-    /// refreshes on every viewport-center page change, holds while
-    /// scrolling, and fades out shortly after scrolling settles.
+    /// Floating "Page N of M" toast anchored above the bottom bar, centered
+    /// over the zoom slider: it refreshes on every viewport-center page
+    /// change, holds while scrolling, and fades out shortly after scrolling
+    /// settles.
     fn show_page_toast(&mut self, ctx: &egui::Context) {
         let Some((page, shown)) = self.toast else {
             return;
@@ -3031,12 +3106,15 @@ impl ReaderApp {
         }
         let fg = color_of(self.theme.ui_fg);
         let count = self.page_count();
+        let screen = ctx.screen_rect();
+        let dx = toast_offset(self.zoom_slider_rect, screen.center().x);
         egui::Area::new(egui::Id::new("page_toast"))
             .anchor(
                 egui::Align2::CENTER_BOTTOM,
-                egui::vec2(0.0, -(BOTTOM_BAR_HEIGHT + 12.0)),
+                egui::vec2(dx, -(BOTTOM_BAR_HEIGHT + 12.0)),
             )
             .show(ctx, |ui| {
+                ui.set_max_width(screen.width() / 3.0);
                 egui::Frame::default()
                     .fill(color_of(self.theme.ui_bg).gamma_multiply(opacity))
                     .stroke(egui::Stroke::new(
@@ -3046,10 +3124,13 @@ impl ReaderApp {
                     .rounding(6.0)
                     .inner_margin(egui::Margin::symmetric(12.0, 5.0))
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(format!("Page {} of {}", page + 1, count))
-                                .font(egui::FontId::proportional(13.0))
-                                .color(fg.gamma_multiply(opacity)),
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(format!("Page {} of {}", page + 1, count))
+                                    .font(egui::FontId::proportional(13.0))
+                                    .color(fg.gamma_multiply(opacity)),
+                            )
+                            .truncate(),
                         );
                     });
             });
@@ -3637,6 +3718,13 @@ impl eframe::App for ReaderApp {
             apply_theme(ctx, &self.theme);
             self.applied_theme.clone_from(&self.theme.name);
         }
+        // Release focus parked on chrome widgets by egui's Tab/arrow
+        // navigation before this frame's dispatcher runs, so plain keys
+        // reach their bindings again. Runs against last frame's editables —
+        // the registry is reset below and repopulated while rendering.
+        if let Some(id) = transient_focus(ctx.memory(|mem| mem.focused()), &self.focus.editables) {
+            ctx.memory_mut(|mem| mem.surrender_focus(id));
+        }
         self.focus = FocusGuard::default();
         self.escape_consumed = false;
 
@@ -3823,6 +3911,7 @@ mod tests {
             config: Prefs::default(),
             config_path: None,
             cache: ImageCache::new(DEFAULT_BUDGET_BYTES),
+            recolored: ImageCache::new(RECOLORED_BUDGET_BYTES),
             pipeline: None,
             pending: HashSet::new(),
             failed: HashMap::new(),
@@ -3843,6 +3932,7 @@ mod tests {
             section: SidebarSection::Contents,
             focus: FocusGuard::default(),
             toast: None,
+            zoom_slider_rect: None,
             last_toasted_page: None,
             toc_follow: None,
             ui_scale: 1.0,
@@ -4284,6 +4374,11 @@ mod tests {
         }
         assert_eq!(theme_icon(&builtin_theme("Light")), Icon::Sun);
         assert_eq!(
+            theme_icon(&builtin_theme("Solarized Light")),
+            Icon::Sun,
+            "solarized keeps light chrome like Light"
+        );
+        assert_eq!(
             theme_icon(&builtin_theme("Sepia")),
             Icon::Moon,
             "sepia warms the page, its chrome stays dark"
@@ -4291,6 +4386,11 @@ mod tests {
         assert_eq!(theme_icon(&builtin_theme("Dark")), Icon::Moon);
         assert_eq!(theme_icon(&builtin_theme("Warm Dark")), Icon::Moon);
         assert_eq!(theme_icon(&builtin_theme("True Dark")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Cyberpunk")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Catppuccin")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Nord")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Dracula")), Icon::Moon);
+        assert_eq!(theme_icon(&builtin_theme("Gruvbox Dark")), Icon::Moon);
     }
 
     #[test]
@@ -4584,6 +4684,38 @@ mod tests {
         // must not resurrect it.
         assert!(!should_toast(last, 1));
         assert!(should_toast(last, 2), "a real page change toasts again");
+    }
+
+    #[test]
+    fn toast_centers_over_the_zoom_slider() {
+        let screen_center = 960.0;
+        // The bottom bar's middle-third slider: the toast tracks its center.
+        let slider = egui::Rect::from_min_max(egui::pos2(660.0, 800.0), egui::pos2(760.0, 812.0));
+        assert_eq!(
+            toast_offset(Some(slider), screen_center),
+            660.0 + 50.0 - screen_center
+        );
+        // Before the first bottom-bar frame the toast stays screen-centered.
+        assert_eq!(toast_offset(None, screen_center), 0.0);
+    }
+
+    #[test]
+    fn focus_off_the_registered_edit_fields_is_transient() {
+        let field = egui::Id::new("search_field");
+        let editables = [(field, egui::Rect::ZERO)];
+        assert_eq!(transient_focus(Some(field), &editables), None);
+        let button = egui::Id::new("chrome_button");
+        assert_eq!(transient_focus(Some(button), &editables), Some(button));
+        assert_eq!(transient_focus(None, &editables), None);
+    }
+
+    #[test]
+    fn recolor_keys_share_only_matching_page_colors() {
+        let dark = Color::from([0x16, 0x18, 0x1D, 0xFF]);
+        let light = Color::from([0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(recolor_key(dark, dark), recolor_key(dark, dark));
+        assert_ne!(recolor_key(dark, dark), recolor_key(light, dark));
+        assert_ne!(recolor_key(dark, dark), recolor_key(dark, light));
     }
 
     #[test]

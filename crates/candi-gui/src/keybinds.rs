@@ -112,7 +112,9 @@ impl Action {
         Action::ALL.into_iter().find(|action| action.name() == name)
     }
 
-    /// Default bindings preserving the pre-keybinds hardcoded keys.
+    /// Default bindings. Plain `+`/`=` (and the shifted-plus delivery)
+    /// page forward and plain `-` pages back (v0.1.2); zoom lives on the
+    /// Ctrl variants.
     fn defaults(self) -> &'static [&'static str] {
         match self {
             Action::OpenFile => &["Ctrl+O"],
@@ -124,14 +126,14 @@ impl Action {
             Action::KeybindsWindow => &["Ctrl+K"],
             Action::FocusMode => &["F11"],
             Action::CloseOverlay => &["Esc"],
-            Action::ZoomIn => &["=", "+", "Shift++", "Ctrl+=", "Ctrl++", "Ctrl+Shift++"],
-            Action::ZoomOut => &["-"],
+            Action::ZoomIn => &["Ctrl+=", "Ctrl++", "Ctrl+Shift++"],
+            Action::ZoomOut => &["Ctrl+-"],
             Action::FitWidth => &["0"],
             Action::CycleTheme => &["T"],
             Action::Bookmark => &["B"],
-            Action::Quit => &["Q"],
-            Action::PrevPage => &["Left", "PgUp"],
-            Action::NextPage => &["Right", "PgDn"],
+            Action::Quit => &["Q", "Ctrl+Q"],
+            Action::PrevPage => &["Left", "PgUp", "-"],
+            Action::NextPage => &["Right", "PgDn", "+", "Shift++", "="],
         }
     }
 }
@@ -228,7 +230,7 @@ fn modifier_prefix(rest: &str) -> Option<([bool; 4], &str)> {
 /// Version of the default binding lists this build ships. Bump whenever
 /// `Action::defaults` changes so files seeded by older versions can be
 /// healed on load; the seeded document carries it as `schema_version`.
-const DEFAULTS_SCHEMA_VERSION: u64 = 2;
+const DEFAULTS_SCHEMA_VERSION: u64 = 3;
 
 /// Default binding lists that older schema versions shipped, with the
 /// version that superseded them: `(superseded_in, action, legacy specs)`.
@@ -244,6 +246,16 @@ const LEGACY_DEFAULTS: &[(u64, &str, &[&str])] = &[
     // The seed that predates `schema_version` entirely; those files load
     // as version 1.
     (2, "zoom_in", &["+", "="]),
+    // v0.1.2 moved plain +/=/- to page turns and Ctrl+Q joined quit.
+    (
+        3,
+        "zoom_in",
+        &["=", "+", "Shift++", "Ctrl+=", "Ctrl++", "Ctrl+Shift++"],
+    ),
+    (3, "zoom_out", &["-"]),
+    (3, "next_page", &["Right", "PgDn"]),
+    (3, "prev_page", &["Left", "PgUp"]),
+    (3, "quit", &["Q"]),
 ];
 
 const DIGITS: [Key; 10] = [
@@ -808,14 +820,14 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
         assert_eq!(
             doc["next_page"],
-            serde_json::json!(["Right", "PgDn"]),
+            serde_json::json!(["Right", "PgDn", "+", "Shift++", "="]),
             "multi-bindings serialize as arrays"
         );
         assert_eq!(
             doc["schema_version"],
             serde_json::json!(DEFAULTS_SCHEMA_VERSION)
         );
-        assert_eq!(doc["quit"], serde_json::json!("Q"));
+        assert_eq!(doc["quit"], serde_json::json!(["Q", "Ctrl+Q"]));
         // The seeded file round-trips to the same bindings as the defaults.
         for (label, keys) in keybinds.rows() {
             assert!(!keys.is_empty(), "{label} lost its default bindings");
@@ -847,7 +859,7 @@ mod tests {
         // Unlisted actions keep their defaults.
         assert_eq!(
             keybinds.action_for(Key::Minus, egui::Modifiers::default()),
-            Some(Action::ZoomOut)
+            Some(Action::PrevPage)
         );
         fs::remove_dir_all(&dir).ok();
     }
@@ -866,14 +878,59 @@ mod tests {
         let keybinds = Keybinds::load_or_init(Some(&dir));
         assert_eq!(
             keybinds.action_for(Key::Plus, egui::Modifiers::SHIFT),
-            Some(Action::ZoomIn),
-            "the shifted-plus delivery only the current list covers is healed"
+            Some(Action::NextPage),
+            "the shifted-plus delivery of the healed default pages forward now"
         );
         let doc: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
                 .expect("migrated file is valid JSON");
-        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["schema_version"], serde_json::json!(3));
         assert_eq!(doc["zoom_in"], serde_json::json!(Action::ZoomIn.defaults()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn v2_seed_heals_the_page_turn_and_quit_defaults() {
+        let dir = temp_dir("migrate-v2");
+        fs::create_dir_all(&dir).unwrap();
+        // The v2 seeded document's entries for every action the v0.1.2 wave
+        // rebound, verbatim.
+        fs::write(
+            dir.join("keybinds.json"),
+            r#"{"schema_version": 2, "zoom_in": ["=", "+", "Shift++", "Ctrl+=", "Ctrl++", "Ctrl+Shift++"], "zoom_out": "-", "next_page": ["Right", "PgDn"], "prev_page": ["Left", "PgUp"], "quit": "Q"}"#,
+        )
+        .unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Equals, egui::Modifiers::NONE),
+            Some(Action::NextPage)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Minus, egui::Modifiers::NONE),
+            Some(Action::PrevPage)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Minus, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::ZoomOut)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Q, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::Quit),
+            "Ctrl+Q joins quit through the heal"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
+                .expect("migrated file is valid JSON");
+        assert_eq!(doc["schema_version"], serde_json::json!(3));
+        assert_eq!(
+            doc["next_page"],
+            serde_json::json!(Action::NextPage.defaults())
+        );
+        assert_eq!(
+            doc["prev_page"],
+            serde_json::json!(Action::PrevPage.defaults())
+        );
+        assert_eq!(doc["quit"], serde_json::json!(Action::Quit.defaults()));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -891,7 +948,7 @@ mod tests {
         let keybinds = Keybinds::load_or_init(Some(&dir));
         assert_eq!(
             keybinds.action_for(Key::Plus, egui::Modifiers::SHIFT),
-            Some(Action::ZoomIn),
+            Some(Action::NextPage),
             "the version-less seed heals to the current defaults"
         );
         let doc: serde_json::Value =
@@ -899,11 +956,11 @@ mod tests {
                 .expect("healed file is valid JSON");
         assert_eq!(
             doc["schema_version"],
-            serde_json::json!(2),
+            serde_json::json!(3),
             "the healed file gains a version"
         );
         assert_eq!(doc["zoom_in"], serde_json::json!(Action::ZoomIn.defaults()));
-        assert_eq!(doc["quit"], serde_json::json!("Q"));
+        assert_eq!(doc["quit"], serde_json::json!(["Q", "Ctrl+Q"]));
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -921,7 +978,7 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
                 .expect("migrated file is valid JSON");
-        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["schema_version"], serde_json::json!(3));
         assert_eq!(doc["zoom_in"], serde_json::json!("Ctrl+Up"));
         fs::remove_dir_all(&dir).ok();
     }
@@ -948,7 +1005,7 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
                 .expect("migrated file is valid JSON");
-        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["schema_version"], serde_json::json!(3));
         assert_eq!(doc["zoom_in"], serde_json::json!("Ctrl+Up"));
         fs::remove_dir_all(&dir).ok();
     }
@@ -959,7 +1016,7 @@ mod tests {
         let keybinds = Keybinds::load_or_init(Some(&dir));
         assert_eq!(
             keybinds.action_for(Key::Equals, egui::Modifiers::NONE),
-            Some(Action::ZoomIn)
+            Some(Action::NextPage)
         );
         let seeded = fs::read_to_string(dir.join("keybinds.json")).unwrap();
         // A second load must recognize the file as current and leave the
@@ -1007,7 +1064,12 @@ mod tests {
         );
         assert_eq!(
             keybinds.action_for(Key::Minus, egui::Modifiers::default()),
-            Some(Action::ZoomOut)
+            Some(Action::PrevPage)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Minus, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::ZoomOut),
+            "zoom_out falls back to its new ctrl default"
         );
         assert!(
             keybinds
@@ -1020,16 +1082,31 @@ mod tests {
     }
 
     #[test]
-    fn zoom_in_reaches_every_physical_equals_spelling() {
+    fn zoom_lives_on_ctrl_and_plain_plus_minus_pages() {
         let keybinds = Keybinds::defaults(None);
         // Winit/XKB delivers the equals row physically: plain (and Ctrl-held)
         // `=` arrives as Key::Equals, while every delivery of `+` — numpad,
         // or Shift+= whose shifted glyph reaches egui as Character("+") — is
-        // Key::Plus.
-        let cases = [
+        // Key::Plus. v0.1.2 gives the plain spellings to page turns.
+        let page_cases = [
             (Key::Equals, egui::Modifiers::NONE),
             (Key::Plus, egui::Modifiers::NONE),
             (Key::Plus, egui::Modifiers::SHIFT),
+            (Key::Minus, egui::Modifiers::NONE),
+        ];
+        for (key, modifiers) in page_cases {
+            let expected = if key == Key::Minus {
+                Action::PrevPage
+            } else {
+                Action::NextPage
+            };
+            assert_eq!(
+                keybinds.action_for(key, modifiers),
+                Some(expected),
+                "{modifiers:?} {key:?} must reach page turning"
+            );
+        }
+        let zoom_in_cases = [
             (Key::Equals, linux_pressed(egui::Modifiers::CTRL)),
             (Key::Plus, linux_pressed(egui::Modifiers::CTRL)),
             (
@@ -1037,7 +1114,7 @@ mod tests {
                 linux_pressed(egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT)),
             ),
         ];
-        for (key, modifiers) in cases {
+        for (key, modifiers) in zoom_in_cases {
             assert_eq!(
                 keybinds.action_for(key, modifiers),
                 Some(Action::ZoomIn),
@@ -1045,9 +1122,32 @@ mod tests {
             );
         }
         assert_eq!(
+            keybinds.action_for(Key::Minus, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::ZoomOut),
+            "Ctrl+Minus zooms out"
+        );
+        assert_eq!(
             keybinds.action_for(Key::Equals, egui::Modifiers::ALT),
             None,
             "unrelated modifier combos stay unmapped"
+        );
+    }
+
+    #[test]
+    fn quit_reaches_plain_q_and_ctrl_q() {
+        let keybinds = Keybinds::defaults(None);
+        assert_eq!(
+            keybinds.action_for(Key::Q, egui::Modifiers::NONE),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Q, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Q, egui::Modifiers::ALT),
+            None,
+            "unbound modifier combos stay inert"
         );
     }
 

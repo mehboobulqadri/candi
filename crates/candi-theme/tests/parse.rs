@@ -102,7 +102,19 @@ fn display_omits_opaque_alpha() {
 fn builtin_names_are_stable() {
     assert_eq!(
         BUILTIN_NAMES,
-        ["Light", "Sepia", "Warm Dark", "Dark", "True Dark"]
+        [
+            "Light",
+            "Sepia",
+            "Solarized Light",
+            "Warm Dark",
+            "Cyberpunk",
+            "Catppuccin",
+            "Nord",
+            "Dracula",
+            "Gruvbox Dark",
+            "Dark",
+            "True Dark"
+        ]
     );
 }
 
