@@ -7,7 +7,8 @@ model and mitigations.
 
 ## Supported versions
 
-None yet — Candi has no releases. The first supported version is v0.1.
+The v0.1.x series is supported: security fixes land in the latest v0.1
+release. Older releases should upgrade before reporting.
 
 ## Reporting a vulnerability
 

@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "candi-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "candi-core",
  "candi-pdf",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "candi-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "candi-pdf",
  "serde",
@@ -736,7 +736,7 @@ dependencies = [
 
 [[package]]
 name = "candi-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "candi-cli",
  "candi-core",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "candi-pdf"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libloading",
  "mupdf",
@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "candi-theme"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_yaml",
@@ -770,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "candi-tui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "candi-core",
  "candi-pdf",
