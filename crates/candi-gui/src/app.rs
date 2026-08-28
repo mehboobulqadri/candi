@@ -830,6 +830,7 @@ impl ReaderApp {
         self.path = Some(path.clone());
         self.filename = filename_of(&path);
         self.config.record_open(&path);
+        self.config.onboarding_done = true;
         self.save_config();
         self.pipeline = Some(Pipeline::spawn(payload.document.clone()));
         self.document = Some(payload.document);
@@ -931,6 +932,13 @@ impl ReaderApp {
         if let Err(err) = store_prefs(path, &self.config) {
             eprintln!("candi: saving config: {err}");
         }
+    }
+
+    /// Mark the quick-start panel done and persist immediately; the welcome
+    /// screen stays plain forever after.
+    fn dismiss_onboarding(&mut self) {
+        self.config.onboarding_done = true;
+        self.save_config();
     }
 
     /// Switch the active theme — built-in or custom; unknown names fall
@@ -2817,7 +2825,7 @@ impl ReaderApp {
             let accent = color_of(self.theme.accent);
             ui.add_space(centered_top_offset(
                 ui.available_height(),
-                welcome_block_height(ui, recents.len()),
+                welcome_block_height(ui, recents.len(), !self.config.onboarding_done),
             ));
             let (rect, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
             self.icons
@@ -2844,6 +2852,25 @@ impl ReaderApp {
                     .weak()
                     .small(),
             );
+            if !self.config.onboarding_done {
+                ui.add_space(26.0);
+                ui.label(egui::RichText::new("Quick start").weak().small());
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("Ctrl+O open · Ctrl+K shortcuts · Ctrl+E themes")
+                        .weak()
+                        .small(),
+                );
+                ui.label(
+                    egui::RichText::new("Reading position saves automatically.")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(6.0);
+                if ui.small_button("Got it").clicked() {
+                    self.dismiss_onboarding();
+                }
+            }
             if !recents.is_empty() {
                 ui.add_space(26.0);
                 ui.label(egui::RichText::new("Recent").weak().small());
@@ -3359,10 +3386,11 @@ fn centered_top_offset(available: f32, block: f32) -> f32 {
     ((available - block) / 2.0).max(0.0)
 }
 
-/// Measured height of the welcome block: icon, title, hints, CTA, and the
-/// recents list — widget heights plus one item-spacing per allocation, the
-/// model [`centered_top_offset`] centers against.
-fn welcome_block_height(ui: &egui::Ui, recents: usize) -> f32 {
+/// Measured height of the welcome block: icon, title, hints, CTA, the
+/// quick-start panel until onboarding is done, and the recents list —
+/// widget heights plus one item-spacing per allocation, the model
+/// [`centered_top_offset`] centers against.
+fn welcome_block_height(ui: &egui::Ui, recents: usize, onboarding: bool) -> f32 {
     let body = ui.text_style_height(&egui::TextStyle::Body);
     let small = ui.text_style_height(&egui::TextStyle::Small);
     let title = ui
@@ -3377,6 +3405,12 @@ fn welcome_block_height(ui: &egui::Ui, recents: usize) -> f32 {
     let spacing = ui.spacing().item_spacing.y;
     let mut allocations = 9.0;
     let mut h = 72.0 + 14.0 + title + 4.0 + body + 18.0 + 36.0 + 10.0 + small;
+    if onboarding {
+        let button =
+            (small + 2.0 * ui.spacing().button_padding.y).max(ui.spacing().interact_size.y);
+        allocations += 7.0;
+        h += 26.0 + small + 2.0 + small + small + 6.0 + button;
+    }
     if recents > 0 {
         allocations += 3.0 + recents as f32;
         h += 26.0 + small + 2.0 + recents as f32 * body;
@@ -3867,6 +3901,38 @@ mod tests {
     }
 
     #[test]
+    fn open_marks_onboarding_done_and_persists() {
+        let dir = test_dir("onboarding-open");
+        let pdf = fixture_copy("tiny.pdf", &dir, "tiny.pdf");
+        let config = dir.join("config.toml");
+        let mut app = test_app(BackendKind::Mupdf);
+        app.config_path = Some(config.clone());
+        assert!(!app.config.onboarding_done);
+        app.open_path(pdf);
+        drain_open(&mut app);
+        assert!(app.document.is_some());
+        assert!(app.config.onboarding_done, "first successful open marks it");
+        assert!(
+            fs::read_to_string(&config)
+                .unwrap()
+                .contains("onboarding_done = true"),
+            "the flag persists immediately"
+        );
+        assert!(load_prefs(&config).onboarding_done);
+    }
+
+    #[test]
+    fn dismiss_onboarding_persists_immediately() {
+        let dir = test_dir("onboarding-dismiss");
+        let config = dir.join("config.toml");
+        let mut app = test_app(BackendKind::Mupdf);
+        app.config_path = Some(config.clone());
+        app.dismiss_onboarding();
+        assert!(app.config.onboarding_done);
+        assert!(load_prefs(&config).onboarding_done, "dismissal persists");
+    }
+
+    #[test]
     fn corrupt_sidecar_blocks_saving_until_engagement() {
         let dir = test_dir("corrupt-sidecar");
         let pdf = fixture_copy("tiny.pdf", &dir, "tiny.pdf");
@@ -4080,19 +4146,23 @@ mod tests {
     #[test]
     fn welcome_block_grows_with_recents() {
         let ctx = egui::Context::default();
-        let measure = |recents: usize| -> f32 {
+        let measure = |recents: usize, onboarding: bool| -> f32 {
             let height = std::cell::Cell::new(0.0_f32);
             let _ = ctx.run(Default::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    height.set(welcome_block_height(ui, recents));
+                    height.set(welcome_block_height(ui, recents, onboarding));
                 });
             });
             height.get()
         };
-        let none = measure(0);
-        let three = measure(3);
+        let none = measure(0, false);
+        let three = measure(3, false);
         assert!(none > 0.0);
         assert!(three > none + 3.0, "each recent row adds its height");
+        assert!(
+            measure(0, true) > none + 3.0,
+            "the quick-start panel adds its height"
+        );
     }
 
     #[test]
