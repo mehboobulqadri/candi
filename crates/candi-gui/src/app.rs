@@ -7,8 +7,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::ops::{Range, RangeInclusive};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
@@ -29,7 +31,7 @@ use crate::icons::{Icon, IconRender};
 use crate::keybinds::{Action, Keybinds};
 use crate::render::cache::{CacheKey, DEFAULT_BUDGET_BYTES, ImageCache};
 use crate::render::layout::{self, Flow, GAP, Layout};
-use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult};
+use crate::render::pipeline::{Pipeline, RenderRequest, RenderResult, panic_message};
 use crate::search::SearchJob;
 use crate::sidebar::{SearchHit, SidebarSection, TocRow, active_toc_row, date_only, flatten_toc};
 
@@ -77,6 +79,8 @@ const RETRY_BACKOFFS: [Duration; 3] = [
 const TOAST_HOLD: Duration = Duration::from_millis(700);
 /// then a linear fade over this long.
 const TOAST_FADE: Duration = Duration::from_millis(200);
+/// Height of the bottom chrome bar; the page toast anchors just above it.
+const BOTTOM_BAR_HEIGHT: f32 = 42.0;
 /// Banner when the reading-position sidecar failed to parse: the fresh
 /// session must not silently replace the unreadable file, so saves stay
 /// blocked until the reader engages with the document.
@@ -88,6 +92,65 @@ const MAX_THEME_BYTES: u64 = 256 * 1024;
 /// not be slurped into a String on startup.
 fn oversized_theme(size: u64) -> bool {
     size > MAX_THEME_BYTES
+}
+
+/// Everything a finished open hands the UI thread: the loaded session and
+/// document plus the once-per-open page sizes and flattened outline, all
+/// computed on the worker so a 1556-page sweep never blocks input.
+struct OpenedPayload {
+    document: Arc<dyn Document>,
+    session: SessionState,
+    warning: Option<String>,
+    page_sizes: Result<Vec<(f32, f32)>, String>,
+    toc_rows: Result<Vec<TocRow>, String>,
+}
+
+/// One in-flight open: the payload channel, the job's target path (for the
+/// opening notice), and the flag a newer open sets so this one's page-size
+/// sweep stops early. Its results are dead the moment a newer job exists —
+/// the UI dropped this receiver when it started the newer open.
+struct OpenJob {
+    path: PathBuf,
+    rx: Receiver<Result<OpenedPayload, String>>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// Worker half of an open: session and document, then page sizes and
+/// outline. A superseded job's results are never delivered — the UI dropped
+/// the receiver when it started the newer open — so the cancel path's error
+/// text is a placeholder by construction.
+fn compute_open_payload(
+    path: &Path,
+    backend: BackendKind,
+    cancel: &AtomicBool,
+) -> Result<OpenedPayload, String> {
+    let opened = open_session(path, backend).map_err(|err| err.to_string())?;
+    if cancel.load(Ordering::Relaxed) {
+        return Err("superseded".to_owned());
+    }
+    let document: Arc<dyn Document> = Arc::from(opened.document);
+    let count = document.page_count();
+    let mut sizes = Vec::with_capacity(count);
+    for page in 0..count {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("superseded".to_owned());
+        }
+        match document.page_size(page) {
+            Ok(size) => sizes.push(size),
+            Err(err) => return Err(format!("page {}: {err}", page + 1)),
+        }
+    }
+    let toc_rows = match document.outline() {
+        Ok(items) => Ok(flatten_toc(&items)),
+        Err(err) => Err(format!("table of contents: {err}")),
+    };
+    Ok(OpenedPayload {
+        document,
+        session: opened.session,
+        warning: opened.warning,
+        page_sizes: Ok(sizes),
+        toc_rows,
+    })
 }
 
 /// Per-page render failure ledger entry: failures so far at the current
@@ -243,6 +306,43 @@ fn should_release_focus(
     outside(clicked) || outside(scrolled)
 }
 
+/// Whether the viewport-center page deserves a fresh page toast: only a
+/// page different from the last toasted one. The marker survives toast
+/// expiry, so hovering the same page never re-toasts it.
+fn should_toast(last_toasted: Option<usize>, page: usize) -> bool {
+    last_toasted != Some(page)
+}
+
+/// The wait until the next timed repaint the schedulers need, `None` when
+/// none does. An unfocused (or occluded) window schedules nothing: eframe
+/// 0.30 never gates buffer swaps, so a background repaint tick keeps the
+/// Wayland driver blocking the main thread until the compositor declares
+/// the window unresponsive ("terminate or wait"). Workers keep completing
+/// regardless — renders, searches, and opens apply on the next
+/// event-driven frame, and egui-winit repaints on Focused(true), so
+/// everything resumes the moment the window regains focus.
+fn should_schedule_repaint(
+    focused: bool,
+    pending_renders: bool,
+    next_retry: Option<Duration>,
+    polling_job: bool,
+    toast_wait: Option<Duration>,
+) -> Option<Duration> {
+    if !focused {
+        return None;
+    }
+    const CADENCE: Duration = Duration::from_millis(50);
+    let render_wait = if pending_renders {
+        Some(CADENCE)
+    } else {
+        next_retry
+    };
+    [render_wait, polling_job.then_some(CADENCE), toast_wait]
+        .into_iter()
+        .flatten()
+        .min()
+}
+
 /// A promoted GPU texture for one page plus the scale it was rendered at.
 struct PageTexture {
     scale_q: u16,
@@ -363,6 +463,9 @@ pub struct ReaderApp {
     focus: FocusGuard,
     /// Toast showing the viewport-center page: (page, last change).
     toast: Option<(usize, Instant)>,
+    /// Last page a toast fired for, remembered across toast expiry so
+    /// hovering the same page never re-toasts it.
+    last_toasted_page: Option<usize>,
     /// Last TOC row clicked with the page it pointed at; preferred over the
     /// computed accent until the reader leaves that page.
     toc_follow: Option<(usize, usize)>,
@@ -387,6 +490,13 @@ pub struct ReaderApp {
     search_hits: Option<Vec<SearchHit>>,
     /// Running full-document scan; results stream into `search_hits`.
     search_job: Option<SearchJob>,
+    /// In-flight document open; `Some` until its payload applies or fails.
+    /// Superseded by any newer open.
+    open_job: Option<OpenJob>,
+    /// An inline text field (page jump, bookmark rename) handled Escape
+    /// this frame; the keybind dispatcher must not also read it as
+    /// CloseOverlay.
+    escape_consumed: bool,
     /// In-flight native file picker; `Some` while the dialog is open, so
     /// requests stay single-flight and the UI thread never blocks.
     dialog_result: Option<Receiver<Option<PathBuf>>>,
@@ -488,6 +598,7 @@ impl ReaderApp {
             section: SidebarSection::Contents,
             focus: FocusGuard::default(),
             toast: None,
+            last_toasted_page: None,
             toc_follow: None,
             ui_scale: 1.0,
             base_ppp: cc.egui_ctx.pixels_per_point(),
@@ -502,6 +613,8 @@ impl ReaderApp {
             search_query: String::new(),
             search_hits: None,
             search_job: None,
+            open_job: None,
+            escape_consumed: false,
             dialog_result: None,
             highlight: None,
             toc_rows: Vec::new(),
@@ -520,6 +633,12 @@ impl ReaderApp {
         };
         if let Some(path) = initial {
             app.open_path(path);
+            // The startup open stays synchronous: capture states and the
+            // first frame need the document ready before the loop begins.
+            while app.open_job.is_some() {
+                app.poll_open();
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
         if let Ok(mode) = std::env::var("CANDI_UI_DEBUG") {
             // Capture scaffolding: pre-opens the UI state each mode names so
@@ -618,64 +737,114 @@ impl ReaderApp {
         app
     }
 
+    /// Start opening `path` on a worker thread: the session load, the
+    /// once-per-open page-size sweep (a per-page loop that blocks the UI
+    /// thread for seconds on large documents), and the outline all compute
+    /// off-thread. A newer open supersedes the running one; the previous
+    /// document stays visible until a payload applies (the welcome screen
+    /// holds for a first open), and a failed open preserves it.
     fn open_path(&mut self, path: PathBuf) {
         self.error = None;
         self.cancel_search();
-        match open_session(&path, self.backend) {
-            Ok(opened) => {
-                // A successful open rebuilds every doc-scoped surface from
-                // the new document; a failed open leaves the previous one
-                // exactly as it was.
-                self.search_query.clear();
-                self.highlight = None;
-                self.renaming = None;
-                self.rename_buffer.clear();
-                self.rename_focus = false;
-                self.toc_rows.clear();
-                self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
-                self.pending.clear();
-                self.failed.clear();
-                self.failed_scale_q = 0;
-                self.textures.clear();
-                self.pipeline = None;
-                self.layout_key = None;
-                self.page_sizes.clear();
-                self.pending_scroll = None;
-                self.scroll_anchor = None;
-                self.canvas_center_y = 0.0;
-                self.primed = false;
-                self.sidebar_open = true;
-                self.fit_page = false;
-                self.flow = Flow::Continuous;
-                self.ui_scale = 1.0;
-                self.toast = None;
-                self.toc_follow = None;
-
-                let theme_name = opened.session.theme.clone();
-                self.session = opened.session;
-                self.session_corrupt = opened.warning.is_some();
-                if self.session_corrupt {
-                    self.error = Some(SESSION_CORRUPT_BANNER.to_owned());
-                }
-                self.set_theme(&theme_name);
-                self.path = Some(path.clone());
-                self.filename = filename_of(&path);
-                self.config.record_open(&path);
-                self.save_config();
-                let document: Arc<dyn Document> = Arc::from(opened.document);
-                self.pipeline = Some(Pipeline::spawn(document.clone()));
-                self.document = Some(document);
-                if let ZoomMode::Percent(p) = self.session.zoom {
-                    self.zoom_pct = p;
-                }
-                self.restore_frac = Some(self.session.scroll_frac);
-                self.load_page_sizes();
-                self.load_outline();
-            }
-            Err(err) => {
-                self.error = Some(err.to_string());
-            }
+        if let Some(job) = self.open_job.take() {
+            job.cancel.store(true, Ordering::Relaxed);
         }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancel);
+        let backend = self.backend;
+        let job_path = path.clone();
+        std::thread::Builder::new()
+            .name("candi-open".into())
+            .spawn(move || {
+                let payload = catch_unwind(AssertUnwindSafe(|| {
+                    compute_open_payload(&job_path, backend, &flag)
+                }))
+                .unwrap_or_else(|panic| Err(panic_message(&panic, "open")));
+                let _ = tx.send(payload);
+            })
+            .expect("spawn candi-open worker thread");
+        self.open_job = Some(OpenJob { path, rx, cancel });
+    }
+
+    /// Apply a finished open job, if any: success replaces the document and
+    /// every doc-scoped surface, failure keeps the previous document
+    /// exactly as it was and shows the usual banner.
+    fn poll_open(&mut self) {
+        let Some(job) = self.open_job.take() else {
+            return;
+        };
+        let outcome = match job.rx.try_recv() {
+            Ok(outcome) => outcome,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.open_job = Some(job);
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("document open failed".to_owned())
+            }
+        };
+        match outcome {
+            Ok(payload) => self.apply_opened(job.path.clone(), payload),
+            Err(err) => self.error = Some(err),
+        }
+    }
+
+    /// Rebuild every doc-scoped surface from a finished open. A successful
+    /// open replaces the previous document wholesale; this never runs for a
+    /// failed one.
+    fn apply_opened(&mut self, path: PathBuf, payload: OpenedPayload) {
+        self.search_query.clear();
+        self.highlight = None;
+        self.renaming = None;
+        self.rename_buffer.clear();
+        self.rename_focus = false;
+        self.toc_rows.clear();
+        self.cache = ImageCache::new(DEFAULT_BUDGET_BYTES);
+        self.pending.clear();
+        self.failed.clear();
+        self.failed_scale_q = 0;
+        self.textures.clear();
+        self.pipeline = None;
+        self.layout_key = None;
+        self.page_sizes.clear();
+        self.pending_scroll = None;
+        self.scroll_anchor = None;
+        self.canvas_center_y = 0.0;
+        self.primed = false;
+        self.sidebar_open = true;
+        self.fit_page = false;
+        self.flow = Flow::Continuous;
+        self.ui_scale = 1.0;
+        self.toast = None;
+        self.last_toasted_page = None;
+        self.toc_follow = None;
+
+        let theme_name = payload.session.theme.clone();
+        self.session = payload.session;
+        self.session_corrupt = payload.warning.is_some();
+        if self.session_corrupt {
+            self.error = Some(SESSION_CORRUPT_BANNER.to_owned());
+        }
+        self.set_theme(&theme_name);
+        self.path = Some(path.clone());
+        self.filename = filename_of(&path);
+        self.config.record_open(&path);
+        self.save_config();
+        self.pipeline = Some(Pipeline::spawn(payload.document.clone()));
+        self.document = Some(payload.document);
+        match payload.page_sizes {
+            Ok(sizes) => self.page_sizes = sizes,
+            Err(err) => self.error = Some(err),
+        }
+        match payload.toc_rows {
+            Ok(rows) => self.toc_rows = rows,
+            Err(err) => self.error = Some(err),
+        }
+        if let ZoomMode::Percent(p) = self.session.zoom {
+            self.zoom_pct = p;
+        }
+        self.restore_frac = Some(self.session.scroll_frac);
     }
 
     /// Theme the app starts with: the persisted config choice (built-in or
@@ -1051,7 +1220,7 @@ impl ReaderApp {
     /// document closed).
     fn cancel_search(&mut self) {
         if let Some(job) = self.search_job.take() {
-            job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            job.cancel.store(true, Ordering::Relaxed);
         }
         self.search_hits = None;
     }
@@ -1197,41 +1366,6 @@ impl ReaderApp {
         self.zoom_pct = layout::quantize_nearest(self.layout.zoom * 100.0);
         self.layout_key = Some(key);
         true
-    }
-
-    /// Fetch every page's point size once; a backend failure here is fatal to
-    /// layout and surfaces as an error banner.
-    fn load_page_sizes(&mut self) {
-        let Some(document) = self.document.as_ref() else {
-            return;
-        };
-        let count = document.page_count();
-        let mut sizes = Vec::with_capacity(count);
-        for page in 0..count {
-            match document.page_size(page) {
-                Ok(size) => sizes.push(size),
-                Err(err) => {
-                    self.error = Some(format!("page {}: {err}", page + 1));
-                    self.page_sizes.clear();
-                    return;
-                }
-            }
-        }
-        self.page_sizes = sizes;
-    }
-
-    /// Fetch the outline once per open. An empty result means the document
-    /// has no usable table of contents; a backend failure surfaces as an
-    /// error banner with the sidebar falling back to its empty state.
-    fn load_outline(&mut self) {
-        self.toc_rows.clear();
-        let Some(document) = self.document.as_ref() else {
-            return;
-        };
-        match document.outline() {
-            Ok(items) => self.toc_rows = flatten_toc(&items),
-            Err(err) => self.error = Some(format!("table of contents: {err}")),
-        }
     }
 
     /// Render the current page synchronously so opening never shows a blank
@@ -1700,12 +1834,9 @@ impl ReaderApp {
 
         if self.page_count() > 0 {
             if let Some(page) = self.layout.page_at(view.center_y) {
-                if self
-                    .toast
-                    .as_ref()
-                    .is_none_or(|(shown_page, _)| *shown_page != page)
-                {
+                if should_toast(self.last_toasted_page, page) {
                     self.toast = Some((page, Instant::now()));
+                    self.last_toasted_page = Some(page);
                 }
                 self.session.page = page;
             }
@@ -1950,6 +2081,7 @@ impl ReaderApp {
                                         &mut self.page_jump_focus,
                                         &mut self.jump_invalid,
                                         &mut self.focus,
+                                        &mut self.escape_consumed,
                                     );
                                     match outcome {
                                         JumpOutcome::Commit(page) => {
@@ -2274,9 +2406,10 @@ impl ReaderApp {
                     if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                         commit_rename =
                             Some((bookmark.page, std::mem::take(&mut self.rename_buffer)));
-                    } else if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+                    } else if ui.input(|i| i.key_pressed(Key::Escape)) {
                         cancel_rename = true;
                         self.rename_buffer.clear();
+                        self.escape_consumed = true;
                     }
                     if self.icons.button(ui, Icon::X, 18.0, fg).clicked() {
                         cancel_rename = true;
@@ -2850,7 +2983,7 @@ impl ReaderApp {
                 ui.label(egui::RichText::new(hint).weak().small());
                 ui.label(
                     egui::RichText::new(
-                        "Pinch-zoom isn't supported on Linux/Wayland yet — use Ctrl+scroll (planned v0.1.1).",
+                        "Pinch-zoom not supported (Wayland/winit limitation) — use Ctrl+scroll to zoom.",
                     )
                     .weak()
                     .small(),
@@ -2872,7 +3005,10 @@ impl ReaderApp {
         let fg = color_of(self.theme.ui_fg);
         let count = self.page_count();
         egui::Area::new(egui::Id::new("page_toast"))
-            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, 54.0))
+            .anchor(
+                egui::Align2::CENTER_BOTTOM,
+                egui::vec2(0.0, -(BOTTOM_BAR_HEIGHT + 12.0)),
+            )
             .show(ctx, |ui| {
                 egui::Frame::default()
                     .fill(color_of(self.theme.ui_bg).gamma_multiply(opacity))
@@ -2889,6 +3025,22 @@ impl ReaderApp {
                                 .color(fg.gamma_multiply(opacity)),
                         );
                     });
+            });
+    }
+
+    /// Unobtrusive "Opening <name>…" line under the nav pill while an open
+    /// is in flight: the previous document stays fully visible (the welcome
+    /// screen for a first open) and the notice vanishes once the payload
+    /// applies or fails.
+    fn show_opening_notice(&self, ctx: &egui::Context) {
+        let Some(job) = self.open_job.as_ref() else {
+            return;
+        };
+        let text = format!("Opening {}…", filename_of(&job.path));
+        egui::Area::new(egui::Id::new("opening_notice"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 44.0))
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new(text).weak().small());
             });
     }
 }
@@ -2924,7 +3076,7 @@ impl ReaderApp {
                         self.section = SidebarSection::Search;
                         self.focus_search = true;
                     }
-                    Action::GoToPage if self.page_count() > 0 => {
+                    Action::GoToPage if keyboard_free && self.page_count() > 0 => {
                         self.page_jump = Some((self.session.page + 1).to_string());
                         self.page_jump_focus = true;
                         self.jump_invalid = false;
@@ -2964,7 +3116,9 @@ impl ReaderApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     Action::FocusMode => self.focus_mode = !self.focus_mode,
-                    Action::CloseOverlay => {
+                    // Escape handled by an inline text field (page jump,
+                    // bookmark rename) this frame is already consumed.
+                    Action::CloseOverlay if !self.escape_consumed => {
                         if self.about_open {
                             self.about_open = false;
                         } else if self.editor.is_some() {
@@ -2981,6 +3135,12 @@ impl ReaderApp {
                         {
                             self.cancel_search();
                             self.search_query.clear();
+                            // Clearing via Esc must hand plain keys back to
+                            // the dispatcher, not leave them landing in the
+                            // still-focused field.
+                            if let Some(focused) = ctx.memory(|mem| mem.focused()) {
+                                ctx.memory_mut(|mem| mem.surrender_focus(focused));
+                            }
                         }
                     }
                     Action::PrevPage if keyboard_free => {
@@ -3240,6 +3400,7 @@ fn jump_input(
     focus: &mut bool,
     invalid: &mut bool,
     guard: &mut FocusGuard,
+    escape: &mut bool,
 ) -> JumpOutcome {
     let mut edit = egui::TextEdit::singleline(buffer)
         .desired_width(64.0)
@@ -3255,6 +3416,7 @@ fn jump_input(
     }
     if !field.lost_focus() {
         if ui.input(|i| i.key_pressed(Key::Escape)) {
+            *escape = true;
             return JumpOutcome::Cancel;
         }
         if field.changed() {
@@ -3309,7 +3471,7 @@ fn toc_row_ui(
                         .with_main_align(egui::Align::LEFT)
                         .with_main_justify(true),
                 ),
-                |ui| ui.add(egui::Label::new(title).truncate()),
+                |ui| ui.add(egui::Label::new(title).truncate().selectable(false)),
             )
             .inner
     })
@@ -3442,6 +3604,7 @@ impl eframe::App for ReaderApp {
             self.applied_theme.clone_from(&self.theme.name);
         }
         self.focus = FocusGuard::default();
+        self.escape_consumed = false;
 
         self.collect_results(ctx);
         // A file dropped onto the window opens like any other (design spec
@@ -3508,12 +3671,14 @@ impl eframe::App for ReaderApp {
             });
 
         self.show_page_toast(ctx);
+        self.show_opening_notice(ctx);
         self.about_window(ctx);
         self.info_window(ctx);
         self.shortcuts_window(ctx);
         self.handle_input(ctx);
         self.poll_search();
         self.poll_dialog();
+        self.poll_open();
 
         // A click or wheel scroll outside the text fields releases their
         // focus, so plain keys reach the keybind dispatcher again.
@@ -3542,30 +3707,30 @@ impl eframe::App for ReaderApp {
         // poll at a fixed cadence while anything is outstanding. Retry
         // backoffs wake exactly when they come due (elapsed ones are
         // requeued only if their page turns visible again), streaming
-        // searches and open dialogs poll at the fixed cadence, and the
-        // toast repaints while it holds and fades.
+        // searches, open dialogs, and opens poll at the fixed cadence, and
+        // the toast repaints while it holds and fades. While the window is
+        // unfocused nothing schedules: workers keep completing, and their
+        // results surface on the next event-driven frame after refocus.
         let now = Instant::now();
-        if !self.pending.is_empty() {
-            ctx.request_repaint_after(Duration::from_millis(50));
-        } else if let Some(next) = self
-            .failed
-            .values()
-            .filter_map(|state| state.next_retry)
-            .filter(|due| *due > now)
-            .min()
-        {
-            ctx.request_repaint_after(next - now);
-        }
-        if self.search_job.is_some() || self.dialog_result.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(50));
-        }
-        if let Some((_, shown)) = self.toast {
-            let elapsed = Instant::now().saturating_duration_since(shown);
-            let wait = if elapsed < TOAST_HOLD {
-                TOAST_HOLD - elapsed
-            } else {
-                TOAST_FADE / 8
-            };
+        if let Some(wait) = should_schedule_repaint(
+            ctx.input(|input| input.focused),
+            !self.pending.is_empty(),
+            self.failed
+                .values()
+                .filter_map(|state| state.next_retry)
+                .filter(|due| *due > now)
+                .min()
+                .map(|due| due - now),
+            self.search_job.is_some() || self.dialog_result.is_some() || self.open_job.is_some(),
+            self.toast.map(|(_, shown)| {
+                let elapsed = now.saturating_duration_since(shown);
+                if elapsed < TOAST_HOLD {
+                    TOAST_HOLD - elapsed
+                } else {
+                    TOAST_FADE / 8
+                }
+            }),
+        ) {
             ctx.request_repaint_after(wait);
         }
     }
@@ -3644,6 +3809,7 @@ mod tests {
             section: SidebarSection::Contents,
             focus: FocusGuard::default(),
             toast: None,
+            last_toasted_page: None,
             toc_follow: None,
             ui_scale: 1.0,
             base_ppp: 1.0,
@@ -3658,6 +3824,8 @@ mod tests {
             search_query: String::new(),
             search_hits: None,
             search_job: None,
+            open_job: None,
+            escape_consumed: false,
             dialog_result: None,
             highlight: None,
             toc_rows: Vec::new(),
@@ -3688,6 +3856,16 @@ mod tests {
         pdf
     }
 
+    /// Wait for the in-flight open to land and apply.
+    fn drain_open(app: &mut ReaderApp) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app.open_job.is_some() {
+            app.poll_open();
+            assert!(Instant::now() < deadline, "open did not finish in time");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
     #[test]
     fn corrupt_sidecar_blocks_saving_until_engagement() {
         let dir = test_dir("corrupt-sidecar");
@@ -3698,6 +3876,7 @@ mod tests {
 
         let mut app = test_app(BackendKind::Mupdf);
         app.open_path(pdf.clone());
+        drain_open(&mut app);
         assert!(app.session_corrupt, "the corrupt load must set the flag");
         assert_eq!(app.error.as_deref(), Some(SESSION_CORRUPT_BANNER));
 
@@ -3734,11 +3913,57 @@ mod tests {
             depth: 0,
         }];
         app.open_path(test_dir("failed-open").join("missing.pdf"));
+        drain_open(&mut app);
         assert!(
             !app.toc_rows.is_empty(),
             "a failed open must not gut the live document's sidebar"
         );
         assert!(app.error.is_some());
+    }
+
+    #[test]
+    fn successful_open_applies_the_whole_payload_off_thread() {
+        let dir = test_dir("async-open");
+        let pdf = fixture_copy("tiny.pdf", &dir, "tiny.pdf");
+        let mut app = test_app(BackendKind::Mupdf);
+        app.open_path(pdf.clone());
+        assert!(
+            app.document.is_none() && app.open_job.is_some(),
+            "the open runs on its worker before the payload applies"
+        );
+        drain_open(&mut app);
+        assert_eq!(app.path.as_deref(), Some(pdf.as_path()));
+        assert_eq!(app.filename, "tiny.pdf");
+        assert_eq!(
+            app.document.as_ref().map(|doc| doc.page_count()),
+            Some(1),
+            "tiny.pdf is single-page"
+        );
+        assert!(
+            !app.page_sizes.is_empty(),
+            "page sizes land with the payload, not on the UI thread"
+        );
+        assert!(!app.primed, "the canvas primes on the next UI frame");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_newer_open_supersedes_the_in_flight_one() {
+        let dir = test_dir("supersede");
+        let first = fixture_copy("tiny.pdf", &dir, "first.pdf");
+        let second = fixture_copy("tiny.pdf", &dir, "second.pdf");
+        let mut app = test_app(BackendKind::Mupdf);
+        app.open_path(first);
+        app.open_path(second.clone());
+        drain_open(&mut app);
+        assert_eq!(app.path.as_deref(), Some(second.as_path()));
+        assert_eq!(app.filename, "second.pdf");
+        assert!(app.open_job.is_none());
+        assert_eq!(
+            app.last_toasted_page, None,
+            "a fresh document forgets the last toasted page"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -4277,6 +4502,84 @@ mod tests {
         assert_eq!(
             toast_opacity(shown, shown + TOAST_HOLD + TOAST_FADE * 3),
             0.0
+        );
+    }
+
+    #[test]
+    fn toasts_fire_once_per_page_change() {
+        let mut last = None;
+        assert!(should_toast(last, 1), "a fresh document toasts its page");
+        last = Some(1);
+        // The toast for page 1 expired long ago; hovering the same page
+        // must not resurrect it.
+        assert!(!should_toast(last, 1));
+        assert!(should_toast(last, 2), "a real page change toasts again");
+    }
+
+    #[test]
+    fn unfocused_windows_schedule_no_timed_repaints() {
+        const CADENCE: Duration = Duration::from_millis(50);
+        let toast_wait = Some(Duration::from_millis(120));
+        // Everything outstanding, focused: the earliest wake wins.
+        assert_eq!(
+            should_schedule_repaint(true, true, None, true, toast_wait),
+            Some(CADENCE)
+        );
+        // No pending renders: a due retry wakes exactly when it comes due.
+        assert_eq!(
+            should_schedule_repaint(true, false, Some(Duration::from_millis(250)), false, None),
+            Some(Duration::from_millis(250))
+        );
+        // Nothing outstanding: no wake at all.
+        assert_eq!(
+            should_schedule_repaint(true, false, None, false, None),
+            None
+        );
+        // Unfocused: silent even with everything outstanding — completion
+        // results surface on the refocus frame instead.
+        assert_eq!(
+            should_schedule_repaint(
+                false,
+                true,
+                Some(Duration::from_millis(250)),
+                true,
+                toast_wait
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn toc_rows_hover_with_the_hand_cursor_not_text() {
+        let row = TocRow {
+            title: "Chapter".into(),
+            page: 0,
+            dest_top: Some(0.0),
+            depth: 0,
+        };
+        let ctx = egui::Context::default();
+        let row_rect = std::cell::Cell::new(egui::Rect::NOTHING);
+        // Frame one records where the row landed; frame two hovers it,
+        // since cursor icons follow the previous frame's widget rects.
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let response = toc_row_ui(ui, &row, false, egui::Color32::GRAY);
+                row_rect.set(response.rect);
+            });
+        });
+        let mut input = egui::RawInput::default();
+        input
+            .events
+            .push(egui::Event::PointerMoved(row_rect.get().center()));
+        let output = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                toc_row_ui(ui, &row, false, egui::Color32::GRAY);
+            });
+        });
+        assert_eq!(
+            output.platform_output.cursor_icon,
+            egui::CursorIcon::PointingHand,
+            "the row's hand cursor must survive the title label"
         );
     }
 
