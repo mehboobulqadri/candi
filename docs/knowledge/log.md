@@ -628,3 +628,39 @@ Format per entry:
   thread-owned queue → mpsc → `set_zoom_percent`; est 2–4 days. Now
   being implemented for v0.1.3 (debug hook `CANDI_GESTURE_DEBUG=1`;
   shortcuts copy flips from "not supported" only once proven).
+
+## 2026-08-28 (user reports: q quit hangs UI + more v0.1.3 feedback)
+
+- **Decision/Issue:** Three NEW user reports after the v0.1.2
+  close-out. (1) CRITICAL regression in RELEASED v0.1.2: pressing plain
+  `q` (quit) FREEZES the UI; after a while the desktop shows the Wayland
+  unresponsive-app dialog ("terminate or wait"); the user must kill
+  candi manually. NOT yet diagnosed — investigation tasks were
+  cancelled 4× before running. Ranked hypotheses to carry: (a)
+  synchronous save/teardown on the UI thread between quit request and
+  eframe exit (session sidecar write, prefs save, texture/cache
+  teardown); (b) join/wait on the `candi-open` worker with no timeout;
+  (c) transient_focus sweep interaction (least likely). Replication
+  plan for the next agent: sandboxed `XDG_CONFIG_HOME` under
+  /mnt/personal/tmp, run `target/release/candi` under
+  `strace -f -tt -T` from launch (parent ⇒ ptrace OK), send `q` via
+  `hyprctl dispatch sendshortcut` (check Hyprland 0.56 syntax) or
+  `wtype`/`ydotool`, read the syscall tail (futex = lock/join; write
+  storm = save), `pkill -x candi` never `-f`. (2) Toast: user wants it
+  horizontally centered on the WHOLE window (currently centered over
+  the zoom slider since f3ddff5), SAME vertical line as now (the
+  bottom-bar page-info line). Small change in app.rs
+  `show_page_toast`/`toast_offset` + `toast_centers_over_the_zoom_slider`
+  test rename/update. (3) Scroll: mouse WHEEL scrolling is still too
+  slow (in addition to trackpad) — v0.1.3 scope grows: raise
+  wheel+trackpad defaults and add a settings slider; check egui 0.30
+  `InputOptions` scroll knobs for a trivial mapping.
+- **Why:** Released v0.1.2 has a shipping-critical exit-path hang that
+  is undiagnosed, and two smaller UX corrections; the log must carry
+  the hypotheses + replication plan so no investigation restarts from
+  zero after the 4 cancellations.
+- **Changed:** `handoff.md` gains "Open regressions + newest feedback
+  (TOP PRIORITY)" before the v0.1.3 scope; v0.1.3 scope item 2 renamed
+  "Scroll sensitivity (wheel + trackpad) + settings slider" (wheel
+  sensitivity folded in); memory gains the small-tasks orchestration
+  lesson.

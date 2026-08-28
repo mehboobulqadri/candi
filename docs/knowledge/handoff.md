@@ -16,6 +16,34 @@ root causes (chrome-focus sweep, recolor LRU): `log.md` 2026-08-28
 (v0.1.2 cut + final wave). The v0.1.2-RC fix-wave + repo-hardening
 details live in `log.md` 2026-08-28 entries — not repeated here.
 
+## Open regressions + newest feedback (TOP PRIORITY)
+
+1. **q-quit UI hang — CRITICAL, undiagnosed.** In RELEASED v0.1.2,
+   pressing plain `q` (quit) freezes the UI; after a while the desktop
+   shows the Wayland unresponsive-app dialog ("terminate or wait") and
+   the user must kill candi manually. Investigation tasks were
+   cancelled 4× before running — nothing diagnosed yet. Ranked
+   hypotheses: (a) synchronous save/teardown on the UI thread between
+   quit request and eframe exit (session sidecar write, prefs save,
+   texture/cache teardown); (b) join/wait on the `candi-open` worker
+   with no timeout; (c) transient_focus sweep interaction (least
+   likely). Replication plan: sandboxed `XDG_CONFIG_HOME` under
+   /mnt/personal/tmp, run `target/release/candi` under `strace -f -tt
+   -T` from launch (parent ⇒ ptrace OK), send `q` via `hyprctl dispatch
+   sendshortcut` (check Hyprland 0.56 syntax) or `wtype`/`ydotool`,
+   read the syscall tail (futex = lock/join; write storm = save),
+   `pkill -x candi` never `-f`.
+2. **Toast screen-centering:** user wants the page toast horizontally
+   centered on the WHOLE window (currently centered over the zoom
+   slider since f3ddff5), SAME vertical line as now (the bottom-bar
+   page-info line). Small change in app.rs
+   `show_page_toast`/`toast_offset` + `toast_centers_over_the_zoom_slider`
+   test rename/update.
+3. **Wheel scroll too slow:** mouse WHEEL scrolling is still too slow
+   (in addition to trackpad) — folded into scope item 2 below: raise
+   wheel+trackpad defaults + add a settings slider; check egui 0.30
+   `InputOptions` scroll knobs for a trivial mapping.
+
 ## v0.1.3 scope (IN PROGRESS)
 
 1. **Trackpad pinch-to-zoom** via `zwp_pointer_gestures_v1` side-channel
@@ -29,8 +57,10 @@ details live in `log.md` 2026-08-28 entries — not repeated here.
    multipliers, cancelled-end no-op). Debug hook: `CANDI_GESTURE_DEBUG=1`.
    Shortcuts copy flips from "not supported" ONLY once proven. Research:
    `log.md` 2026-08-28 pinch entry.
-2. **Scroll sensitivity** increase + settings slider for trackpad scroll
-   amount — queued.
+2. **Scroll sensitivity (wheel + trackpad) + settings slider** — raise
+   scroll defaults and add a settings slider; WHEEL scrolling is also
+   too slow per user report (item 3 above); check egui 0.30
+   `InputOptions` scroll knobs for a trivial mapping — queued.
 3. **Smooth page-turn transitions** — queued.
 
 Then cut v0.1.3 via the standard PR path: PR dev→main (ruleset
