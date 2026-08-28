@@ -1,0 +1,21 @@
+# Supply-chain gate: license + vulnerability checks on the dependency graph.
+# Weekly and on demand instead of per-push — dependencies change rarely, and
+# cargo-deny is minutes of compile-free checking that doesn't gate PRs.
+name: Deny
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 04:17 UTC — off-the-hour to avoid runner contention.
+    - cron: '17 4 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

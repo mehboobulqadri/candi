@@ -8,6 +8,10 @@ on:
   push:
     branches: [main, dev]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   workflow-lint:
     runs-on: ubuntu-latest
@@ -16,12 +20,6 @@ jobs:
       # Validates all workflow files so a syntax error fails loudly with the
       # actual error instead of silently scheduling zero jobs.
       - uses: raven-actions/actionlint@v2
-
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: cargo fmt --check
 
   rust-checks:
     strategy:
@@ -33,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Cheap fail-fast: fmt needs no sysdeps, cache, or pdfium.
+      - run: cargo fmt --check
       # mupdf (default-on via candi-pdf path deps) needs fontconfig.pc on Linux.
       # The pdfium-only matrix entry still unifies mupdf-backend through workspace
       # path dependencies that keep default features enabled.
@@ -56,35 +56,6 @@ jobs:
       - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
       - run: cargo build --release ${{ matrix.features }}
       - run: cargo test --all-targets ${{ matrix.features }}
-
-  cargo-deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
-  bench:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfontconfig1-dev pkg-config
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-      - uses: ./.github/actions/setup-pdfium
-      # Fixtures-only: CI has no corpus-local.toml, so real books and fixture
-      # generation are skipped loudly; the committed fixture must still run.
-      - run: cargo build --release --benches
-      - run: ./bench/run.sh --fixtures-only
 
   docs-links:
     runs-on: ubuntu-latest

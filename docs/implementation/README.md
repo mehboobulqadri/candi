@@ -96,10 +96,9 @@ Each slice = one commit: independent, reviewable, mergeable. Follow it in order.
 
 - **SECURITY.md** at the repo root — vulnerability disclosure policy (see
   [SECURITY.md](../../SECURITY.md)).
-- **Secrets hygiene:** the agent layer (`.agents/`, `.opencode/`, …) is gitignored;
-  no credential storage is set up yet; personal/project identity lives in gitignored
-  `creds.yml`, templated into docs via `scripts/sync-creds.sh`; no secrets or credentials
-  are ever committed.
+- **Secrets hygiene:** local-only tooling, personal identity files, and any
+  credentials live in gitignored paths; no secrets or credentials are ever
+  committed.
 - **CI dependency auditing:** cargo-deny (or cargo audit) + dependabot — lands in
   slice 00/02.
 - **Application security** (untrusted PDFs, resource exhaustion, error handling):

@@ -193,7 +193,7 @@ Document-independent logic; the only frontend-agnostic consumer of the `Document
 - **GUI (candi-gui, v0.1)** — egui/eframe + rfd file dialog. Binary name `candi`.
   No args opens a file picker; path arg opens that PDF. Rendered PDF pages (RGBA via
   `render_page`, recolored to the theme) on a paged canvas: continuous scroll, single-page,
-  or dual-page spreads, with fit-width/fit-page flows, anchor-preserving zoom and pinch.
+  or dual-page spreads, with fit-width/fit-page flows and anchor-preserving zoom.
   Shell: icon rail; sidebars for contents (outline), search with in-page highlight rects,
   appearance (themes + editor), bookmarks and keybinds editing; recents; drag-and-drop
   open. Session persistence (page, zoom, theme, bookmarks) via the schema-v3 sidecar
