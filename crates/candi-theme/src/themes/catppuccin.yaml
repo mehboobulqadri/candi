@@ -1,0 +1,8 @@
+name: Catppuccin
+page_bg: "#1E1E2E"
+page_fg: "#CDD6F4"
+ui_bg: "#181825"
+panel_bg: "#313244"
+ui_fg: "#CDD6F4"
+accent: "#CBA6F7"
+selection: "#CBA6F766"
