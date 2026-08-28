@@ -29,12 +29,12 @@ pub struct CacheKey {
 
 /// Recolorized-bitmap cache key: [`CacheKey`] plus the page colors the
 /// recolor pass mapped onto, so a theme switch (or theme edit) addresses a
-/// different entry and unrelated themes share nothing.
+/// different entry and unrelated page palettes share nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RecolorKey {
     pub page: usize,
     pub scale_q: u16,
-    pub theme: u64,
+    pub colors: u64,
 }
 
 /// Borrowed view of a cached bitmap.
@@ -236,16 +236,16 @@ mod tests {
         let base = RecolorKey {
             page: 0,
             scale_q: 100,
-            theme: 1,
+            colors: 1,
         };
-        let other_theme = RecolorKey { theme: 2, ..base };
+        let other_theme = RecolorKey { colors: 2, ..base };
         let mut cache = ImageCache::<RecolorKey>::new(200);
         assert!(cache.insert(base, 1, 1, bitmap(100)));
         assert!(cache.insert(other_theme, 1, 1, bitmap(100)));
         cache.insert(
             RecolorKey {
                 page: 1,
-                theme: 1,
+                colors: 1,
                 ..base
             },
             1,

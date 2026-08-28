@@ -1471,7 +1471,7 @@ impl ReaderApp {
         let key = RecolorKey {
             page,
             scale_q,
-            theme: recolor_key(self.theme.page_bg, self.theme.page_fg),
+            colors: recolor_key(self.theme.page_bg, self.theme.page_fg),
         };
         if let Some(img) = self.recolored.get(key) {
             let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -3078,6 +3078,13 @@ impl ReaderApp {
                 ui.label(
                     egui::RichText::new(
                         "Pinch-zoom not supported (Wayland/winit limitation) — use Ctrl+scroll to zoom.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "Tab and arrow-key widget navigation is intentionally disabled — plain keys drive the reader.",
                     )
                     .weak()
                     .small(),
