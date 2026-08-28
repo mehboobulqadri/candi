@@ -20,7 +20,7 @@ egui_code_editor = { version = "=0.2.11", default-features = false }
 eframe = { version = "0.30", default-features = true }
 egui_extras = { version = "0.30", default-features = false, features = ["svg"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-rfd = "0.15"
+rfd = "0.17"
 serde_json = "1"
 
 [dev-dependencies]
