@@ -440,3 +440,191 @@ Format per entry:
   visibility public. AUR one-time prep + day-of steps handed to the user.
   Lesson: check `gh repo view` visibility before promising AUR readiness
   (memory 2026-08-28).
+
+## 2026-08-28 (v0.1.1: release pipeline + install paths + AUR deferred)
+
+- **Decision/Issue:** v0.1.1 shipped same day as v0.1.0: release binary
+  pipeline + install paths + AUR deferred to post-multi-OS (user decision,
+  no AUR account yet). `dev` commits `e198101` (release.yml: tag+dispatch
+  triggered, ubuntu-22.04, clang+pkg-config+libfontconfig1-dev, RUSTFLAGS
+  debuginfo=0, strip, dist tarball + sha256 sidecar, `gh create/upload
+  --clobber`, no third-party release action), `16a486a` (workspace 0.1.1
+  via version.workspace single bump; candi-gui description+repository
+  metadata — cargo package now warning-free), `b2cb451` (README install
+  paths: release download+sha256, `cargo install --git … --tag v0.1.1
+  --locked candi-gui --bin candi` — explicit package selector REQUIRED on
+  a two-bin workspace; from-source path; AUR deferred line; PKGBUILD
+  pkgver 0.1.1 + .SRCINFO regen; POSIX packaging/install.sh), `558a28b`
+  (architecture.md root-relative → ../crate links), `00838ff` (merge
+  origin/main into dev — the repo historically NEVER merges main back
+  into dev, so the standard main-is-ancestor-of-dev release precondition
+  was structurally unfulfillable; merge-back performed at cut time;
+  merge-tree predicted == actual tree). Release: `dev`→`main` `67381d2`,
+  annotated tag `v0.1.1` (→ `67381d2`), CI green on main, release.yml
+  green (~6 min), https://github.com/mehboobulqadri/candi/releases/tag/v0.1.1
+  with candi-0.1.1-x86_64-linux-gnu.tar.gz (12,419,211 B) + .sha256;
+  artifact verified (sha256sum -c OK; tarball contains binary +
+  install.sh + INSTALL.md + desktop + 8 icons; ldd max GLIBC_2.35 →
+  Arch/Debian 12+/Fedora 36+ fine); headless CANDI_NO_GUI checks pass
+  (missing-path rc=1; fixture open page=1 rc=0 — fixture COPIED to tmp
+  first because headless writes .candi.toml sidecars next to the PDF).
+  Repo still PRIVATE → release URL not anonymously downloadable until
+  the user flips visibility.
+- **Why (root causes hit):** (1) docs-links CI failed on root-relative
+  links — the checker resolves relative to the .md file's directory, so
+  repo-root-relative links from docs/ silently break CI; (2)
+  `cargo install --git` on a multi-bin workspace needs an explicit
+  package selector (`candi-gui --bin candi`) — `--bin` alone errors
+  "multiple packages with binaries found"; (3) main was never merged
+  back into dev after cuts, so the main-is-ancestor-of-dev precondition
+  could never hold — merge-back performed at cut time (`00838ff`), now
+  convention after EVERY cut.
+- **Changed:** Release flow gains a merge-main→dev step; `packaging/`
+  stays validated and ready (AUR day-of steps in packaging/AUR.md); AUR
+  moves to roadmap v0.3 (v0.5 Debian-only+CI); new backlog items a–f in
+  handoff; verification found `main` currently one merge commit AHEAD of
+  `dev` (dev is ancestor of main) — next merge-back pending.
+
+## 2026-08-28 (local machine refresh)
+
+- **Decision/Issue:** `~/.local/bin/candi` symlink had gone MISSING
+  entirely — recreated → `/mnt/personal/Projects/candi/target/release/candi`
+  (in-repo release build, no CARGO_TARGET_DIR, so the symlink auto-updates
+  on rebuilds); all 8 rounded RGBA icons + candi.desktop installed to
+  `~/.local` (corner alpha 0 verified); no live instance during the swap.
+- **Why:** The missing symlink broke PATH/desktop launch; the v0.1.1
+  rounded icon set needed installing.
+- **Changed:** Binary exposes NO `--version` flag (clap
+  disable_version_flag) — version visible in GUI about as
+  "v0.1.1 — AGPL-3.0"; enabling it is backlog item (f).
+
+## 2026-08-28 (v0.1.2-RC: fix wave, README face v2, repo hardening)
+
+- **Decision/Issue:** v0.1.2-RC assembled on `dev` == `origin/main` ==
+  `fdb9656`; tag NOT cut; awaiting USER DOGFOOD. Fix wave: `a285bcd`
+  (Linux Ctrl+ keybinds + zoom-seed heal), `7b247d1` (async open,
+  unfocused repaint gate, toast, TOC cursor, Esc scoping, honest pinch
+  copy), `aeca428` (publishing.md removed), `666d08f` (first-run
+  onboarding, `[misc] onboarding_done`). Repo hardening: PR #29
+  (`209071e`→`fdb9656`) README face v2 with full-window theme screenshots;
+  PR #22 (`daff662`) product README + canonical AGPL restored; lean CI
+  (ci.yml 4 jobs/push, deny.yml weekly+dispatch, bench.yml dispatch-only,
+  release tar.gz+zip+sha256s); `skills-lock.json` moved into `.agents/`;
+  dependabot DISABLED (`.github/dependabot.yml` removed in `0314ede`,
+  PRs #23–28 closed, 6 dependabot remote branches linger); rulesets
+  replace classic branch protection (main-protection 21686764: PR-only,
+  0 approvals, 4 required checks, no bypass incl. admin, force/delete
+  blocked, `require_extra_approval_for_unattributed_changes=false`
+  Mia-approved for solo flow; dev-protection 21686769: force/delete
+  blocked, admin bypass always; tags/releases unaffected).
+- **Why (root causes):** (1) ALL Linux Ctrl+ bindings were dead —
+  `Binding::matches` compared `pressed.command` and egui-winit aliases
+  `command = ctrl` on Linux; tests now use platform-real modifier shape;
+  stale 2-spec zoom seed `["+","="]` healed by treating missing
+  `schema_version` as v1 in `migrate_document`. (2) ANR on 1556pp books —
+  open_session + page-size sweep + outline ran on the UI thread; moved to
+  a `candi-open` worker with single-flight + cancel, `prime` stays on UI;
+  sidebar preserved on failed open. (3) Unfocused egui windows repainted
+  on timers — `should_schedule_repaint` gates timed repaints while
+  unfocused, async results surface on refocus. (4) Toast resurrected on
+  the same page and anchored under the bar — `last_toasted_page` memory +
+  anchor sign fixed to `-(BOTTOM_BAR_HEIGHT + 12)`. (5) Dependabot PR
+  churn (6 open PRs) wrong cost/benefit for a solo maintainer — disabled;
+  caching bumps already merged manually (#20).
+- **Changed:** v0.1.2 next steps fixed: dogfood checklist → PR dev→main
+  → merge main back into dev → tag LITERAL `v0.1.2` on the main merge
+  commit → download tar.gz AND zip, extract, run install.sh per README
+  (user-mandated final validation) + verify sha256s. Local user binary
+  rebuilt at `4b6adc8+` via symlink. Handoff + status rewritten.
+
+## 2026-08-28 (incident: pushed to dev before gates → CI red)
+
+- **Decision/Issue:** One cancelled run PUSHED TO DEV BEFORE GATES — CI
+  went red on `0314ede`: 3 prefs tests shared the
+  `candi-prefs-test-{pid}` temp dir and raced.
+- **Why:** Cancellation pressure compressed the loop; the gate step was
+  skipped instead of the push being held.
+- **Changed:** Fix `4b6adc8` (distinct temp dirs per test + 10× stress).
+  RULE: gates BEFORE push, no exceptions, even under cancellation
+  pressure — a cancelled job's work stays unpushed until green locally.
+
+## 2026-08-28 (incident: two workers shared a filesystem path)
+
+- **Decision/Issue:** Two parallel workers shared a filesystem scope —
+  the cleanup worker deleted `/tmp/candi-shots` while the README worker
+  was still inspecting it (harmless this time; it held stale captures).
+- **Why:** Task boundaries were by deliverable, not by path; nothing
+  arbitrated shared directories.
+- **Changed:** RULE: never give two workers overlapping paths — each
+  worker gets a private tmp scope, and cleanup of shared dirs waits until
+  no other worker references them.
+
+## 2026-08-28 (machine: RAM/swap crash wave + disk cleanup pending)
+
+- **Decision/Issue:** RAM/swap crash wave on this box. Root causes:
+  (1) big parallel builder work; (2) tmpfs `/tmp` accumulation (1.9G
+  candi caches); (3) `~/.local/share/opencode/opencode.db` ~27G + WAL
+  ~17G — LIVE, cleanup DEFERRED to the user post-session (stop opencode →
+  `PRAGMA wal_checkpoint(TRUNCATE); VACUUM;` → if space-blocked, rm
+  db+wal+shm after closing → restart; ~40G back).
+- **Why:** Parallel cargo builds + tmpfs bloat + a 44G live WAL left no
+  headroom; crashes were resource exhaustion, not code.
+- **Changed:** 34.6G freed from `/mnt/personal/tmp` + 1.9G tmpfs; big
+  target dirs stay on `/mnt/personal/tmp`, never tmpfs; parallel build
+  scope reduced; status.md carries the pending-cleanup constraint until
+  the user runs it.
+
+## 2026-08-28 (v0.1.2 cut + final wave)
+
+- **Decision/Issue:** Final wave on `dev` then v0.1.2 cut. Wave: `81074a6`
+  (page-turn +/-/= rebinds + defaults schema v3 exact-match seed heals +
+  Ctrl-only zoom), `de8bfc5` (six new themes: Cyberpunk, Catppuccin, Nord,
+  Dracula, Gruvbox Dark, Solarized Light), `f3ddff5` (chrome-focus sweep +
+  toast single-line CENTER_BOTTOM over captured `zoom_slider_rect` +
+  96MB-budgeted per-palette recolor LRU), `ef6ac20` (0.1.2 bump +
+  SECURITY.md supported-versions fix), `cde66b5` (review-nit sweep:
+  `RecolorKey.theme`→`colors` rename + shortcuts a11y note). Reviewer
+  verdict: SHIP — zero blockers/majors; 5 nits swept or deliberately kept
+  (Dracula `#343746` / Solarized Light `#E4DCC6` panel_bg kept as
+  deliberate soft-chrome). Release: PR #30 dev→main merged, merge sha
+  `37362d9` = tag `v0.1.2`; release.yml assets tar.gz + zip + sha256s all
+  verified via `sha256sum -c`; install.sh run per README verbatim
+  (`~/.local/bin/candi` is now the RELEASE binary, not the dev symlink);
+  smoke `CANDI_NO_GUI=1 candi --help` OK; `dev` == `main` == `37362d9`.
+  User feedback: keybinds verified working (+/- page turns, Ctrl+-
+  app zoom; Shift+- also pages — accepted).
+- **Why (root causes worth keeping):** (1) "q doesn't quit" — egui's
+  Tab/arrow focus navigation parked focus on chrome widgets, so
+  `wants_keyboard_input()` ate ALL plain keys until Esc; fix = per-frame
+  focus sweep that surrenders transient focus on chrome, keeping focus
+  only on registered real text-edit fields. (2) Theme-toggle ~1s stall —
+  `set_theme` cleared all texture slots, so the next frame re-promoted
+  ~10 candidates with full 20MB/page clone + LUT recolor + upload
+  (≈200MB in one frame); fix = 96MB-budgeted per-palette recolor LRU so
+  recolored textures survive theme switches. (3) Incident-shaped note:
+  first clippy run failed with `Unrecognized option: 'j'` — `-j 6` was
+  placed after `--` and passed to rustc; cargo job flags go BEFORE `--`.
+- **Changed:** v0.1.2 live; `~/.local/bin/candi` swapped to the installed
+  release binary; v0.1.3 scope opened (pinch-to-zoom side-channel in
+  flight, scroll-sensitivity slider, smooth page-turns) — handoff
+  rewritten, status updated.
+
+## 2026-08-28 (pinch-to-zoom research conclusion)
+
+- **Decision/Issue:** Trackpad pinch-to-zoom cannot work through winit on
+  Linux: winit 0.30.13 `PinchGesture` is macOS/iOS-only and its Wayland
+  backend has no `zwp_pointer_gestures_v1` binding (Hyprland 0.56.2 DOES
+  serve the protocol; egui-winit's PinchGesture→`Event::Zoom` is dead
+  code on Linux). Industry survey: Chromium ozone
+  `wayland_zwp_pointer_gestures` is the reference pattern (absolute scale
+  → per-update `scale_now`/`scale_prev` multipliers, cancelled-end
+  no-op); GTK/GDK binds internally (Firefox works via GDK since FF88);
+  Qt never shipped it; no Rust project has it.
+- **Why:** The protocol exists and the compositor serves it — only the
+  winit layer is missing; upstream `winit-extras` (#2160) is an option
+  but not on our timeline.
+- **Changed:** Fix = in-crate side-channel: `raw-window-handle` +
+  `wayland-client` `from_external_display` (smithay-clipboard pattern),
+  thread-owned queue → mpsc → `set_zoom_percent`; est 2–4 days. Now
+  being implemented for v0.1.3 (debug hook `CANDI_GESTURE_DEBUG=1`;
+  shortcuts copy flips from "not supported" only once proven).
