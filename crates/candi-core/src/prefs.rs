@@ -238,15 +238,17 @@ mod tests {
 
     #[test]
     fn missing_config_defaults_onboarding_to_false() {
-        let dir = std::env::temp_dir().join(format!("candi-prefs-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let prefs = load(&dir.join("missing").join("config.toml"));
-        assert!(!prefs.onboarding_done);
+        let path = std::env::temp_dir()
+            .join(format!("candi-prefs-test-missing-{}", std::process::id()))
+            .join("missing")
+            .join("config.toml");
+        assert!(!load(&path).onboarding_done);
     }
 
     #[test]
     fn onboarding_done_round_trips() {
-        let dir = std::env::temp_dir().join(format!("candi-prefs-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("candi-prefs-test-roundtrip-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
