@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0
 
 //! App-level config (`config.toml` under the XDG config dir): the last
-//! chosen theme and the recent-documents list. Reads are tolerant — a
+//! chosen theme, the recent-documents list, and the first-run onboarding
+//! flag. Reads are tolerant — a
 //! missing, unparsable, or future-schema file yields defaults — and writes
 //! are atomic (tmp + rename), mirroring the [`crate::state`] sidecar
 //! patterns. GUI-only today; the TUI has no config.
@@ -29,6 +30,9 @@ pub struct Prefs {
     pub theme: String,
     /// Recent documents, most recent first, capped at [`MAX_RECENTS`].
     pub recents: Vec<Recent>,
+    /// Quick-start panel on the welcome screen shown until the first
+    /// successful open or an explicit dismissal.
+    pub onboarding_done: bool,
 }
 
 /// One recent document.
@@ -44,6 +48,7 @@ impl Default for Prefs {
         Self {
             theme: DEFAULT_THEME.to_owned(),
             recents: Vec::new(),
+            onboarding_done: false,
         }
     }
 }
@@ -126,6 +131,7 @@ pub fn load(path: &Path) -> Prefs {
                     }
                 })
                 .collect(),
+            onboarding_done: file.misc.is_some_and(|misc| misc.onboarding_done),
         },
         Ok(file) => {
             warn(format!(
@@ -162,6 +168,9 @@ pub fn store(path: &Path, prefs: &Prefs) -> io::Result<()> {
                 last_opened: recent.last_opened.clone(),
             })
             .collect(),
+        misc: Some(MiscSection {
+            onboarding_done: prefs.onboarding_done,
+        }),
     };
     let body = toml::to_string_pretty(&file)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
@@ -178,6 +187,7 @@ struct ConfigFile {
     appearance: Option<AppearanceSection>,
     #[serde(default)]
     recents: Vec<RecentSection>,
+    misc: Option<MiscSection>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -189,6 +199,12 @@ struct AppearanceSection {
 struct RecentSection {
     path: String,
     last_opened: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MiscSection {
+    #[serde(default)]
+    onboarding_done: bool,
 }
 
 #[cfg(test)]
@@ -217,6 +233,34 @@ mod tests {
         let prefs = load(&path);
         assert_eq!(prefs.recents.len(), 1, "the malformed entry is dropped");
         assert_eq!(prefs.recents[0].path, PathBuf::from("/tmp/book.pdf"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_config_defaults_onboarding_to_false() {
+        let path = std::env::temp_dir()
+            .join(format!("candi-prefs-test-missing-{}", std::process::id()))
+            .join("missing")
+            .join("config.toml");
+        assert!(!load(&path).onboarding_done);
+    }
+
+    #[test]
+    fn onboarding_done_round_trips() {
+        let dir =
+            std::env::temp_dir().join(format!("candi-prefs-test-roundtrip-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let mut prefs = Prefs {
+            onboarding_done: true,
+            ..Prefs::default()
+        };
+        store(&path, &prefs).unwrap();
+        assert!(load(&path).onboarding_done);
+        prefs.onboarding_done = false;
+        store(&path, &prefs).unwrap();
+        assert!(!load(&path).onboarding_done);
         fs::remove_dir_all(&dir).ok();
     }
 

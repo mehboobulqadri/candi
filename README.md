@@ -13,11 +13,18 @@
   <a href="https://github.com/mehboobulqadri/candi/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/mehboobulqadri/candi"></a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/screenshots/welcome.png" alt="Candi welcome screen" width="32%">
-  <img src="docs/assets/screenshots/light-contents.png" alt="Candi in light theme with the contents sidebar open" width="32%">
-  <img src="docs/assets/screenshots/dark-sections.png" alt="Candi in dark theme with the current section tracked in the contents sidebar" width="32%">
-</p>
+<img src="docs/assets/screenshots/dark.png" alt="Candi in the Dark theme with the contents sidebar open" width="100%">
+
+<details>
+<summary><b>More themes</b></summary>
+
+<img src="docs/assets/screenshots/light.png" alt="Candi in the Light theme with the contents sidebar open" width="100%">
+
+<img src="docs/assets/screenshots/sepia.png" alt="Candi in the Sepia theme with the contents sidebar open" width="100%">
+
+<img src="docs/assets/screenshots/true-dark.png" alt="Candi in the True Dark theme with the contents sidebar open" width="100%">
+
+</details>
 
 ## Features
 

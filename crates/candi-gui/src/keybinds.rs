@@ -188,7 +188,7 @@ impl Binding {
         self.ctrl == pressed.ctrl
             && self.shift == pressed.shift
             && self.alt == pressed.alt
-            && self.meta == (pressed.mac_cmd || pressed.command)
+            && self.meta == pressed.mac_cmd
     }
 
     fn label(self) -> String {
@@ -235,11 +235,16 @@ const DEFAULTS_SCHEMA_VERSION: u64 = 2;
 /// A stored entry exactly equal to a legacy list was never touched by the
 /// user and is re-healed to the current defaults on load; anything else is
 /// preserved as a customization.
-const LEGACY_DEFAULTS: &[(u64, &str, &[&str])] = &[(
-    2,
-    "zoom_in",
-    &["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="],
-)];
+const LEGACY_DEFAULTS: &[(u64, &str, &[&str])] = &[
+    (
+        2,
+        "zoom_in",
+        &["+", "=", "Shift+=", "Ctrl+=", "Ctrl++", "Ctrl+Shift+="],
+    ),
+    // The seed that predates `schema_version` entirely; those files load
+    // as version 1.
+    (2, "zoom_in", &["+", "="]),
+];
 
 const DIGITS: [Key; 10] = [
     Key::Num0,
@@ -552,14 +557,16 @@ impl Keybinds {
 /// Heal a defaults document written by an older schema version: entries that
 /// exactly match a known legacy default list are replaced with the current
 /// defaults (the user never customized them), genuinely customized entries
-/// are preserved, and the version is bumped. `None` when the document is
-/// already current or carries no version, in which case the file is left
+/// are preserved, and the version is bumped. Files from before the version
+/// key existed load as version 1, so the oldest seeds heal too. `None` when
+/// the document is already current, in which case the file is left
 /// untouched.
 fn migrate_document(document: &serde_json::Value) -> Option<serde_json::Value> {
     let object = document.as_object()?;
     let version = object
         .get("schema_version")
-        .and_then(serde_json::Value::as_u64)?;
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
     if version >= DEFAULTS_SCHEMA_VERSION {
         return None;
     }
@@ -756,6 +763,43 @@ mod tests {
         assert!(!plain.matches(egui::Modifiers::CTRL), "no bleed-through");
     }
 
+    /// Modifier state as egui-winit delivers it on Linux: `command` mirrors
+    /// `ctrl` and `mac_cmd` stays false, so every Ctrl+* press carries both
+    /// bits (egui-winit lib.rs, `WindowEvent::ModifiersChanged`).
+    fn linux_pressed(base: egui::Modifiers) -> egui::Modifiers {
+        egui::Modifiers {
+            command: base.ctrl,
+            ..base
+        }
+    }
+
+    #[test]
+    fn linux_ctrl_deliveries_match_ctrl_bindings() {
+        let keybinds = Keybinds::defaults(None);
+        let pressed = egui::Modifiers::CTRL | egui::Modifiers::COMMAND;
+        assert_eq!(
+            keybinds.action_for(Key::S, pressed),
+            Some(Action::SaveState),
+            "Ctrl+S arrives as ctrl+command on Linux and must match"
+        );
+        assert_eq!(
+            keybinds.action_for(Key::Equals, pressed),
+            Some(Action::ZoomIn)
+        );
+
+        // Meta bindings stay inert: no mac_cmd exists off macOS.
+        let meta_only = Binding::parse("Meta+S").expect("parses");
+        assert!(!meta_only.matches(pressed));
+        // A bare command bit (macOS ⌘ delivery) never satisfies a ctrl
+        // binding — and a meta binding never matches it either.
+        assert!(
+            !Binding::parse("Ctrl+S")
+                .expect("parses")
+                .matches(egui::Modifiers::COMMAND)
+        );
+        assert!(!meta_only.matches(egui::Modifiers::COMMAND));
+    }
+
     #[test]
     fn missing_file_is_seeded_with_defaults() {
         let dir = temp_dir("seed");
@@ -790,7 +834,10 @@ mod tests {
         .unwrap();
         let keybinds = Keybinds::load_or_init(Some(&dir));
         assert_eq!(
-            keybinds.action_for(Key::X, egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT)),
+            keybinds.action_for(
+                Key::X,
+                linux_pressed(egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT))
+            ),
             Some(Action::Quit)
         );
         assert_eq!(
@@ -831,6 +878,55 @@ mod tests {
     }
 
     #[test]
+    fn versionless_seed_heals_the_oldest_zoom_default() {
+        let dir = temp_dir("migrate-versionless");
+        fs::create_dir_all(&dir).unwrap();
+        // The pre-`schema_version` seed: no version key, the original
+        // two-spec zoom_in list.
+        fs::write(
+            dir.join("keybinds.json"),
+            r#"{"quit": "Q", "zoom_in": ["+", "="]}"#,
+        )
+        .unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::Plus, egui::Modifiers::SHIFT),
+            Some(Action::ZoomIn),
+            "the version-less seed heals to the current defaults"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
+                .expect("healed file is valid JSON");
+        assert_eq!(
+            doc["schema_version"],
+            serde_json::json!(2),
+            "the healed file gains a version"
+        );
+        assert_eq!(doc["zoom_in"], serde_json::json!(Action::ZoomIn.defaults()));
+        assert_eq!(doc["quit"], serde_json::json!("Q"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn versionless_customized_zoom_survives() {
+        let dir = temp_dir("migrate-versionless-custom");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("keybinds.json"), r#"{"zoom_in": "Ctrl+Up"}"#).unwrap();
+        let keybinds = Keybinds::load_or_init(Some(&dir));
+        assert_eq!(
+            keybinds.action_for(Key::ArrowUp, linux_pressed(egui::Modifiers::CTRL)),
+            Some(Action::ZoomIn),
+            "a customized entry in a version-less file is preserved"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("keybinds.json")).unwrap())
+                .expect("migrated file is valid JSON");
+        assert_eq!(doc["schema_version"], serde_json::json!(2));
+        assert_eq!(doc["zoom_in"], serde_json::json!("Ctrl+Up"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn customized_actions_survive_migration() {
         let dir = temp_dir("migrate-custom");
         fs::create_dir_all(&dir).unwrap();
@@ -841,7 +937,7 @@ mod tests {
         .unwrap();
         let keybinds = Keybinds::load_or_init(Some(&dir));
         assert_eq!(
-            keybinds.action_for(Key::ArrowUp, egui::Modifiers::CTRL),
+            keybinds.action_for(Key::ArrowUp, linux_pressed(egui::Modifiers::CTRL)),
             Some(Action::ZoomIn),
             "a user-customized zoom_in is preserved, not healed"
         );
@@ -934,11 +1030,11 @@ mod tests {
             (Key::Equals, egui::Modifiers::NONE),
             (Key::Plus, egui::Modifiers::NONE),
             (Key::Plus, egui::Modifiers::SHIFT),
-            (Key::Equals, egui::Modifiers::CTRL),
-            (Key::Plus, egui::Modifiers::CTRL),
+            (Key::Equals, linux_pressed(egui::Modifiers::CTRL)),
+            (Key::Plus, linux_pressed(egui::Modifiers::CTRL)),
             (
                 Key::Plus,
-                egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+                linux_pressed(egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT)),
             ),
         ];
         for (key, modifiers) in cases {
